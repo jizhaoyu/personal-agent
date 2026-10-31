@@ -16,6 +16,7 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
+    manifest: true,
     outDir: 'dist',
     emptyOutDir: true,
   },

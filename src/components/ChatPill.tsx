@@ -1,8 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Send,
-  Image as ImageIcon,
-  Sparkles,
   RefreshCw,
   ShieldCheck,
   Zap,
@@ -30,8 +28,6 @@ export const ChatPill: React.FC<ChatPillProps> = ({
   onOpenCards,
 }) => {
   const [inputText, setInputText] = useState('');
-  const [isDragging, setIsDragging] = useState(false);
-  const [attachments, setAttachments] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const isWork = mode === 'work';
@@ -43,10 +39,9 @@ export const ChatPill: React.FC<ChatPillProps> = ({
   }, [messages, isLoading]);
 
   const handleSend = () => {
-    if ((!inputText.trim() && attachments.length === 0) || isLoading) return;
-    onSendMessage(inputText.trim(), attachments);
+    if (!inputText.trim() || isLoading) return;
+    onSendMessage(inputText.trim());
     setInputText('');
-    setAttachments([]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -56,45 +51,15 @@ export const ChatPill: React.FC<ChatPillProps> = ({
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    for (const file of files) {
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          if (event.target?.result) {
-            setAttachments((prev) => [...prev, event.target!.result as string]);
-          }
-        };
-        reader.readAsDataURL(file);
-      }
-    }
-  };
-
   return (
     <div
-      onDragOver={(e) => {
-        e.preventDefault();
-        setIsDragging(true);
-      }}
-      onDragLeave={() => setIsDragging(false)}
-      onDrop={handleDrop}
       className={`flex flex-col h-[460px] backdrop-blur-md border rounded-2xl shadow-float overflow-hidden transition-all duration-300 ${
         isWork
           ? 'bg-[#0f172a]/95 border-slate-700 text-slate-100'
           : 'bg-[#fcfaf5]/95 border-[#e5dec9] text-[#23293a]'
       }`}
     >
-      {isDragging && (
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-xs z-50 flex flex-col items-center justify-center text-amber-400 font-medium pointer-events-none">
-          <ImageIcon size={34} className="mb-2 animate-bounce" />
-          <p className="text-xs">松开鼠标，直接甩给伴侣自动提取状态</p>
-        </div>
-      )}
-
-      {/* 顶栏：双态身份与防窥护盾标识 */}
+      {/* 顶栏：当前本地逻辑分区 */}
       <div
         className={`flex items-center justify-between px-3.5 py-2.5 border-b ${
           isWork ? 'bg-slate-900/90 border-slate-800' : 'bg-[#f9f6ed] border-[#ece6d5]'
@@ -107,11 +72,11 @@ export const ChatPill: React.FC<ChatPillProps> = ({
           {isWork ? (
             <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
               <ShieldCheck size={11} />
-              <span>投屏防窥已保护</span>
+              <span>工作本地分区</span>
             </span>
           ) : (
             <span className="text-[10px] text-[#8a5410] bg-[#f2ecdc] px-2 py-0.5 rounded-full">
-              零填表生活空间
+              生活本地分区
             </span>
           )}
         </div>
@@ -131,6 +96,11 @@ export const ChatPill: React.FC<ChatPillProps> = ({
 
       {/* 消息与活体变更徽章流 */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-3">
+        {messages.length === 0 && (
+          <p className="text-xs leading-relaxed text-[#6b7183] py-4">
+            这里记录你主动输入的生活文字。可尝试记录账单、饮水和体重，请核对整理结果。
+          </p>
+        )}
         {messages.map((msg) => {
           const isUser = msg.role === 'user';
           return (
@@ -204,7 +174,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             }`}
           >
             <RefreshCw size={12} className="animate-spin" />
-            <span>正在嗅探状态并生成回复...</span>
+            <span>正在整理文字记录...</span>
           </div>
         )}
       </div>
@@ -218,41 +188,35 @@ export const ChatPill: React.FC<ChatPillProps> = ({
         {!isWork ? (
           <>
             <button
-              onClick={() => onSendMessage('午饭吃了42块，顺便喝了一杯水，今天体重64.1kg')}
+              onClick={() => setInputText('午饭吃了42元，顺便喝了一杯水，今天体重64.1kg')}
               className="whitespace-nowrap px-2.5 py-1 rounded-full bg-[#fcfaf5] border border-[#e2d8c3] text-[#8a5410] hover:border-[#a8681a] cursor-pointer"
             >
-              ✨ 试一试：一句话记账+改体重
+              ✨ 填入示例：记账与体重
             </button>
             <button
-              onClick={() => onSendMessage('记一下，赵总对花生过敏，喜欢喝龙井茶')}
+              onClick={() => setInputText('记一下，王叔对花生过敏，喜欢喝龙井茶')}
               className="whitespace-nowrap px-2.5 py-1 rounded-full bg-[#fcfaf5] border border-[#e2d8c3] text-[#6b7183] hover:text-[#8a5410] cursor-pointer"
             >
-              ❤️ 记人脉忌口
-            </button>
-            <button
-              onClick={() => onSendMessage('帮我建一张《雅思口语冲刺》卡，目标100小时')}
-              className="whitespace-nowrap px-2.5 py-1 rounded-full bg-[#fcfaf5] border border-[#e2d8c3] text-[#6b7183] hover:text-[#8a5410] cursor-pointer"
-            >
-              🌟 一句话造新卡
+              ❤️ 填入示例：亲友忌口
             </button>
           </>
         ) : (
           <>
             <button
               onClick={() =>
-                onSendMessage(
+                setInputText(
                   '刚见完远景科技王总，预算26万，痛点是跨部门数据割裂，下周三前要完成定制方案汇报'
                 )
               }
               className="whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-800 border border-blue-500/40 text-blue-300 hover:bg-slate-700 cursor-pointer"
             >
-              💼 试一试：一句话建CRM商机+拆死线
+              💼 填入客户跟进示例
             </button>
             <button
-              onClick={() => onSendMessage('星辰科技李总把预算加到22万了，进入商务谈判阶段')}
+              onClick={() => setInputText('星辰科技李总把预算加到22万了，进入商务谈判阶段')}
               className="whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300 hover:text-white cursor-pointer"
             >
-              📈 一句话推进商机
+              📈 填入预算变更示例
             </button>
           </>
         )}
@@ -277,8 +241,8 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={
               isWork
-                ? '随口汇报客户跟进、预算变更或死线待办（免填表自动归档）...'
-                : '随口说花销、体重、喝水或亲友忌口（免填表自动更新卡片）...'
+                ? '输入客户跟进、预算变更或待办文字...'
+                : '输入花销、体重、饮水或亲友备忘文字...'
             }
             rows={1}
             className={`w-full resize-none text-[12.5px] bg-transparent focus:outline-none max-h-20 leading-5 ${
@@ -291,7 +255,8 @@ export const ChatPill: React.FC<ChatPillProps> = ({
 
         <button
           onClick={handleSend}
-          disabled={isLoading || (!inputText.trim() && attachments.length === 0)}
+          disabled={isLoading || !inputText.trim()}
+          aria-label="发送文字记录"
           className={`p-2 rounded-xl text-white disabled:opacity-40 transition-colors shadow-xs cursor-pointer ${
             isWork ? 'bg-blue-600 hover:bg-blue-500' : 'bg-[#a8681a] hover:bg-[#8a5410]'
           }`}

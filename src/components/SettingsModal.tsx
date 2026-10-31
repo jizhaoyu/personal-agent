@@ -1,240 +1,108 @@
-import React, { useState } from 'react';
-import { X, Settings, Key, User, Shield, Download, Upload, Trash2, Check } from 'lucide-react';
-import { AppSettings } from '../types';
-import { StorageService } from '../services/storage';
+import React, { useEffect, useState } from 'react';
+import { X, Download, Upload, KeyRound } from 'lucide-react';
+import type { AppSettings } from '../types';
+import { Repository } from '../persistence/repository';
+import { clearLegacyCredential } from '../services/legacyConnection';
 
-interface SettingsModalProps {
-  settings: AppSettings;
-  isOpen: boolean;
-  onClose: () => void;
-  onSaveSettings: (settings: AppSettings) => void;
-  onDataImported: () => void;
-}
-
-export const SettingsModal: React.FC<SettingsModalProps> = ({
-  settings,
-  isOpen,
-  onClose,
-  onSaveSettings,
-  onDataImported,
-}) => {
-  const [formData, setFormData] = useState<AppSettings>(settings);
-  const [copiedNotification, setCopiedNotification] = useState(false);
-
+interface Props { settings: AppSettings; isOpen: boolean; onClose(): void; onSaveSettings(settings: AppSettings): Promise<void>; onDataImported(): void | Promise<void>; onConnectionChange?(status: ModelConnectionStatus): void }
+export function SettingsModal({ settings, isOpen, onClose, onSaveSettings, onDataImported, onConnectionChange }: Props) {
+  const [form, setForm] = useState(settings);
+  const [key, setKey] = useState('');
+  const [status, setStatus] = useState<ModelConnectionStatus | null>(null);
+  const [feedback, setFeedback] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [replaceAccepted, setReplaceAccepted] = useState(false);
+  useEffect(() => {
+    if (!isOpen) return;
+    setForm(settings); setKey(''); setFeedback(''); setImportText(''); setReplaceAccepted(false);
+    window.electronAPI?.modelStatus().then(s => { setStatus(s); setForm(f => ({ ...f, apiBaseUrl: s.apiBaseUrl || f.apiBaseUrl, modelName: s.modelName || f.modelName, modelEnabled: s.enabled })); }).catch(() => setFeedback('无法读取桌面模型配置，仍可使用本地记录。'));
+  }, [isOpen]);
   if (!isOpen) return null;
-
-  const handleSave = () => {
-    StorageService.saveSettings(formData);
-    onSaveSettings(formData);
-    onClose();
-  };
-
-  // 快捷预设填充
-  const applyPreset = (type: 'deepseek' | 'claude' | 'ollama') => {
-    if (type === 'deepseek') {
-      setFormData((prev) => ({
-        ...prev,
-        apiBaseUrl: 'https://api.deepseek.com/v1',
-        modelName: 'deepseek-chat',
-      }));
-    } else if (type === 'claude') {
-      setFormData((prev) => ({
-        ...prev,
-        apiBaseUrl: 'https://api.anthropic.com/v1',
-        modelName: 'claude-3-5-sonnet-20241022',
-      }));
-    } else if (type === 'ollama') {
-      setFormData((prev) => ({
-        ...prev,
-        apiBaseUrl: 'http://localhost:11434/v1',
-        modelName: 'llama3.2',
-        apiKey: 'ollama',
-      }));
-    }
-  };
-
-  // 导出全部主权数据
-  const handleExport = () => {
-    const jsonStr = StorageService.exportAllData();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Ambi-Data-Backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-  };
-
-  // 导入数据
-  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      if (StorageService.importAllData(content)) {
-        onDataImported();
-        alert('数据恢复成功！');
-        onClose();
-      } else {
-        alert('数据解析失败，请检查文件格式。');
+  async function save() {
+    setBusy(true); setFeedback('');
+    try {
+      if (window.electronAPI) {
+        const s = await window.electronAPI.saveModelConnection({ apiBaseUrl: form.apiBaseUrl, modelName: form.modelName, enabled: !!form.modelEnabled, ...(key ? { apiKey: key } : {}) });
+        setStatus(s); setKey(''); onConnectionChange?.(s);
       }
-    };
-    reader.readAsText(file);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/30 backdrop-blur-xs">
-      <div className="w-full max-w-[360px] bg-[#fdfbf7] border border-[#e2d8c3] rounded-2xl shadow-float flex flex-col max-h-[520px] overflow-hidden">
-        {/* 顶部标题 */}
-        <div className="px-4 py-3 border-b border-[#ece6d5] flex items-center justify-between bg-[#f9f6ed]">
-          <div className="flex items-center gap-2">
-            <Settings size={16} className="text-[#a8681a]" />
-            <h3 className="text-sm font-semibold text-[#23293a]">系统设置与伴侣管理</h3>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 text-[#a49f91] hover:text-[#23293a] rounded-lg transition-colors"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        {/* 表单内容 */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-          {/* API 配置 */}
-          <div className="space-y-2">
-            <label className="font-semibold text-[#23293a] flex items-center gap-1.5">
-              <Key size={13} className="text-[#a8681a]" />
-              大模型连接配置
-            </label>
-
-            {/* 快速预设按钮 */}
-            <div className="flex gap-1.5 pt-0.5">
-              <button
-                type="button"
-                onClick={() => applyPreset('deepseek')}
-                className="px-2 py-0.5 rounded bg-[#efeadd] hover:bg-[#e2d8c3] text-[#8a5410] text-[10px]"
-              >
-                DeepSeek (推荐)
-              </button>
-              <button
-                type="button"
-                onClick={() => applyPreset('ollama')}
-                className="px-2 py-0.5 rounded bg-[#efeadd] hover:bg-[#e2d8c3] text-[#8a5410] text-[10px]"
-              >
-                本地 Ollama
-              </button>
-            </div>
-
-            <div className="space-y-1.5 pt-1">
-              <div>
-                <span className="text-[10px] text-[#8a5410]">API Base URL</span>
-                <input
-                  type="text"
-                  value={formData.apiBaseUrl}
-                  onChange={(e) => setFormData({ ...formData, apiBaseUrl: e.target.value })}
-                  placeholder="https://api.deepseek.com/v1"
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#ded5be] bg-white focus:outline-none focus:border-[#a8681a]"
-                />
-              </div>
-
-              <div>
-                <span className="text-[10px] text-[#8a5410]">API Key（不填则开启离线模拟相伴）</span>
-                <input
-                  type="password"
-                  value={formData.apiKey}
-                  onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
-                  placeholder="sk-..."
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#ded5be] bg-white focus:outline-none focus:border-[#a8681a]"
-                />
-              </div>
-
-              <div>
-                <span className="text-[10px] text-[#8a5410]">模型名称</span>
-                <input
-                  type="text"
-                  value={formData.modelName}
-                  onChange={(e) => setFormData({ ...formData, modelName: e.target.value })}
-                  placeholder="deepseek-chat"
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#ded5be] bg-white focus:outline-none focus:border-[#a8681a]"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 伴侣形象与性格 */}
-          <div className="space-y-2 pt-2 border-t border-[#ece6d5]">
-            <label className="font-semibold text-[#23293a] flex items-center gap-1.5">
-              <User size={13} className="text-[#a8681a]" />
-              伴侣形象与昵称
-            </label>
-
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <span className="text-[10px] text-[#8a5410]">头像表情</span>
-                <input
-                  type="text"
-                  value={formData.personaAvatar}
-                  onChange={(e) => setFormData({ ...formData, personaAvatar: e.target.value })}
-                  placeholder="🐱"
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#ded5be] bg-white text-center text-sm"
-                />
-              </div>
-              <div className="col-span-2">
-                <span className="text-[10px] text-[#8a5410]">伴侣昵称</span>
-                <input
-                  type="text"
-                  value={formData.personaName}
-                  onChange={(e) => setFormData({ ...formData, personaName: e.target.value })}
-                  placeholder="Ambi"
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#ded5be] bg-white"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 数据主权管理（源自 IO 哲学） */}
-          <div className="space-y-2 pt-2 border-t border-[#ece6d5]">
-            <label className="font-semibold text-[#23293a] flex items-center gap-1.5">
-              <Shield size={13} className="text-[#a8681a]" />
-              数据主权与备份 (Data Sovereignty)
-            </label>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleExport}
-                className="flex-1 py-1.5 px-2 rounded-lg bg-[#efeadd] hover:bg-[#e2d8c3] text-[#8a5410] flex items-center justify-center gap-1 text-[11px]"
-              >
-                <Download size={12} />
-                <span>导出全量记忆</span>
-              </button>
-
-              <label className="flex-1 py-1.5 px-2 rounded-lg bg-[#efeadd] hover:bg-[#e2d8c3] text-[#8a5410] flex items-center justify-center gap-1 text-[11px] cursor-pointer">
-                <Upload size={12} />
-                <span>导入备份</span>
-                <input type="file" accept=".json" onChange={handleImportFile} className="hidden" />
-              </label>
-            </div>
-          </div>
-        </div>
-
-        {/* 底部保存按钮 */}
-        <div className="px-4 py-2.5 bg-[#f9f6ed] border-t border-[#ece6d5] flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 rounded-lg border border-[#ded5be] text-[#6b7183] text-xs hover:bg-[#efeadd]"
-          >
-            取消
-          </button>
-          <button
-            onClick={handleSave}
-            className="px-4 py-1.5 rounded-lg bg-[#a8681a] text-white text-xs hover:bg-[#8a5410] transition-colors"
-          >
-            保存并应用
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+      await onSaveSettings(form);
+      await window.electronAPI?.setAlwaysOnTop(form.alwaysOnTop);
+      setFeedback('设置已保存。');
+    } catch (error) { setFeedback(`${error instanceof Error ? error.message : '设置保存失败。'} 请重新打开设置核对，部分连接配置可能已保存。`); }
+    finally { setBusy(false); }
+  }
+  async function backup() {
+    try {
+      if (window.electronAPI?.exportDataBackup) {
+        const result = await window.electronAPI.exportDataBackup(); if (result.canceled) return;
+      } else {
+        const url = URL.createObjectURL(new Blob([await Repository.exportAllData()], { type: 'application/json' }));
+        const a = document.createElement('a'); a.href = url; a.download = `Looma-v5-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      setFeedback('已生成两个空间的业务备份，不含模型凭据。');
+    } catch { setFeedback('备份生成失败，请检查本地存储状态。'); }
+  }
+  async function importFile(file?: File) {
+    if (!file) return;
+    setImportText(await file.text()); setReplaceAccepted(false); setFeedback('文件已读取。导入会替换两个空间的数据，请先备份并确认。');
+  }
+  async function restore() {
+    if (!replaceAccepted || busy) return;
+    setBusy(true); let acknowledged = false;
+    const savedButUnread = '业务资料已从备份恢复，视图暂未读取成功。请重新读取或重开应用，勿重复导入。';
+    try {
+      if (window.electronAPI?.importDataBackup) {
+        const result = await window.electronAPI.importDataBackup(); if (result.canceled) return;
+        acknowledged = true; setReplaceAccepted(false);
+        try { await Repository.reloadAfterRestore(); }
+        catch { /* The native restore was acknowledged; a read failure cannot undo it. */ }
+      } else {
+        if (!importText) return;
+        if (!await Repository.importAllData(importText)) { setFeedback('文件校验或写入失败，当前业务数据未替换。'); return; }
+        acknowledged = true; setImportText(''); setReplaceAccepted(false);
+        try {
+          const restored = await Repository.getSettings();
+          setForm({ ...restored, ...(status ? { apiBaseUrl: status.apiBaseUrl || restored.apiBaseUrl, modelName: status.modelName || restored.modelName, modelEnabled: status.enabled } : {}) });
+        } catch { /* Continue informing the parent about the completed replacement. */ }
+      }
+      await onDataImported();
+      setFeedback(Repository.getRestoreWarning() || '业务数据已完整恢复，模型凭据保持独立。');
+    } catch {
+      setFeedback(acknowledged ? Repository.getRestoreWarning() || savedButUnread : '恢复结果暂时无法确认，请重新读取并核对当前资料，勿重复导入。');
+    } finally { setBusy(false); }
+  }
+  return <div className="modal-shade" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <section className="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header className="sheet-header"><div><span className="eyebrow">YOUR WORKSPACE</span><h2 id="settings-title">设置与数据</h2></div><button className="icon-btn" onClick={onClose} aria-label="关闭设置"><X size={20}/></button></header>
+      <div className="sheet-body">
+        <p className="muted small">无需配置模型即可开始记录、核对和接续工作。模型增强是可选项，基础流程在本机运行。</p>
+        <details className="optional-model-settings" open={!!form.modelEnabled || !!form.memoryModelEnabled}><summary>可选：配置模型增强</summary>
+        <div className="section-heading"><KeyRound size={16}/><h3>模型增强</h3><span className="tag">{window.electronAPI ? status?.configured ? '已配置' : '未配置' : '浏览器 · 本地模式'}</span></div>
+        {window.electronAPI ? <>
+          <p className="muted small">开启后，将当前输入和选中项目的必要字段发送到你配置的服务；不会附带其他项目、生活数据或内部备注。结果仍需你确认。</p>
+          <div className="button-row"><button className="soft-btn" onClick={() => setForm(f => ({ ...f, apiBaseUrl: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat' }))}>DeepSeek 兼容接口</button><button className="soft-btn" onClick={() => setForm(f => ({ ...f, apiBaseUrl: 'http://localhost:11434/v1', modelName: 'llama3.2' }))}>本地 Ollama</button></div>
+          <label>API Base URL<input value={form.apiBaseUrl} onChange={e => setForm(f => ({ ...f, apiBaseUrl: e.target.value }))} placeholder="https://…/v1"/></label>
+          <label>模型名称<input value={form.modelName} onChange={e => setForm(f => ({ ...f, modelName: e.target.value }))}/></label>
+          <label>API Key<input type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} placeholder={status?.configured ? '已配置；留空保留，输入可替换' : 'Ollama 通常无需填写'}/></label>
+          <label className="check-label"><input type="checkbox" checked={!!form.modelEnabled} onChange={e => setForm(f => ({ ...f, modelEnabled: e.target.checked }))}/>我了解发送范围，主动开启模型增强</label>
+          <label className="check-label"><input type="checkbox" checked={!!form.memoryModelEnabled} onChange={e => setForm(f => ({ ...f, memoryModelEnabled: e.target.checked }))}/>另外允许发送当前空间检索到的回忆资料（默认关闭）</label>
+          <p className="muted small">回忆增强仅在记忆中心主动点击时发送当前问题和已展示的相关证据，最多20项、8000字符；不会读取另一空间或内部项目备注。历史原文可能含你主动输入的私人信息，请先审阅。</p>
+          {status?.configured && !status.persistent && <p className="notice">凭据仅在当前桌面会话有效，下次启动需要重新配置。</p>}
+          <button className="text-btn danger" onClick={async () => { try { await window.electronAPI!.clearModelConnection(); const clean = clearLegacyCredential(localStorage); const s = await window.electronAPI!.modelStatus(); setStatus(s); onConnectionChange?.(s); setForm(f => ({ ...f, modelEnabled: false })); setFeedback(clean ? '桌面模型配置已清除。' : '桌面连接已清除，但旧版凭据字段未能清理，请检查本地存储权限。'); } catch { setFeedback('清除失败，请重试。'); } }}>清除桌面模型配置</button>
+        </> : <p className="muted small">此浏览器预览支持本地解析、确认、修正、撤销和导出。连接自配模型请使用 Windows 桌面版。</p>}
+        </details><hr/>
+        <h3>使用偏好</h3>
+        <label>伴侣名称<input value={form.personaName} onChange={e => setForm(f => ({ ...f, personaName: e.target.value }))}/></label>
+        <label className="check-label"><input type="checkbox" checked={form.alwaysOnTop} onChange={e => setForm(f => ({ ...f, alwaysOnTop: e.target.checked }))}/>桌面窗口置顶</label>
+        <label className="check-label"><input type="checkbox" checked={!!form.remindersEnabled} onChange={e => setForm(f => ({ ...f, remindersEnabled: e.target.checked }))}/>应用开启时发送到期通知（仅显示事项数量）</label>
+        <p className="muted small">时区：Asia/Shanghai。退出后不提醒，重新打开时汇总到期事项。</p>
+        <hr/><h3>本地业务备份</h3><p className="muted small">包含生活与工作资料、手记、自定义卡和变更历史，不含 API Key。业务数据采用本地逻辑分区，并非加密保险箱。</p>
+        <p className="muted small">桌面使用SQLite逐条保存；原始档案保留到你主动删除。桌面备份为完整JSONL文件，浏览器为JSON，均不受旧版5MB限制。</p>
+        <div className="button-row"><button className="soft-btn" onClick={() => void backup()}><Download size={14}/>导出备份</button>{!window.electronAPI?.importDataBackup && <label className="soft-btn file-label"><Upload size={14}/>选择备份<input type="file" accept=".json,application/json" onChange={e => { void importFile(e.target.files?.[0]).catch(() => setFeedback('文件读取失败。')); e.target.value = ''; }}/></label>}</div>
+        {(importText || window.electronAPI?.importDataBackup) && <div className="notice"><label className="check-label"><input type="checkbox" checked={replaceAccepted} onChange={e => setReplaceAccepted(e.target.checked)}/>我已备份，确认替换两个空间的业务数据</label><button className="soft-btn" disabled={!replaceAccepted || busy} onClick={() => void restore()}>校验并恢复</button></div>}
+        {feedback && <p className="notice" role="status">{feedback}</p>}
+      </div><footer className="sheet-footer"><button className="soft-btn" onClick={onClose}>关闭</button><button className="primary-btn" disabled={busy} onClick={save}>{busy ? '保存中…' : '保存设置'}</button></footer>
+    </section>
+  </div>;
+}

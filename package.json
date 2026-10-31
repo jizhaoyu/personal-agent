@@ -1,7 +1,7 @@
 {
   "name": "personnal-agents",
   "version": "1.0.0",
-  "description": "Ambi - Desktop Ambient Life Companion powered by AI",
+  "description": "Looma - Local-first client follow-through companion",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -9,8 +9,13 @@
     "dev:electron": "wait-on tcp:5173 && electron .",
     "dev": "concurrently -k \"npm run dev:vite\" \"npm run dev:electron\"",
     "start": "cross-env NODE_ENV=production electron .",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build": "node scripts/build-info.cjs && tsc && vite build && node scripts/build-info.cjs --stamp-dist",
+    "package:trial": "npm run build && node scripts/package-trial.cjs",
+    "preview": "vite preview",
+    "test": "node scripts/test.mjs",
+    "test:native": "node scripts/test-native.cjs",
+    "prepare:sqlite": "node scripts/prepare-sqlite.cjs",
+    "postinstall": "node scripts/prepare-sqlite.cjs"
   },
   "keywords": [
     "personal-agent",
@@ -23,6 +28,7 @@
   "author": "Ambi Team",
   "license": "MIT",
   "dependencies": {
+    "better-sqlite3": "12.11.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.4.7",
     "html2canvas": "^1.4.1",

@@ -17,7 +17,6 @@ import {
   ArrowRight,
   Lock,
 } from 'lucide-react';
-import html2canvas from 'html2canvas';
 import {
   WorkspaceMode,
   WalletCardState,
@@ -29,6 +28,7 @@ import {
   DealStage,
 } from '../types';
 import { StorageService } from '../services/storage';
+import { Repository } from '../persistence/repository';
 
 interface LivingCardsBoardProps {
   mode: WorkspaceMode;
@@ -38,61 +38,122 @@ interface LivingCardsBoardProps {
 
 const STAGES: DealStage[] = ['初步接触', '需求确认', '方案报价', '商务谈判', '赢单成交'];
 
+const monthFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit',
+});
+const dayFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' });
+
+function statusForToday(value: RpgStatusCardState): RpgStatusCardState {
+  const today = dayFormatter.format(Date.now());
+  return { ...value, waterCups: value.dateKey === today ? value.waterCups : 0, dateKey: today };
+}
+
+export function monthlyExpenseTotal(entries: WalletCardState['entries'], now = Date.now()): number {
+  const month = monthFormatter.format(now);
+  return entries.filter(entry => entry.type === 'expense' && Number.isFinite(entry.timestamp) &&
+    monthFormatter.format(entry.timestamp) === month).reduce((sum, entry) => sum + entry.amount, 0);
+}
+
+export function boundedProgress(value: number, target: number): number {
+  if (!Number.isFinite(value) || !Number.isFinite(target) || target <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round(value / target * 100)));
+}
+
 export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   mode,
   highlightedCard,
   onCompanionToast,
 }) => {
-  // ToC 状态
-  const [wallet, setWallet] = useState<WalletCardState>(() => StorageService.getWalletCard());
-  const [rpg, setRpg] = useState<RpgStatusCardState>(() => StorageService.getRpgStatusCard());
-  const [persons, setPersons] = useState<PersonProfile[]>(() => StorageService.getPersonProfiles());
+  const cachedPartition = Repository.getCurrent().partitions[mode];
+  const cachedLife = mode === 'life' ? Repository.getCurrent().partitions.life : null;
+  // Only the current space is read. The repository cache contains a bounded, already migrated window.
+  const [wallet, setWallet] = useState<WalletCardState>(() => cachedLife?.wallet || { monthlyBudget: 0, wishTitle: '我的心愿', wishTarget: 0, wishSaved: 0, entries: [] });
+  const [rpg, setRpg] = useState<RpgStatusCardState>(() => cachedLife ? statusForToday(cachedLife.rpg) : { energy: 0, waterCups: 0, weightKg: 0, targetWeightKg: 0, moodBuff: '未记录', streakDays: 0 });
+  const [persons, setPersons] = useState<PersonProfile[]>(() => cachedLife?.persons || []);
 
   // ToB 状态
-  const [deals, setDeals] = useState<CrmDealItem[]>(() => StorageService.getCrmDeals());
-  const [tasks, setTasks] = useState<ProjectTaskItem[]>(() => StorageService.getProjectTasks());
+  const [deals, setDeals] = useState<CrmDealItem[]>(() => mode === 'work' ? StorageService.getCrmDeals() : []);
+  const [tasks, setTasks] = useState<ProjectTaskItem[]>(() => mode === 'work' ? StorageService.getProjectTasks() : []);
   const [selectedDealForPoster, setSelectedDealForPoster] = useState<CrmDealItem | null>(null);
 
   // 自定义卡
   const [customCards, setCustomCards] = useState<CustomLivingCard[]>(() =>
-    StorageService.getCustomCards(mode)
+    cachedPartition.customCards
   );
   const [activeSubTab, setActiveSubTab] = useState<string>(
     mode === 'work' ? 'crm' : 'wallet'
   );
 
   const posterRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  const activeModeRef = useRef(mode);
+  const savingRef = useRef(false);
+  activeModeRef.current = mode;
 
   React.useEffect(() => {
-    setCustomCards(StorageService.getCustomCards(mode));
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  React.useEffect(() => {
+    const syncCurrentSpace = () => {
+      if (!mountedRef.current || activeModeRef.current !== mode) return;
+      const partition = Repository.getCurrent().partitions[mode];
+      setCustomCards(partition.customCards);
+      if (mode === 'life') {
+        const life = Repository.getCurrent().partitions.life;
+        setWallet(life.wallet);
+        setRpg(statusForToday(life.rpg));
+        setPersons(life.persons);
+      }
+    };
+    syncCurrentSpace();
     if (highlightedCard) {
       setActiveSubTab(highlightedCard);
     } else {
       setActiveSubTab(mode === 'work' ? 'crm' : 'wallet');
     }
+    return Repository.subscribe(syncCurrentSpace);
   }, [mode, highlightedCard]);
+
+  const persistUpdate = async (save: () => void | Promise<void>, update: () => void, success: string) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    const sourceMode = mode;
+    try {
+      await save();
+      if (!mountedRef.current || activeModeRef.current !== sourceMode) return;
+      update();
+      onCompanionToast(success);
+    } catch {
+      if (mountedRef.current && activeModeRef.current === sourceMode) {
+        onCompanionToast('保存失败，界面保留原记录。请检查本地存储空间后重试。');
+      }
+    } finally {
+      savingRef.current = false;
+    }
+  };
 
   // ==================== ToC 双向交互动作（手动嘴知） ====================
   const handleAddWater = () => {
+    const today = statusForToday(rpg);
     const next = {
-      ...rpg,
-      waterCups: Math.min(8, rpg.waterCups + 1),
+      ...today,
+      waterCups: Math.min(8, today.waterCups + 1),
       energy: Math.min(100, rpg.energy + 3),
     };
-    setRpg(next);
-    StorageService.saveRpgStatusCard(next);
-    onCompanionToast(`💧 咕咚咕咚！今日第 ${next.waterCups} 杯水打卡成功，皮肤和精力都变好啦～`);
+    return persistUpdate(() => Repository.saveRpgStatusCard(next), () => setRpg(next),
+      `💧 已记录今日第 ${next.waterCups} 杯水。精力分值仅供个人记录参考。`);
   };
 
   const handleQuickRest = () => {
     const next = {
-      ...rpg,
+      ...statusForToday(rpg),
       energy: Math.min(100, rpg.energy + 15),
       moodBuff: '✨ 小憩回血 · 神清气爽',
     };
-    setRpg(next);
-    StorageService.saveRpgStatusCard(next);
-    onCompanionToast(`⚡ 闭目养神回血 +15%！状态满格，随时出发～`);
+    return persistUpdate(() => Repository.saveRpgStatusCard(next), () => setRpg(next),
+      '⚡ 休息记录已保存。精力分值是个人状态记录，不代表生理测量。');
   };
 
   const handleQuickSaveWish = () => {
@@ -111,9 +172,8 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
         ...wallet.entries,
       ],
     };
-    setWallet(next);
-    StorageService.saveWalletCard(next);
-    onCompanionToast(`💰 叮！心愿小金库 +¥200，离「${wallet.wishTitle}」又近了一大步！`);
+    return persistUpdate(() => Repository.saveWalletCard(next), () => setWallet(next),
+      `💰 已记录心愿储蓄 ¥200，当前累计 ¥${next.wishSaved}。`);
   };
 
   // ==================== ToB 双向交互动作（手动嘴知） ====================
@@ -130,29 +190,24 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
         updatedAt: Date.now(),
       };
     });
-    setDeals(nextDeals);
-    StorageService.saveCrmDeals(nextDeals);
     const updated = nextDeals.find((d) => d.id === dealId);
     if (updated) {
-      onCompanionToast(
-        `💼 漂亮！【${updated.clientName}】已推进至「${updated.stage}」，赢率跃升至 ${updated.winProbability}%！`
-      );
+      persistUpdate(() => StorageService.saveCrmDeals(nextDeals), () => setDeals(nextDeals),
+        `💼 【${updated.clientName}】已更新为「${updated.stage}」。`);
     }
   };
 
   const handleToggleTask = (taskId: string) => {
     const nextTasks = tasks.map((t) => (t.id === taskId ? { ...t, done: !t.done } : t));
-    setTasks(nextTasks);
-    StorageService.saveProjectTasks(nextTasks);
     const target = nextTasks.find((t) => t.id === taskId);
-    if (target?.done) {
-      onCompanionToast(`🎯 高效搞定「${target.title}」！已为您自动归档进度。`);
-    }
+    persistUpdate(() => StorageService.saveProjectTasks(nextTasks), () => setTasks(nextTasks),
+      `🎯 已更新「${target?.title || '事项'}」的完成状态。`);
   };
 
   const handleExportClientPoster = async () => {
     if (!posterRef.current) return;
     try {
+      const { default: html2canvas } = await import('html2canvas');
       const canvas = await html2canvas(posterRef.current, {
         scale: 2,
         backgroundColor: '#0f172a',
@@ -161,23 +216,18 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Looma商务交付对齐单-${selectedDealForPoster?.clientName || '客户'}.png`;
+      a.download = `Looma待确认纪要草稿-${selectedDealForPoster?.clientName || '客户'}.png`;
       a.click();
-      onCompanionToast(`📤 已为您自动剔除内部底价备注，导出超清《客户交付对齐单》！`);
-    } catch (err) {
-      console.error(err);
+      onCompanionToast('📤 已导出待确认纪要草稿，请核对全部文字后再自行发送。');
+    } catch {
+      onCompanionToast('图片导出失败，请重试。');
     }
   };
 
-  // 计算月度消费汇总
-  const totalSpent = wallet.entries
-    .filter((e) => e.type === 'expense')
-    .reduce((s, e) => s + e.amount, 0);
-  const budgetLeftPct = Math.max(
-    0,
-    Math.min(100, Math.round(((wallet.monthlyBudget - totalSpent) / wallet.monthlyBudget) * 100))
-  );
-  const wishPct = Math.min(100, Math.round((wallet.wishSaved / wallet.wishTarget) * 100));
+  // The cache is a bounded page, so this is an explicitly partial budget reference.
+  const totalSpent = monthlyExpenseTotal(wallet.entries);
+  const budgetUsedPct = boundedProgress(totalSpent, wallet.monthlyBudget);
+  const wishPct = boundedProgress(wallet.wishSaved, wallet.wishTarget);
 
   const isWork = mode === 'work';
 
@@ -294,19 +344,19 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
             {/* 月度预算血条 */}
             <div className="p-3 rounded-xl bg-white border border-[#e6decd] shadow-xs space-y-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-[#23293a]">💰 本月可用预算血条</span>
+                <span className="font-semibold text-[#23293a]">💰 近期账单预算参考</span>
                 <span className="font-mono text-[#a8681a] font-bold">
-                  剩余 ¥{(wallet.monthlyBudget - totalSpent).toFixed(0)} / ¥{wallet.monthlyBudget}
+                  已加载本月支出 ¥{totalSpent.toFixed(0)} / 预算 ¥{wallet.monthlyBudget}
                 </span>
               </div>
               <div className="w-full h-2.5 bg-[#efeadd] rounded-full overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-[#a8681a] to-amber-500 transition-all duration-500"
-                  style={{ width: `${budgetLeftPct}%` }}
+                  style={{ width: `${budgetUsedPct}%` }}
                 />
               </div>
               <p className="text-[11px] text-[#6b7183]">
-                💡 零填表提示：直接在聊天框说“午饭吃了35，打车20”，本卡片自动记账归类！
+                仅汇总已加载的近期账单，本月完整支出可能更高。文字示例：“午饭花了35元”。
               </p>
             </div>
 
@@ -337,7 +387,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
 
             {/* 近期流水 */}
             <div className="space-y-1.5">
-              <span className="text-[11px] font-semibold text-[#6b7183] px-1">近期自动捕获账单</span>
+              <span className="text-[11px] font-semibold text-[#6b7183] px-1">近期生活账单</span>
               {wallet.entries.slice(0, 6).map((item) => (
                 <div
                   key={item.id}
@@ -376,7 +426,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               {/* 精力条 */}
               <div className="space-y-1">
                 <div className="flex justify-between text-xs">
-                  <span className="text-[#6b7183]">🔋 今日精力值 (HP)</span>
+                  <span className="text-[#6b7183]">🔋 自报精力参考值 (HP)</span>
                   <span className="font-mono font-bold text-emerald-700">{rpg.energy} / 100</span>
                 </div>
                 <div className="w-full h-2.5 bg-[#efeadd] rounded-full overflow-hidden">
@@ -390,7 +440,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               {/* 饮水 8 格 */}
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs">
-                  <span className="text-[#6b7183]">💧 今日八杯水矩阵</span>
+                  <span className="text-[#6b7183]">💧 今日饮水记录</span>
                   <span className="font-mono text-sky-700 font-semibold">{rpg.waterCups} / 8 杯</span>
                 </div>
                 <div className="grid grid-cols-8 gap-1.5">
@@ -413,8 +463,8 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               {/* 体重与打卡天数 */}
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <div className="p-2.5 rounded-lg bg-[#f9f6ed] border border-[#ece6d5]">
-                  <span className="text-[10px] text-[#6b7183] block">⚖️ 当前体重 (目标 {rpg.targetWeightKg}kg)</span>
-                  <span className="text-base font-mono font-bold text-[#23293a]">{rpg.weightKg} kg</span>
+                  <span className="text-[10px] text-[#6b7183] block">⚖️ 自报体重{rpg.targetWeightKg > 0 ? `（目标 ${rpg.targetWeightKg}kg）` : ''}</span>
+                  <span className="text-base font-mono font-bold text-[#23293a]">{rpg.weightKg > 0 ? `${rpg.weightKg} kg` : '尚未记录'}</span>
                 </div>
                 <div className="p-2.5 rounded-lg bg-[#f9f6ed] border border-[#ece6d5]">
                   <span className="text-[10px] text-[#6b7183] block">🔥 连续自律打卡</span>
@@ -434,7 +484,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   onClick={handleQuickRest}
                   className="flex-1 py-1.5 rounded-lg bg-[#a8681a] hover:bg-[#8a5410] text-white text-xs font-medium cursor-pointer"
                 >
-                  🛌 小憩回血 +15%
+                  🛌 记录休息
                 </button>
               </div>
             </div>
@@ -445,7 +495,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
         {!isWork && activeSubTab === 'relationships' && (
           <div className="space-y-2.5">
             <div className="px-3 py-2 rounded-xl bg-[#f5f1e6] text-[11px] text-[#8a5410]">
-              💡 随口对伴侣说：“记一下王叔对海鲜过敏，喜欢喝普洱”，即可自动建档永不遗忘。
+              💡 可输入：“记一下王叔对海鲜过敏，喜欢喝普洱”。请在这里查看并核对亲友备忘。
             </div>
             {persons.map((p) => (
               <div
@@ -566,7 +616,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   </p>
                   <p className="text-amber-300/90 flex items-center gap-1">
                     <Lock size={11} className="shrink-0" />
-                    <span className="font-medium">内部底线(外发自动隐藏)：</span>
+                    <span className="font-medium">内部备注（仅内部查看）：</span>
                     {deal.internalBottomLine}
                   </p>
                   <p className="text-emerald-400">
@@ -584,7 +634,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                     className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
                   >
                     <FileCheck size={12} />
-                    <span>一键脱敏生成《客户交付对齐单》→</span>
+                    <span>查看待确认纪要草稿 →</span>
                   </button>
                 </div>
               </div>
@@ -596,7 +646,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
         {isWork && activeSubTab === 'projects' && (
           <div className="space-y-2.5">
             <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-[11px] text-slate-300">
-              💡 直接在聊天框说：“周五前完成星辰科技合同终审”，系统将自动拆解并挂载至死线看板。
+              💡 输入待办文字后，请在工作台预览并确认事项与日期。
             </div>
             {tasks.map((t) => (
               <div
@@ -657,11 +707,11 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                 className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow-sm"
               >
                 <Download size={13} />
-                <span>导出超清对齐单发客户</span>
+                <span>导出待确认草稿</span>
               </button>
             </div>
 
-            {/* 商务黑金对齐回执单渲染画布（已自动剔除内部底价！） */}
+            {/* 旧版内部纪要预览；正式工作态由 WorkBench 提供审核外发流程 */}
             {(() => {
               const target = selectedDealForPoster || deals[0];
               if (!target) return null;
@@ -673,7 +723,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   <div className="flex items-center justify-between border-b border-slate-700 pb-3">
                     <div>
                       <span className="text-[10px] font-mono uppercase tracking-widest text-amber-400 block">
-                        CLIENT ALIGNMENT MEMO · 商务沟通确认函
+                        DRAFT · 沟通纪要草稿／待对方确认
                       </span>
                       <h3 className="text-base font-bold text-white mt-0.5">
                         {target.clientName} · 合作推进备忘录
@@ -698,21 +748,21 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   <div className="space-y-2 text-xs">
                     <div className="p-3 rounded-lg bg-slate-900/60 border-l-3 border-blue-500">
                       <span className="text-[10px] text-blue-400 font-semibold block mb-1">
-                        一、 已对齐核心业务诉求
+                        一、 待核对的业务诉求
                       </span>
                       <p className="text-slate-200 leading-relaxed">{target.painPoints}</p>
                     </div>
 
                     <div className="p-3 rounded-lg bg-slate-900/60 border-l-3 border-emerald-500">
                       <span className="text-[10px] text-emerald-400 font-semibold block mb-1">
-                        二、 我方下一步交付承诺与排期
+                        二、 待确认的后续行动与排期
                       </span>
                       <p className="text-slate-200 leading-relaxed">{target.nextAction}</p>
                     </div>
                   </div>
 
                   <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-                    <span>🔒 内部敏感底价已由 Looma 脱敏引擎自动过滤</span>
+                    <span>草稿仅供核对，发送前请审阅所有内容。</span>
                     <span className="font-mono text-amber-400/80">Generated by Looma OS</span>
                   </div>
                 </div>
@@ -725,7 +775,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
         {activeSubTab === 'custom' && (
           <div className="space-y-3">
             {customCards.map((c) => {
-              const pct = Math.min(100, Math.round((c.metricValue / c.metricTarget) * 100));
+              const pct = boundedProgress(c.metricValue, c.metricTarget);
               return (
                 <div
                   key={c.id}
@@ -747,14 +797,9 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   <div className="flex justify-end">
                     <button
                       onClick={() => {
-                        const all = StorageService.getCustomCards().map((item) =>
-                          item.id === c.id
-                            ? { ...item, metricValue: Math.min(item.metricTarget, item.metricValue + 10) }
-                            : item
-                        );
-                        StorageService.saveCustomCards(all);
-                        setCustomCards(StorageService.getCustomCards(mode));
-                        onCompanionToast(`🌟 「${c.title}」进度 +10！稳扎稳打～`);
+                        const updated = { ...c, metricValue: Math.min(c.metricTarget, c.metricValue + 10) };
+                        return persistUpdate(() => Repository.upsert(mode, 'custom', [updated], true),
+                          () => setCustomCards(previous => previous.map(item => item.id === c.id ? updated : item)), `🌟 已更新「${c.title}」进度。`);
                       }}
                       className="px-2.5 py-1 rounded bg-[#a8681a] text-white text-xs cursor-pointer"
                     >

@@ -1,454 +1,357 @@
-import {
-  AppSettings,
-  Message,
-  MemoryItem,
-  JournalArtifact,
-  WorkspaceMode,
-  WalletCardState,
-  RpgStatusCardState,
-  PersonProfile,
-  CrmDealItem,
-  ProjectTaskItem,
-  CustomLivingCard,
+import type {
+  AppSettings, PublicAppSettings, AppSnapshotV3, WorkspaceMode, WorkPartition, LifePartition,
+  Message, MemoryItem, JournalArtifact, WalletCardState, RpgStatusCardState, PersonProfile,
+  CrmDealItem, Engagement, ProjectTaskItem, CustomLivingCard, WorkOperation, ProposedChangeSet,
+  MutationResult, StateMutationReceipt,
 } from '../types';
+import { shanghaiDateKey } from './dates';
 
-const SETTINGS_KEY = 'looma_settings';
-const MODE_KEY = 'looma_workspace_mode';
-
-// 双保险箱物理隔离命名空间
-const getMsgKey = (mode: WorkspaceMode) => `looma_${mode}_messages`;
-const getMemKey = (mode: WorkspaceMode) => `looma_${mode}_memories`;
-
-const WALLET_KEY = 'looma_life_wallet';
-const RPG_KEY = 'looma_life_rpg';
-const PERSONS_KEY = 'looma_life_persons';
-
-const CRM_KEY = 'looma_work_crm';
-const PROJECTS_KEY = 'looma_work_projects';
-const CUSTOM_CARDS_KEY = 'looma_custom_cards';
-const JOURNALS_KEY = 'looma_journals';
-
-export const DEFAULT_SETTINGS: AppSettings = {
-  apiKey: '',
-  apiBaseUrl: 'https://api.deepseek.com/v1',
-  modelName: 'deepseek-chat',
-  personaName: 'Looma (灵犀)',
-  personaAvatar: '✨',
-  personaGreeting: '随口说句话，我会自动帮你记账、改状态或跟进客户商机～',
-  systemPrompt: `你是全球首款“零填表”活体状态伴生系统 Looma（灵犀胶囊）。
-你具备双面人格：
-- 当处于【🌙 生活态】时，你是温暖、知心、会接梗的生活搭子，关心用户的日常花销、精力体重与亲友关系；
-- 当处于【💼 搞钱态】时，你是干练、精准、结果导向的首席商务幕僚，帮用户零填表维护客户 CRM 商机、推进项目死线、生成专业交付单。
-说话简练生动，每次状态卡更新后自然提及你已自动帮用户更新好了看板。`,
-  alwaysOnTop: true,
+export const SNAPSHOT_KEY = 'looma_app_v3';
+export const DEFAULT_SETTINGS: PublicAppSettings = {
+  apiBaseUrl: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat', personaName: 'Looma',
+  personaAvatar: '✨', personaGreeting: '把零散沟通整理成可信的下一步。',
+  systemPrompt: '你是 Looma 客户跟进伴侣。整理用户提供的事实，不猜测预算、成交或承诺；变更必须由用户确认。',
+  alwaysOnTop: false, modelEnabled: false, remindersEnabled: false,
 };
+const stages = ['初步接触', '需求确认', '方案报价', '商务谈判', '赢单成交'];
+const listeners = new Set<() => void>();
+const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+const isRecord = (x: unknown): x is Record<string, any> => !!x && typeof x === 'object' && !Array.isArray(x);
+const str = (x: unknown) => typeof x === 'string';
+const num = (x: unknown) => typeof x === 'number' && Number.isFinite(x);
+const strings = (x: unknown) => Array.isArray(x) && x.every(str);
+const only = (x: Record<string, any>, keys: string[]) => Object.keys(x).every(key => keys.includes(key));
+const unique = (items: { id: string }[]) => new Set(items.map(item => item.id)).size === items.length;
+const baseEntity = (x: unknown): x is Record<string, any> => isRecord(x) && str(x.id) && x.id.length > 0;
+export const newId = (prefix: string) => `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+
+function publicSettings(input: unknown): PublicAppSettings {
+  const result = { ...DEFAULT_SETTINGS };
+  if (!isRecord(input)) return result;
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    if (typeof input[key] === typeof result[key]) result[key] = input[key];
+  }
+  return result;
+}
+function partitionBase() {
+  return { revision: 0, messages: [], memories: [], journals: [], customCards: [], events: [], processedProposalIds: [] };
+}
+function emptySnapshot(): AppSnapshotV3 {
+  return {
+    schemaVersion: 3, snapshotRevision: 0, activeMode: 'work', settings: { ...DEFAULT_SETTINGS },
+    partitions: {
+      life: { ...partitionBase(), wallet: { monthlyBudget: 5000, wishTitle: '心愿小金库', wishTarget: 10000, wishSaved: 0, entries: [] },
+        rpg: { energy: 80, waterCups: 0, weightKg: 0, targetWeightKg: 0, moodBuff: '尚未记录', streakDays: 0, dateKey: shanghaiDateKey() }, persons: [] },
+      work: { ...partitionBase(), engagements: [], tasks: [] },
+    },
+  };
+}
+
+function validEngagement(x: unknown): x is Engagement {
+  return baseEntity(x) && only(x, ['id', 'clientName', 'title', 'budgetAmount', 'stage', 'internalContext', 'shareableSummary', 'nextAction', 'updatedAt']) &&
+    str(x.clientName) && !!x.clientName.trim() && str(x.title) && !!x.title.trim() &&
+    (x.budgetAmount === undefined || (num(x.budgetAmount) && x.budgetAmount >= 0)) && stages.includes(x.stage) &&
+    str(x.internalContext) && str(x.shareableSummary) && str(x.nextAction) && num(x.updatedAt);
+}
+function validTask(x: unknown): x is ProjectTaskItem {
+  return baseEntity(x) && only(x, ['id', 'title', 'assignee', 'deadline', 'priority', 'done', 'engagementId', 'dueAt', 'sourceDeadlineText']) &&
+    str(x.title) && !!x.title.trim() && str(x.assignee) && str(x.deadline) && ['high', 'medium', 'low'].includes(x.priority) && typeof x.done === 'boolean' &&
+    (x.engagementId === undefined || str(x.engagementId)) && (x.sourceDeadlineText === undefined || str(x.sourceDeadlineText)) &&
+    (x.dueAt === undefined || (str(x.dueAt) && Number.isFinite(Date.parse(x.dueAt))));
+}
+function validMemory(x: unknown, mode: WorkspaceMode): x is MemoryItem {
+  return baseEntity(x) && only(x, ['id', 'mode', 'category', 'fact', 'sourceMessageId', 'createdAt', 'importance']) && x.mode === mode &&
+    ['preference', 'habit', 'experience', 'person', 'business'].includes(x.category) && str(x.fact) && num(x.createdAt) && num(x.importance) &&
+    x.importance >= 0 && x.importance <= 10 && (x.sourceMessageId === undefined || str(x.sourceMessageId));
+}
+function validOperation(x: any, mode: WorkspaceMode): x is WorkOperation {
+  if (!isRecord(x) || !only(x, ['target', 'entityId', 'before', 'after']) || !str(x.entityId) || !x.entityId ||
+      !('before' in x) || !('after' in x) || (x.before === null && x.after === null)) return false;
+  const validate = x.target === 'engagement' && mode === 'work' ? validEngagement : x.target === 'task' && mode === 'work' ? validTask :
+    x.target === 'memory' ? (item: unknown) => validMemory(item, mode) : null;
+  return !!validate && [x.before, x.after].every(item => item === null || (validate(item) && item.id === x.entityId));
+}
+function validMessage(x: any, mode: WorkspaceMode) {
+  return baseEntity(x) && only(x, ['id', 'role', 'content', 'timestamp', 'attachments', 'mutations', 'artifactRef']) &&
+    ['user', 'assistant', 'system'].includes(x.role) && str(x.content) && num(x.timestamp) &&
+    (x.attachments === undefined || strings(x.attachments)) && (x.mutations === undefined || (Array.isArray(x.mutations) && x.mutations.every(m =>
+      baseEntity(m) && m.mode === mode && ['wallet', 'rpg_status', 'relationships', 'crm', 'projects', 'custom'].includes(m.targetCardType) &&
+      str(m.targetCardTitle) && str(m.summaryText) && str(m.deltaBadge) && num(m.timestamp)))) &&
+    (x.artifactRef === undefined || (isRecord(x.artifactRef) && ['journal', 'gomoku', 'note'].includes(x.artifactRef.type) && str(x.artifactRef.dataId)));
+}
+function validJournal(x: any, mode: WorkspaceMode) {
+  return baseEntity(x) && only(x, ['id', 'mode', 'date', 'title', 'mood', 'userGoldenQuote', 'aiReflection', 'photoUrl', 'stickers', 'createdAt']) &&
+    x.mode === mode && ['date', 'title', 'mood', 'userGoldenQuote', 'aiReflection'].every(key => str(x[key])) &&
+    strings(x.stickers) && num(x.createdAt) && (x.photoUrl === undefined || str(x.photoUrl));
+}
+function validCard(x: any, mode: WorkspaceMode) {
+  return baseEntity(x) && only(x, ['id', 'mode', 'title', 'icon', 'metricLabel', 'metricValue', 'metricTarget', 'unit', 'checklist']) && x.mode === mode &&
+    ['title', 'icon', 'metricLabel', 'unit'].every(key => str(x[key])) && num(x.metricValue) && num(x.metricTarget) && x.metricTarget > 0 &&
+    Array.isArray(x.checklist) && unique(x.checklist) && x.checklist.every(item => baseEntity(item) && only(item, ['id', 'text', 'done']) && str(item.text) && typeof item.done === 'boolean');
+}
+function validPartition(x: any, mode: WorkspaceMode) {
+  const common = ['revision', 'messages', 'memories', 'journals', 'customCards', 'events', 'processedProposalIds'];
+  if (!isRecord(x) || !only(x, [...common, ...(mode === 'work' ? ['engagements', 'tasks'] : ['wallet', 'rpg', 'persons'])]) ||
+      !Number.isInteger(x.revision) || x.revision < 0 || !common.slice(1).every(key => Array.isArray(x[key])) || !strings(x.processedProposalIds)) return false;
+  if (!x.messages.every(m => validMessage(m, mode)) || !unique(x.messages) || !x.memories.every(m => validMemory(m, mode)) || !unique(x.memories) ||
+      !x.journals.every(j => validJournal(j, mode)) || !unique(x.journals) || !x.customCards.every(c => validCard(c, mode)) || !unique(x.customCards)) return false;
+  if (!x.events.every(e => baseEntity(e) && only(e, ['id', 'proposalId', 'mode', 'sourceMessageId', 'sourceText', 'operations', 'createdAt', 'revertedAt']) &&
+      e.mode === mode && str(e.proposalId) && str(e.sourceMessageId) && str(e.sourceText) && num(e.createdAt) &&
+      (e.revertedAt === undefined || num(e.revertedAt)) && Array.isArray(e.operations) && e.operations.every(op => validOperation(op, mode))) || !unique(x.events)) return false;
+  if (mode === 'work') return Array.isArray(x.engagements) && x.engagements.every(validEngagement) && unique(x.engagements) &&
+    Array.isArray(x.tasks) && x.tasks.every(validTask) && unique(x.tasks) && x.tasks.every(t => !t.engagementId || x.engagements.some(e => e.id === t.engagementId));
+  const wallet = x.wallet, rpg = x.rpg;
+  return isRecord(wallet) && only(wallet, ['monthlyBudget', 'wishTitle', 'wishTarget', 'wishSaved', 'entries']) &&
+    num(wallet.monthlyBudget) && wallet.monthlyBudget >= 0 && num(wallet.wishTarget) && wallet.wishTarget >= 0 && num(wallet.wishSaved) && wallet.wishSaved >= 0 && str(wallet.wishTitle) &&
+    Array.isArray(wallet.entries) && unique(wallet.entries) && wallet.entries.every(e => baseEntity(e) && only(e, ['id', 'title', 'amount', 'type', 'category', 'timestamp']) &&
+      str(e.title) && num(e.amount) && e.amount >= 0 && ['expense', 'income', 'saving'].includes(e.type) &&
+      ['餐饮☕', '购物🛍️', '出行🚕', '娱乐🎮', '生活🏠', '金库✨'].includes(e.category) && num(e.timestamp)) &&
+    isRecord(rpg) && only(rpg, ['energy', 'waterCups', 'weightKg', 'targetWeightKg', 'streakDays', 'moodBuff', 'dateKey', 'lastActivityDate']) &&
+    ['energy', 'waterCups', 'weightKg', 'targetWeightKg', 'streakDays'].every(key => num(rpg[key]) && rpg[key] >= 0) && rpg.energy <= 100 && rpg.waterCups <= 8 && str(rpg.moodBuff) &&
+    (rpg.dateKey === undefined || str(rpg.dateKey)) && (rpg.lastActivityDate === undefined || str(rpg.lastActivityDate)) &&
+    Array.isArray(x.persons) && unique(x.persons) && x.persons.every(p => baseEntity(p) &&
+      only(p, ['id', 'name', 'relation', 'taboos', 'preferences', 'nextImportantDate', 'updatedAt']) && str(p.name) && str(p.relation) && strings(p.taboos) && strings(p.preferences) &&
+      (p.nextImportantDate === undefined || str(p.nextImportantDate)) && num(p.updatedAt));
+}
+export function validateSnapshot(x: unknown): x is AppSnapshotV3 {
+  return isRecord(x) && only(x, ['schemaVersion', 'snapshotRevision', 'activeMode', 'settings', 'partitions']) && x.schemaVersion === 3 &&
+    Number.isInteger(x.snapshotRevision) && x.snapshotRevision >= 0 && ['life', 'work'].includes(x.activeMode) &&
+    isRecord(x.settings) && only(x.settings, Object.keys(DEFAULT_SETTINGS)) && Object.keys(DEFAULT_SETTINGS).every(key => typeof x.settings[key] === typeof DEFAULT_SETTINGS[key]) &&
+    isRecord(x.partitions) && only(x.partitions, ['life', 'work']) && validPartition(x.partitions.life, 'life') && validPartition(x.partitions.work, 'work');
+}
+
+function legacyValue(key: string, fallback: any) {
+  const raw = localStorage.getItem(key);
+  if (raw === null) return copy(fallback);
+  try { return JSON.parse(raw); } catch { throw new Error(`旧数据 ${key} 格式损坏，原数据已保留，请先备份恢复。`); }
+}
+function migratedEngagement(item: CrmDealItem): Engagement {
+  return { id: item.id, clientName: item.clientName, title: `${item.clientName}的合作项目`, budgetAmount: item.budgetAmount,
+    stage: item.stage, internalContext: [item.painPoints, item.internalBottomLine].filter(Boolean).join('\n'), shareableSummary: '',
+    nextAction: item.nextAction || '', updatedAt: item.updatedAt };
+}
+function fromLegacy(data?: any): AppSnapshotV3 {
+  if (data && (!isRecord(data.settings) || !isRecord(data.lifeVault) || !isRecord(data.workVault))) {
+    throw new Error('旧版备份缺少完整的设置与双空间数据，未导入。');
+  }
+  const snapshot = emptySnapshot();
+  const life = snapshot.partitions.life, work = snapshot.partitions.work;
+  const lifeData = data?.lifeVault;
+  const workData = data?.workVault;
+  snapshot.settings = publicSettings(data ? data.settings : legacyValue('looma_settings', {}));
+  snapshot.activeMode = data ? 'work' : (localStorage.getItem('looma_workspace_mode') === 'life' ? 'life' : 'work');
+  for (const mode of ['life', 'work'] as WorkspaceMode[]) {
+    const partition = snapshot.partitions[mode];
+    const legacy = mode === 'life' ? lifeData : workData;
+    partition.messages = (data ? legacy?.messages || [] : legacyValue(`looma_${mode}_messages`, [])).map(message => ({
+      ...message, ...(Array.isArray(message.mutations) ? { mutations: message.mutations.filter(receipt => receipt.mode === mode) } : {}),
+    }));
+    partition.memories = (data ? legacy?.memories || [] : legacyValue(`looma_${mode}_memories`, [])).map(item => ({ ...item, mode }));
+  }
+  life.wallet = data ? lifeData?.wallet || life.wallet : legacyValue('looma_life_wallet', life.wallet);
+  life.rpg = data ? lifeData?.rpg || life.rpg : legacyValue('looma_life_rpg', life.rpg);
+  life.persons = data ? lifeData?.persons || [] : legacyValue('looma_life_persons', []);
+  work.engagements = (data ? workData?.crmDeals || [] : legacyValue('looma_work_crm', [])).map(migratedEngagement);
+  work.tasks = data ? workData?.projectTasks || [] : legacyValue('looma_work_projects', []);
+  const cards = data ? data.customCards || [] : legacyValue('looma_custom_cards', []);
+  const journals = data ? data.journals || [] : legacyValue('looma_journals', []);
+  for (const mode of ['life', 'work'] as WorkspaceMode[]) {
+    snapshot.partitions[mode].customCards = cards.filter(item => (item.mode || 'life') === mode).map(item => ({ ...item, mode }));
+    snapshot.partitions[mode].journals = journals.filter(item => (item.mode || 'life') === mode).map(item => ({ ...item, mode }));
+  }
+  if (!validateSnapshot(snapshot)) throw new Error('旧数据未通过完整校验，原数据已保留。');
+  return snapshot;
+}
+function emit() { for (const listener of listeners) { try { listener(); } catch { /* UI listeners cannot change persistence outcome. */ } } }
+function persist(snapshot: AppSnapshotV3) {
+  if (!validateSnapshot(snapshot)) throw new Error('数据校验失败，未保存任何更改。');
+  localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
+  emit();
+}
+function updatePartition(mode: WorkspaceMode, update: (partition: any) => void, bumpRevision = false) {
+  if (mode !== 'life' && mode !== 'work') throw new Error('必须明确指定生活或工作空间。');
+  const snapshot = StorageService.getSnapshot();
+  update(snapshot.partitions[mode]);
+  if (bumpRevision) snapshot.partitions[mode].revision++;
+  snapshot.snapshotRevision++;
+  persist(snapshot);
+}
+function collection(partition: any, target: string): any[] {
+  return partition[target === 'engagement' ? 'engagements' : target === 'task' ? 'tasks' : 'memories'];
+}
+function applyOperation(partition: any, operation: WorkOperation, reverse = false) {
+  const list = collection(partition, operation.target);
+  const index = list.findIndex(item => item.id === operation.entityId);
+  const value = reverse ? operation.before : operation.after;
+  if (value === null) { if (index >= 0) list.splice(index, 1); }
+  else if (index >= 0) list[index] = copy(value);
+  else list.push(copy(value));
+}
+export function validateProposal(proposal: ProposedChangeSet, partition: WorkPartition | LifePartition): string[] {
+  const errors: string[] = [];
+  if (!isRecord(proposal) || !['life', 'work'].includes(proposal.mode) || !str(proposal.id) || !str(proposal.sourceMessageId) || !str(proposal.sourceText) ||
+      !Array.isArray(proposal.operations) || !strings(proposal.warnings) || !num(proposal.createdAt)) return ['变更格式无效。'];
+  if (proposal.baseRevision !== partition.revision) errors.push('预览已过期，请重新整理后确认。');
+  if (!proposal.operations.length) errors.push('没有可提交的变更。');
+  const targets = new Set<string>();
+  for (const operation of proposal.operations) {
+    if (!validOperation(operation, proposal.mode)) { errors.push('变更字段或空间无效。'); continue; }
+    const key = `${operation.target}:${operation.entityId}`;
+    if (targets.has(key)) errors.push('同一批次包含重复实体，请先合并变更。');
+    targets.add(key);
+    const existing = collection(partition, operation.target).find(item => item.id === operation.entityId) || null;
+    if (JSON.stringify(existing) !== JSON.stringify(operation.before)) errors.push('记录已变化，请刷新预览。');
+  }
+  return [...new Set(errors)];
+}
 
 export const StorageService = {
-  getWorkspaceMode(): WorkspaceMode {
-    const raw = localStorage.getItem(MODE_KEY);
-    return raw === 'work' ? 'work' : 'life';
+  getSnapshot(): AppSnapshotV3 {
+    const raw = localStorage.getItem(SNAPSHOT_KEY);
+    if (raw !== null) {
+      let snapshot: any;
+      try { snapshot = JSON.parse(raw); } catch { throw new Error('本地快照损坏，原数据未覆盖，请从备份恢复。'); }
+      if (!validateSnapshot(snapshot)) throw new Error('本地快照未通过校验，原数据未覆盖。');
+      return snapshot;
+    }
+    const snapshot = fromLegacy();
+    persist(snapshot);
+    return copy(snapshot);
   },
-
+  subscribe(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  },
+  getWorkspaceMode(): WorkspaceMode { return this.getSnapshot().activeMode; },
   saveWorkspaceMode(mode: WorkspaceMode): void {
-    localStorage.setItem(MODE_KEY, mode);
+    if (!['life', 'work'].includes(mode)) throw new Error('空间无效。');
+    const snapshot = this.getSnapshot(); snapshot.activeMode = mode; snapshot.snapshotRevision++; persist(snapshot);
   },
-
-  getSettings(): AppSettings {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    try {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-    } catch {
-      return DEFAULT_SETTINGS;
-    }
-  },
-
-  saveSettings(settings: AppSettings): void {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  },
-
-  // 双保险箱物理隔离：消息流
-  getMessages(mode: WorkspaceMode = 'life'): Message[] {
-    const raw = localStorage.getItem(getMsgKey(mode));
-    if (!raw) {
-      if (mode === 'work') {
-        return [
-          {
-            id: 'work-welcome-1',
-            role: 'assistant',
-            content:
-              '💼 已进入【搞钱态 · 商务防窥空间】。私人账单与生活记忆已物理隐藏。\n你可以直接对我说：“刚见完星辰科技李总，预算18万，下周三前交方案”，我会自动为你生成并维护《客户商机 CRM 卡》！',
-            timestamp: Date.now() - 30000,
-          },
-        ];
+  getSettings(): PublicAppSettings { return this.getSnapshot().settings; },
+  saveSettings(settings: AppSettings): void { const snapshot = this.getSnapshot(); snapshot.settings = publicSettings(settings); snapshot.snapshotRevision++; persist(snapshot); },
+  getMessages(mode: WorkspaceMode): Message[] { if (!mode) throw new Error('必须指定空间。'); return this.getSnapshot().partitions[mode].messages; },
+  saveMessages(messages: Message[], mode: WorkspaceMode): void { updatePartition(mode, p => { p.messages = messages.slice(-200); }); },
+  getMemories(mode: WorkspaceMode): MemoryItem[] { if (!mode) throw new Error('必须指定空间。'); return this.getSnapshot().partitions[mode].memories; },
+  saveMemories(memories: MemoryItem[], mode: WorkspaceMode): void {
+    const normalized = memories.map(item => ({ ...item, mode }));
+    if (mode === 'work') {
+      const before = this.getMemories(mode);
+      const operations: WorkOperation[] = [];
+      for (const item of normalized) if (JSON.stringify(before.find(x => x.id === item.id)) !== JSON.stringify(item)) {
+        operations.push({ target: 'memory', entityId: item.id, before: before.find(x => x.id === item.id) || null, after: item });
       }
-      return [
-        {
-          id: 'life-welcome-1',
-          role: 'assistant',
-          content:
-            '🌙 嗨！这里是你的【生活态 · 零填表伴生空间】。\n不用打开记账或打卡软件，直接对我说：“早饭吃了18块拿铁，今天体重64.2kg”，我会毫秒级自动更新你的《随口记账卡》和《人生状态栏》哦✨',
-          timestamp: Date.now() - 60000,
-        },
-      ];
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
+      for (const item of before) if (!normalized.some(x => x.id === item.id)) operations.push({ target: 'memory', entityId: item.id, before: item, after: null });
+      if (operations.length) { const result = this.commit(this.createProposal(mode, operations, '用户手动确认记忆编辑')); if (!result.ok) throw new Error(result.error); }
+    } else updatePartition(mode, p => { p.memories = normalized; }, true);
   },
-
-  saveMessages(messages: Message[], mode: WorkspaceMode = 'life'): void {
-    localStorage.setItem(getMsgKey(mode), JSON.stringify(messages.slice(-200)));
+  addMemory(fact: string, category: MemoryItem['category'], mode: WorkspaceMode): MemoryItem {
+    if (!mode) throw new Error('必须指定空间。');
+    const item: MemoryItem = { id: newId('memory'), mode, category, fact, createdAt: Date.now(), importance: 3 };
+    this.saveMemories([...this.getMemories(mode), item], mode); return item;
   },
-
-  // 双保险箱物理隔离：记忆库
-  getMemories(mode: WorkspaceMode = 'life'): MemoryItem[] {
-    const raw = localStorage.getItem(getMemKey(mode));
-    if (!raw) {
-      if (mode === 'work') {
-        return [
-          {
-            id: 'wmem-1',
-            mode: 'work',
-            category: 'business',
-            fact: '对外报价原则：标准版折扣底线为 85 折，赠送 3 个月技术护航',
-            createdAt: Date.now() - 86400000,
-            importance: 5,
-          },
-        ];
-      }
-      return [
-        {
-          id: 'lmem-1',
-          mode: 'life',
-          category: 'preference',
-          fact: '喜欢喝热生椰拿铁，通常选半糖或少冰',
-          createdAt: Date.now() - 86400000 * 2,
-          importance: 4,
-        },
-        {
-          id: 'lmem-2',
-          mode: 'life',
-          category: 'habit',
-          fact: '正在执行轻断食减脂计划，目标体重 60.0kg',
-          createdAt: Date.now() - 86400000,
-          importance: 4,
-        },
-      ];
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
-  },
-
-  saveMemories(memories: MemoryItem[], mode: WorkspaceMode = 'life'): void {
-    localStorage.setItem(getMemKey(mode), JSON.stringify(memories));
-  },
-
-  addMemory(
-    fact: string,
-    category: MemoryItem['category'] = 'experience',
-    mode: WorkspaceMode = 'life'
-  ): MemoryItem {
-    const memories = this.getMemories(mode);
-    const newItem: MemoryItem = {
-      id: 'mem-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
-      mode,
-      category,
-      fact,
-      createdAt: Date.now(),
-      importance: 4,
-    };
-    memories.unshift(newItem);
-    this.saveMemories(memories, mode);
-    return newItem;
-  },
-
-  deleteMemory(id: string, mode: WorkspaceMode = 'life'): void {
-    const memories = this.getMemories(mode).filter((m) => m.id !== id);
-    this.saveMemories(memories, mode);
-  },
-
-  // ==================== ToC 生活态 3 大活体卡存储 ====================
-  getWalletCard(): WalletCardState {
-    const raw = localStorage.getItem(WALLET_KEY);
-    if (!raw) {
-      return {
-        monthlyBudget: 5000,
-        wishTitle: '北海道冬日旅行基金 ❄️',
-        wishTarget: 12000,
-        wishSaved: 4500,
-        entries: [
-          {
-            id: 'exp-1',
-            title: '生椰拿铁与全麦三明治',
-            amount: 32,
-            type: 'expense',
-            category: '餐饮☕',
-            timestamp: Date.now() - 7200000,
-          },
-          {
-            id: 'exp-2',
-            title: '网约车通勤',
-            amount: 24,
-            type: 'expense',
-            category: '出行🚕',
-            timestamp: Date.now() - 3600000,
-          },
-        ],
-      };
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return { monthlyBudget: 5000, wishTitle: '心愿小金库', wishTarget: 10000, wishSaved: 0, entries: [] };
-    }
-  },
-
-  saveWalletCard(state: WalletCardState): void {
-    localStorage.setItem(WALLET_KEY, JSON.stringify(state));
-  },
-
+  deleteMemory(id: string, mode: WorkspaceMode): void { this.saveMemories(this.getMemories(mode).filter(item => item.id !== id), mode); },
+  getWalletCard(): WalletCardState { return this.getSnapshot().partitions.life.wallet; },
+  saveWalletCard(wallet: WalletCardState): void { updatePartition('life', p => { p.wallet = wallet; }, true); },
   getRpgStatusCard(): RpgStatusCardState {
-    const raw = localStorage.getItem(RPG_KEY);
-    if (!raw) {
-      return {
-        energy: 82,
-        waterCups: 4,
-        weightKg: 64.5,
-        targetWeightKg: 60.0,
-        moodBuff: '🔥 状态在线',
-        streakDays: 5,
-      };
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return { energy: 80, waterCups: 3, weightKg: 65, targetWeightKg: 60, moodBuff: '✨ 平静', streakDays: 1 };
-    }
+    const rpg = this.getSnapshot().partitions.life.rpg;
+    return rpg.dateKey !== shanghaiDateKey() ? { ...rpg, waterCups: 0, dateKey: shanghaiDateKey() } : rpg;
   },
-
-  saveRpgStatusCard(state: RpgStatusCardState): void {
-    localStorage.setItem(RPG_KEY, JSON.stringify(state));
+  saveRpgStatusCard(rpg: RpgStatusCardState): void { updatePartition('life', p => { p.rpg = { ...rpg, dateKey: shanghaiDateKey() }; }, true); },
+  updateLifeAtomically(update: (life: LifePartition) => StateMutationReceipt[], sourceMessageId?: string): StateMutationReceipt[] {
+    const snapshot = this.getSnapshot();
+    const life = snapshot.partitions.life;
+    const processedId = sourceMessageId ? `life:${sourceMessageId}` : undefined;
+    if (processedId && life.processedProposalIds.includes(processedId)) return [];
+    const receipts = update(life);
+    if (!receipts.length) return [];
+    if (processedId) life.processedProposalIds = [...life.processedProposalIds, processedId].slice(-500);
+    life.revision++; snapshot.snapshotRevision++;
+    persist(snapshot);
+    return receipts;
   },
-
-  getPersonProfiles(): PersonProfile[] {
-    const raw = localStorage.getItem(PERSONS_KEY);
-    if (!raw) {
-      return [
-        {
-          id: 'p-1',
-          name: '老陈',
-          relation: '挚友 / 大学室友',
-          taboos: ['严重海鲜过敏', '不吃香菜'],
-          preferences: ['手冲曼特宁咖啡', '科幻电影'],
-          nextImportantDate: '生日 11月18日',
-          updatedAt: Date.now() - 86400000,
-        },
-        {
-          id: 'p-2',
-          name: '林姐',
-          relation: '重要贵人 / 前主管',
-          taboos: ['忌浓茶与冰饮'],
-          preferences: ['凤凰单丛乌龙茶', '极简陶瓷器皿'],
-          nextImportantDate: '中秋节问候',
-          updatedAt: Date.now() - 86400000 * 3,
-        },
-      ];
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
-  },
-
-  savePersonProfiles(list: PersonProfile[]): void {
-    localStorage.setItem(PERSONS_KEY, JSON.stringify(list));
-  },
-
-  // ==================== ToB 搞钱态 3 大活体卡存储 ====================
+  getPersonProfiles(): PersonProfile[] { return this.getSnapshot().partitions.life.persons; },
+  savePersonProfiles(persons: PersonProfile[]): void { updatePartition('life', p => { p.persons = persons; }, true); },
   getCrmDeals(): CrmDealItem[] {
-    const raw = localStorage.getItem(CRM_KEY);
-    if (!raw) {
-      return [
-        {
-          id: 'deal-1',
-          clientName: '星辰科技 · 李总',
-          budgetAmount: 180000,
-          stage: '方案报价',
-          winProbability: 65,
-          painPoints: '销售团队每天花2小时填CRM，急需零填表AI伴生工作台提效',
-          internalBottomLine: '底价不低于 15.5 万，可附赠2场内部落地培训',
-          nextAction: '周四前发送定制版 PoC 演示与报价函',
-          updatedAt: Date.now() - 3600000,
-        },
-        {
-          id: 'deal-2',
-          clientName: '云尚设计工作室 · 周主理人',
-          budgetAmount: 68000,
-          stage: '商务谈判',
-          winProbability: 85,
-          painPoints: '设计师与高净值客户沟通碎片化，需一键生成高颜值交付确认单',
-          internalBottomLine: '年框协议已口头对齐，下周一法务走章',
-          nextAction: '发送最终合同终稿与首期款发票',
-          updatedAt: Date.now() - 7200000,
-        },
-      ];
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
+    return this.getSnapshot().partitions.work.engagements.map(e => ({ id: e.id, clientName: e.clientName, budgetAmount: e.budgetAmount,
+      stage: e.stage, winProbability: 0, painPoints: e.internalContext, internalBottomLine: e.internalContext, nextAction: e.nextAction, updatedAt: e.updatedAt }));
   },
-
   saveCrmDeals(deals: CrmDealItem[]): void {
-    localStorage.setItem(CRM_KEY, JSON.stringify(deals));
+    const current = this.getSnapshot().partitions.work.engagements;
+    const operations: WorkOperation[] = deals.map(deal => {
+      const before = current.find(item => item.id === deal.id) || null;
+      return { target: 'engagement', entityId: deal.id, before, after: { ...migratedEngagement(deal), title: before?.title || `${deal.clientName}的合作项目`, shareableSummary: before?.shareableSummary || '' } };
+    });
+    for (const before of current) if (!deals.some(item => item.id === before.id)) operations.push({ target: 'engagement', entityId: before.id, before, after: null });
+    if (!operations.length) return;
+    const result = this.commit(this.createProposal('work', operations, '用户手动确认项目编辑')); if (!result.ok) throw new Error(result.error);
   },
-
-  getProjectTasks(): ProjectTaskItem[] {
-    const raw = localStorage.getItem(PROJECTS_KEY);
-    if (!raw) {
-      return [
-        {
-          id: 'task-1',
-          title: '交付星辰科技定制版 PoC 演示方案',
-          assignee: '我',
-          deadline: '本周四 18:00',
-          priority: 'high',
-          done: false,
-        },
-        {
-          id: 'task-2',
-          title: '核对云尚工作室年度服务协议条款',
-          assignee: '我',
-          deadline: '本周五 12:00',
-          priority: 'medium',
-          done: true,
-        },
-      ];
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
-  },
-
+  getProjectTasks(): ProjectTaskItem[] { return this.getSnapshot().partitions.work.tasks; },
   saveProjectTasks(tasks: ProjectTaskItem[]): void {
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify(tasks));
+    const before = this.getProjectTasks();
+    const operations: WorkOperation[] = [];
+    for (const after of tasks) if (JSON.stringify(before.find(item => item.id === after.id)) !== JSON.stringify(after)) operations.push({ target: 'task', entityId: after.id, before: before.find(item => item.id === after.id) || null, after });
+    for (const item of before) if (!tasks.some(after => after.id === item.id)) operations.push({ target: 'task', entityId: item.id, before: item, after: null });
+    if (operations.length) { const result = this.commit(this.createProposal('work', operations, '用户手动确认待办编辑')); if (!result.ok) throw new Error(result.error); }
   },
-
-  getCustomCards(mode?: WorkspaceMode): CustomLivingCard[] {
-    const raw = localStorage.getItem(CUSTOM_CARDS_KEY);
-    let list: CustomLivingCard[] = [];
-    if (raw) {
-      try {
-        list = JSON.parse(raw);
-      } catch {
-        list = [];
-      }
-    }
-    return mode ? list.filter((c) => c.mode === mode) : list;
+  getCustomCards(mode: WorkspaceMode): CustomLivingCard[] { if (!mode) throw new Error('必须指定空间。'); return this.getSnapshot().partitions[mode].customCards; },
+  saveCustomCards(cards: CustomLivingCard[], mode: WorkspaceMode): void { updatePartition(mode, p => { p.customCards = cards.map(item => ({ ...item, mode })); }, true); },
+  recordWorkIntensityBridge(): void { /* Deliberately disabled: work must never mutate the life partition. */ },
+  getJournals(mode: WorkspaceMode): JournalArtifact[] { if (!mode) throw new Error('必须指定空间。'); return this.getSnapshot().partitions[mode].journals; },
+  saveJournals(journals: JournalArtifact[], mode: WorkspaceMode): void { updatePartition(mode, p => { p.journals = journals.map(item => ({ ...item, mode })); }); },
+  addJournal(journal: JournalArtifact, mode: WorkspaceMode): void { this.saveJournals([journal, ...this.getJournals(mode)], mode); },
+  createProposal(mode: WorkspaceMode, operations: WorkOperation[], sourceText: string, sourceMessageId = newId('manual')): ProposedChangeSet {
+    return { id: newId('proposal'), mode, sourceMessageId, sourceText, baseRevision: this.getSnapshot().partitions[mode].revision,
+      operations: copy(operations), warnings: [], createdAt: Date.now() };
   },
-
-  saveCustomCards(cards: CustomLivingCard[]): void {
-    localStorage.setItem(CUSTOM_CARDS_KEY, JSON.stringify(cards));
-  },
-
-  // 单向精力桥接器（Work 繁忙度 -> Life 精力扣减，不泄密）
-  recordWorkIntensityBridge(energyCost: number = 5): void {
-    const rpg = this.getRpgStatusCard();
-    rpg.energy = Math.max(15, rpg.energy - energyCost);
-    if (rpg.energy < 50) {
-      rpg.moodBuff = '💼 刚刚高强度搞钱完毕 · 宜放松';
-    }
-    this.saveRpgStatusCard(rpg);
-  },
-
-  getJournals(): JournalArtifact[] {
-    const raw = localStorage.getItem(JOURNALS_KEY);
-    if (!raw) {
-      return [
-        {
-          id: 'j-example',
-          date: new Date().toISOString().slice(0, 10),
-          title: '初遇与漫步日',
-          mood: '☕ 温暖惬意',
-          userGoldenQuote: '今天在窗边看落日，感觉时间突然慢下来了。',
-          aiReflection: '生活本就由这些细碎的闪光组成。很开心能在这个桌面上陪你度过又一个平静的傍晚。',
-          stickers: ['🌅', '✨', '☕'],
-          createdAt: Date.now() - 3600000 * 5,
-        },
-      ];
-    }
+  commit(proposal: ProposedChangeSet): MutationResult {
     try {
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
+      const snapshot = this.getSnapshot();
+      if (!proposal || !['life', 'work'].includes(proposal.mode)) return { ok: false, error: '变更空间无效。' };
+      const partition = snapshot.partitions[proposal.mode];
+      if (partition.processedProposalIds.includes(proposal.id)) return { ok: true, receipts: [] };
+      const errors = validateProposal(proposal, partition);
+      if (errors.length) return { ok: false, error: errors.join(' ') };
+      for (const operation of proposal.operations) applyOperation(partition, operation);
+      partition.revision++;
+      partition.processedProposalIds = [...partition.processedProposalIds, proposal.id].slice(-500);
+      partition.events = [...partition.events, { id: newId('event'), proposalId: proposal.id, mode: proposal.mode,
+        sourceMessageId: proposal.sourceMessageId, sourceText: proposal.sourceText, operations: copy(proposal.operations), createdAt: Date.now() }].slice(-500);
+      snapshot.snapshotRevision++;
+      persist(snapshot);
+      const receipts: StateMutationReceipt[] = proposal.operations.map((op, index) => ({ id: `${proposal.id}-${index}`, mode: proposal.mode,
+        targetCardType: op.target === 'engagement' ? 'crm' : op.target === 'task' ? 'projects' : 'custom', targetCardTitle: op.target === 'engagement' ? '客户合作项目' : op.target === 'task' ? '行动待办' : '工作记忆',
+        summaryText: `${op.after ? '已确认保存' : '已确认移除'}：${op.after ? (op.target === 'engagement' ? (op.after as Engagement).clientName : op.target === 'task' ? (op.after as ProjectTaskItem).title : (op.after as MemoryItem).fact) : op.entityId}`,
+        deltaBadge: '已确认', timestamp: Date.now() }));
+      return { ok: true, receipts };
+    } catch { return { ok: false, error: '未能保存，原数据未改变。请检查本地存储空间或备份后重试。' }; }
   },
-
-  saveJournals(journals: JournalArtifact[]): void {
-    localStorage.setItem(JOURNALS_KEY, JSON.stringify(journals));
-  },
-
-  addJournal(journal: JournalArtifact): void {
-    const journals = this.getJournals();
-    journals.unshift(journal);
-    this.saveJournals(journals);
-  },
-
-  exportAllData(): string {
-    const data = {
-      version: '2.0-looma-dual-vault',
-      exportAt: new Date().toISOString(),
-      settings: this.getSettings(),
-      lifeVault: {
-        messages: this.getMessages('life'),
-        memories: this.getMemories('life'),
-        wallet: this.getWalletCard(),
-        rpg: this.getRpgStatusCard(),
-        persons: this.getPersonProfiles(),
-      },
-      workVault: {
-        messages: this.getMessages('work'),
-        memories: this.getMemories('work'),
-        crmDeals: this.getCrmDeals(),
-        projectTasks: this.getProjectTasks(),
-      },
-      customCards: this.getCustomCards(),
-      journals: this.getJournals(),
-    };
-    return JSON.stringify(data, null, 2);
-  },
-
-  importAllData(jsonStr: string): boolean {
+  undo(mode: WorkspaceMode): MutationResult {
     try {
-      const data = JSON.parse(jsonStr);
-      if (data.settings) this.saveSettings(data.settings);
-      if (data.lifeVault) {
-        if (data.lifeVault.messages) this.saveMessages(data.lifeVault.messages, 'life');
-        if (data.lifeVault.memories) this.saveMemories(data.lifeVault.memories, 'life');
-        if (data.lifeVault.wallet) this.saveWalletCard(data.lifeVault.wallet);
-        if (data.lifeVault.rpg) this.saveRpgStatusCard(data.lifeVault.rpg);
-        if (data.lifeVault.persons) this.savePersonProfiles(data.lifeVault.persons);
+      const snapshot = this.getSnapshot();
+      const partition = snapshot.partitions[mode];
+      const event = [...partition.events].reverse().find(item => !item.revertedAt);
+      if (!event) return { ok: false, error: '没有可撤销的最近变更。' };
+      for (const operation of event.operations) {
+        const current = collection(partition, operation.target).find(item => item.id === operation.entityId) || null;
+        if (JSON.stringify(current) !== JSON.stringify(operation.after)) return { ok: false, error: '相关记录已被后续更改，请先处理最新变更。' };
       }
-      if (data.workVault) {
-        if (data.workVault.messages) this.saveMessages(data.workVault.messages, 'work');
-        if (data.workVault.memories) this.saveMemories(data.workVault.memories, 'work');
-        if (data.workVault.crmDeals) this.saveCrmDeals(data.workVault.crmDeals);
-        if (data.workVault.projectTasks) this.saveProjectTasks(data.workVault.projectTasks);
-      }
-      if (data.journals) this.saveJournals(data.journals);
-      return true;
-    } catch {
-      return false;
-    }
+      for (const operation of [...event.operations].reverse()) applyOperation(partition, operation, true);
+      event.revertedAt = Date.now(); partition.revision++; snapshot.snapshotRevision++; persist(snapshot);
+      return { ok: true };
+    } catch { return { ok: false, error: '撤销未保存，原数据未改变。' }; }
+  },
+  exportAllData(): string { return JSON.stringify(this.getSnapshot(), null, 2); },
+  importAllData(json: string): boolean {
+    try {
+      const parsed = JSON.parse(json);
+      const incoming = parsed?.version === '2.0-looma-dual-vault' ? fromLegacy(parsed) : parsed;
+      if (!validateSnapshot(incoming)) return false;
+      const raw = localStorage.getItem(SNAPSHOT_KEY);
+      let previous: AppSnapshotV3 | null = null;
+      try { const candidate = raw && JSON.parse(raw); if (validateSnapshot(candidate)) previous = candidate; } catch { /* a valid backup may replace a corrupt snapshot */ }
+      incoming.snapshotRevision = Math.max(incoming.snapshotRevision, previous?.snapshotRevision || 0) + 1;
+      for (const mode of ['life', 'work'] as WorkspaceMode[]) incoming.partitions[mode].revision = Math.max(incoming.partitions[mode].revision, previous?.partitions[mode].revision || 0) + 1;
+      persist(incoming); return true;
+    } catch { return false; }
   },
 };

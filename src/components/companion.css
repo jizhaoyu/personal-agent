@@ -1,0 +1,126 @@
+.looma-companion {
+  --companion-ink: #293e35;
+  --companion-sage: #8fa67f;
+  --companion-paper: #fffdf4;
+  --companion-line: #a8b59d;
+  --companion-motion: 2px;
+  width: 180px;
+  max-width: 100%;
+  color: var(--companion-ink);
+  font-family: inherit;
+  text-align: center;
+  flex-shrink: 0;
+}
+.looma-companion[data-mode="life"] {
+  --companion-paper: #fff9ea;
+  --companion-sage: #98ad84;
+  --companion-motion: 4px;
+}
+.looma-companion__presence { min-width: 0; }
+.looma-companion__figure {
+  width: 154px;
+  height: 154px;
+  margin: 0 auto -8px;
+  animation: looma-companion-float 5.5s ease-in-out infinite;
+}
+.looma-companion__drawing { width: 100%; height: 100%; overflow: visible; }
+.looma-companion__ground { fill: #637659; opacity: .12; }
+.looma-companion__halo { fill: #e5e9d9; opacity: .65; }
+.looma-companion__orbit { fill: none; stroke: #b1bea0; stroke-width: 1; stroke-linecap: round; }
+.looma-companion__body, .looma-companion__limb, .looma-companion__foot {
+  fill: var(--companion-paper);
+  stroke: var(--companion-line);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+.looma-companion__belly { fill: #ebeede; }
+.looma-companion__leaf-stem { fill: none; stroke: #68835c; stroke-width: 2.8; stroke-linecap: round; }
+.looma-companion__leaf { fill: #89a577; stroke: #68835c; stroke-width: 1.3; }
+.looma-companion__leaf-light { fill: #b4c99a; stroke: #7f9a6e; stroke-width: 1.3; }
+.looma-companion__leaf-vein { fill: none; stroke: #6c895d; stroke-width: 1; stroke-linecap: round; }
+.looma-companion__eyes { fill: #294639; }
+.looma-companion__eye-light { fill: #fffdf4; }
+.looma-companion__blush { fill: #dca99b; opacity: .38; }
+.looma-companion__face-line { fill: none; stroke: #375341; stroke-width: 2; stroke-linecap: round; }
+.looma-companion__paper { fill: #fbfaf2; stroke: #809776; stroke-width: 1.4; stroke-linejoin: round; }
+.looma-companion__paper-line { fill: none; stroke: #9bab8c; stroke-width: 1.6; stroke-linecap: round; }
+.looma-companion__sparkle { fill: none; stroke: #8ea669; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.looma-companion__check { stroke: #4f7645; stroke-width: 2.8; }
+.looma-companion__bell { fill: #e9dca9; stroke: #a29764; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.looma-companion__alert { fill: #f4e1ca; stroke: #9d7654; stroke-width: 1.6; stroke-linecap: round; }
+.looma-companion__thinking-dots { fill: #789169; }
+.looma-companion__thinking-dots circle { animation: looma-companion-dot 1.2s ease-in-out infinite; }
+.looma-companion__thinking-dots circle:nth-child(2) { animation-delay: .16s; }
+.looma-companion__thinking-dots circle:nth-child(3) { animation-delay: .32s; }
+.looma-companion__copy { min-width: 0; }
+.looma-companion__identity { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.looma-companion__identity strong { font-family: Georgia, 'Songti SC', 'SimSun', serif; font-size: 18px; font-weight: 500; letter-spacing: -.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.looma-companion__identity > span { font-size: 10px; color: #576c53; border: 1px solid #c9d0bb; border-radius: 4px; padding: 1px 4px; flex-shrink: 0; }
+.looma-companion__status { margin-top: 7px; }
+.looma-companion__state { display: flex; justify-content: center; gap: 5px; align-items: center; font-size: 11px; line-height: 1.5; font-weight: 600; }
+.looma-companion__state i { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; background: #72935e; }
+.looma-companion__detail { display: block; margin-top: 3px; color: #61705b; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+.looma-companion__actions { display: flex; align-items: center; justify-content: center; gap: 9px; margin-top: 9px; }
+.looma-companion__actions button, .looma-companion__restore {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.looma-companion__memory, .looma-companion__fold { display: inline-flex; gap: 5px; align-items: center; justify-content: center; min-height: 30px; padding: 4px 5px; border: 0; border-radius: 5px; background: transparent; color: #53694a !important; font-size: 10px !important; }
+.looma-companion__memory:hover, .looma-companion__fold:hover { background: #e7ebdd; }
+.looma-companion__fold > span:first-child { font-size: 15px; }
+.looma-companion button:focus-visible { outline: 2px solid #536e41; outline-offset: 3px; }
+.looma-companion[data-state="thinking"] .looma-companion__figure { animation-duration: 3s; }
+.looma-companion[data-state="saved"] .looma-companion__figure { animation: looma-companion-saved .65s ease-out 1; }
+.looma-companion[data-state="error"] .looma-companion__figure { animation: none; }
+.looma-companion[data-state="error"] .looma-companion__state i { background: #9d7654; }
+.looma-companion[data-state="review"] .looma-companion__state i { border-radius: 1px; background: #839269; }
+.looma-companion[data-state="reminder"] .looma-companion__state i { background: #aa9753; }
+
+.looma-companion--compact {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 220px;
+  height: 96px;
+  max-width: 100%;
+  padding: 5px 7px 5px 3px;
+  border: 1px solid #cbd3bd;
+  border-radius: 24px;
+  background: #f8f8ee;
+  text-align: left;
+  overflow: hidden;
+  -webkit-app-region: drag;
+}
+.looma-companion--compact[data-mode="life"] { background: #faf5e9; }
+.looma-companion--compact .looma-companion__presence, .looma-companion__restore {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 17px;
+  background: transparent;
+  text-align: left;
+}
+.looma-companion__restore:hover { background: #e8eddc; }
+.looma-companion--compact .looma-companion__figure { width: 78px; height: 78px; flex-shrink: 0; margin: 0 -1px 0 -1px; }
+.looma-companion--compact .looma-companion__copy { flex: 1; }
+.looma-companion--compact .looma-companion__identity { justify-content: flex-start; gap: 5px; }
+.looma-companion--compact .looma-companion__identity strong { font-size: 15px; max-width: 61px; }
+.looma-companion--compact .looma-companion__identity > span { font-size: 9px; padding: 0 3px; }
+.looma-companion--compact .looma-companion__status { margin-top: 5px; }
+.looma-companion--compact .looma-companion__state { justify-content: flex-start; font-size: 10px; gap: 4px; }
+.looma-companion--compact .looma-companion__detail { max-width: 105px; font-size: 9px; margin-top: 2px; line-height: 1.4; }
+.looma-companion--compact .looma-companion__actions { flex-shrink: 0; margin: 0 0 0 2px; }
+.looma-companion--compact .looma-companion__memory { min-width: 25px; min-height: 30px; padding: 4px; }
+
+@keyframes looma-companion-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(calc(-1 * var(--companion-motion))); } }
+@keyframes looma-companion-dot { 0%, 70%, 100% { opacity: .4; } 35% { opacity: 1; } }
+@keyframes looma-companion-saved { 0%, 100% { transform: translateY(0) rotate(0); } 45% { transform: translateY(-5px) rotate(-3deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .looma-companion .looma-companion__figure,
+  .looma-companion .looma-companion__thinking-dots circle { animation: none !important; transform: none !important; }
+}

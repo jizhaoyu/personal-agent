@@ -1,0 +1,14 @@
+.trial-info-sheet { width: min(660px, 100%); max-height: 90vh; background: #fffefa; border: 1px solid #d4dcc9; border-radius: 18px; overflow: hidden; box-shadow: 0 24px 90px #203b2924; display: flex; flex-direction: column; }
+.trial-info-sheet .sheet-body { overflow-y: auto; }
+.trial-build-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; padding: 12px 14px; border: 1px solid #dce3d2; border-radius: 10px; background: #f0f3e9; }
+.trial-build-summary strong { font-size: 15px; font-weight: 500; color: #34533c; }
+.trial-build-summary span { font-size: 11px; color: #6a7963; overflow-wrap: anywhere; }
+.trial-feedback-fields { display: grid; gap: 15px; margin: 20px 0; }
+.trial-info-sheet label { font-size: 12px; line-height: 1.8; color: #4d604d; }
+.trial-info-sheet textarea, .trial-info-sheet select { display: block; width: 100%; margin-top: 6px; border: 1px solid #d5ddca; background: #fcfcf7; border-radius: 8px; padding: 10px 12px; color: #344a3b; font: inherit; line-height: 1.8; }
+.trial-report-preview { display: block; margin: 18px 0; }
+.trial-report-preview textarea { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f5ed; }
+.trial-info-sheet .check-label { display: flex; align-items: start; gap: 8px; }
+.trial-info-sheet .check-label input { width: auto; margin-top: 4px; flex-shrink: 0; }
+.trial-info-sheet :is(button, textarea, select, input):focus-visible { outline: 2px solid #6d8956; outline-offset: 3px; }
+@media (max-width: 520px) { .trial-info-sheet { max-height: 94vh; border-radius: 12px; } .trial-info-sheet .sheet-header, .trial-info-sheet .sheet-body, .trial-info-sheet .sheet-footer { padding: 17px; } .trial-info-sheet .sheet-footer { flex-wrap: wrap; } }

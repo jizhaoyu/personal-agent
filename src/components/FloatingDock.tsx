@@ -76,10 +76,10 @@ export const FloatingDock: React.FC<FloatingDockProps> = ({
             ? 'bg-blue-600/20 border-blue-500/40 text-blue-300 hover:bg-blue-600/30'
             : 'bg-amber-500/15 border-amber-600/30 text-[#8a5410] hover:bg-amber-500/25'
         }`}
-        title="点击切换【🌙 生活态 (ToC)】与【💼 搞钱态 (ToB 防窥)】"
+        title="切换生活与工作本地逻辑分区"
       >
         {isWork ? <Briefcase size={12} /> : <Moon size={12} />}
-        <span>{isWork ? '搞钱态' : '生活态'}</span>
+        <span>{isWork ? '工作态' : '生活态'}</span>
       </button>
 
       {/* 导航页签 */}
@@ -158,7 +158,7 @@ export const FloatingDock: React.FC<FloatingDockProps> = ({
                 ? 'text-slate-400 hover:bg-slate-800'
                 : 'text-[#6b7183] hover:bg-[#efeadd]'
             }`}
-            title="双保险箱隔离记忆库"
+            title="当前本地分区备忘"
           >
             <Brain size={14} />
           </button>

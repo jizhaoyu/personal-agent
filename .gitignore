@@ -8,6 +8,10 @@ dist/
 dist-ssr/
 release/
 out/
+output/playwright/
+output/trial/
+.playwright-mcp/
+tmp/
 *.local
 
 # Logs

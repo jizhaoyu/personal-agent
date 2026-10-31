@@ -1,180 +1,119 @@
-# Looma（灵犀胶囊）系统技术架构与数据字典规范 (Technical Architecture & Data Schema)
+# Looma（灵犀胶囊）系统技术架构与数据字典规范
 
-> **文档版本**：v2.0  
-> **技术栈底座**：Electron 34 + Vite 6 + React 19 + TypeScript 5 + TailwindCSS + HTML2Canvas  
-> **核心工程目标**：毫秒级本地意图嗅探响应、100% 物理隔离的双保险箱存储、离线/在线无缝双模运行。
+版本：v5.0 · 批准日期 2026-10-27。本文记录已批准的架构契约。详细定义以源码为准，实现与检查结果见implementation-v5-status.md；v4历史验证不自动视作v5通过。
 
----
+## 一、技术边界与总体架构
 
-## 一、 总体系统架构图 (System Architecture)
+复用 Electron 34、React 19、TypeScript 5.7、Vite 6、Tailwind CSS 与 HTML2Canvas。用户批准新增better-sqlite3@12.11.1，桌面采用SQLite，浏览器采用原生IndexedDB；不新增测试框架、向量库或官方云服务。Electron34.5.8的Node20.19.1、ABI132已经实际加载对应原生二进制，安装后脚本核对并准备当前Electron版本的构建。
 
 ```mermaid
-graph TB
-    subgraph Shell [桌面原生宿主层 - Electron Main Process]
-        WinCtrl[无边框透明悬浮窗控制器 / 动态尺寸伸缩]
-        PrivacyGuard[投屏防窥与置顶状态管理]
-    end
-
-    subgraph UI [双态视觉与交互渲染层 - React 19]
-        ModeSwitch[顶栏：🌙生活态 / 💼搞钱态 瞬切开关]
-        ChatStream[对话流 + ⚡状态变更微徽章 Toast]
-        LiveBoard[活体状态卡工作台 - 3C + 3B + 自定义卡]
-        ExportEngine[高颜值交付单 / 生活手帐超清渲染导出器]
-        VaultTimeline[双保险箱记忆时光轴管理器]
-    end
-
-    subgraph Engine [Talk-to-Live-State 核心双擎管线]
-        Sniffer[1. 本地毫秒级语义嗅探器 - 零延迟解析金额/体重/商机/任务]
-        LLMRouter[2. 云端/本地大模型增强器 - DeepSeek / Claude / Ollama]
-        StateReducer[3. 双向活体状态机 - 嘴动卡变 & 手动嘴知事件总线]
-        Sanitizer[4. 外发脱敏过滤器 - 剔除内部底价与私密备注]
-    end
-
-    subgraph Storage [Dual-Vault 双生物理隔离存储层]
-        LifeDB[(🌙 Life Vault 私人加密存储)]
-        WorkDB[(💼 Work Vault 商务隔离存储)]
-        Bridge[单向精力消耗桥接器 - 仅传递疲惫度数值]
-    end
-
-    Shell --> UI
-    UI --> Engine
-    Engine --> Storage
-    WorkDB -.单向计算工作负荷.-> Bridge
-    Bridge -.仅传递精力扣减值.-> LifeDB
+flowchart LR
+    Input[文字 / 粘贴记录] --> Capture[500ms本地草稿]
+    Capture --> Propose[纯解析候选]
+    Model[可选桌面模型增强] --> Propose
+    Propose --> Preview[核对内容 / 我方 / 等待 / 未定]
+    Preview --> Validate[版本与结构校验]
+    Validate --> Commit[原子收尾 / 结束草稿]
+    Commit --> Snapshot[异步Repository / SQLite或IndexedDB]
+    Commit --> Event[变更事件 / 撤销]
+    Commit --> Closure[持久收尾记录]
+    Closure --> Home[有界首页接续]
+    Snapshot --> Board[项目 / 待办 / 到期提醒]
+    Board --> Draft[白名单纪要草稿]
+    Draft --> Review[编辑预览 / 文本 / PNG]
 ```
 
----
+候选解析无业务持久化副作用；原文归档和草稿保存不表示确认业务。模型和本地规则共享候选边界，commitCapture成功才生成收尾回执。自然语言和工作记忆提取不能绕过核对；明确完成或重新打开操作通过同一仓储事务与事件机制直存。
 
-## 二、 核心数据字典与 TypeScript 接口规范 (Data Dictionary)
+## 二、数据字典与接口
 
-### 2.1 全局空间模式与双保险箱定义
+| 类型 | 职责与重要字段 |
+| --- | --- |
+| `WorkspaceMode` | `life` 或 `work`，仓储访问必须显式指定 |
+| `AppSnapshotV5` | schemaVersion为5的有界UI缓存，每类近期最多50条；AppSnapshotV4兼容别名不代表旧备份格式 |
+| `Engagement` | 客户合作项目：ID、客户名、项目标题、可未知预算、阶段、内部资料、可外发摘要、下一步和更新时间 |
+| `ProjectTaskItem` | 兼容旧任务，扩展可选项目关联、确认后到期时间与原始日期表达 |
+| `ProposedChangeSet` | 候选ID、来源与原文、所属空间、基础版本、操作、警告与可选归属追问；操作支持followup |
+| `CommittedChangeEvent` | 已提交批次、字段前后值、来源与提交时间，为撤销提供依据 |
+| `StateMutationReceipt` | 提交成功后的界面回执，不承担候选或写入职责 |
+| `AlignmentDraft` | 独立外发草稿，仅包含用户选择且允许外发的信息 |
+| `ManagedMemory` | 已确认事实及active/superseded/retracted状态、主体、主题、置顶、来源和替代关系 |
+| `MemorySummary` | 来源明确的本地可重建摘要，不承担事实或当前业务状态职责 |
+| `CaptureDraft` | id固定active-work、唯一sessionId、原文、显式归属、来源版本、编辑版本、候选及冲突、编辑或核对状态、保存时间 |
+| `FollowUpItem` | waiting或question、项目关联、开放或已处理状态、来源、可选预计日期/时刻、用户自设reviewAt |
+| `ClosureRecord` | 来源、提交事件、项目/行动/跟进项引用、核对与撤销时间，可标记仅存原文；不另复制原文 |
+| `CaptureCommitResult` | committed、rejected或unknown，区分业务写入、结果不确定和刷新警告 |
+
+核心服务接口：
+
 ```typescript
-// 双态空间枚举：生活态 (ToC) vs 搞钱态 (ToB)
-export type WorkspaceMode = 'life' | 'work';
-
-// 状态变更回执（用于在聊天气泡下方渲染可点击的“⚡状态已自动更新”胶囊）
-export interface StateMutationReceipt {
-  id: string;
-  mode: WorkspaceMode;
-  targetCardType: 'wallet' | 'rpg_status' | 'relationships' | 'crm' | 'projects' | 'custom';
-  targetCardTitle: string;
-  summaryText: string; // 例如："💰 随口记账：记入支出 ¥45.00（午饭）"
-  deltaBadge: string;  // 例如："-¥45" 或 "进度 → 80%"
-  timestamp: number;
-}
+StateEngine.propose(text, context): ProposedChangeSet
+StateEngine.validate(proposal, partition): string[]
+Repository.initialize(): Promise<Bootstrap>
+Repository.commit(proposal): Promise<MutationResult>
+Repository.getCaptureDraft(): Promise<CaptureDraft | null>
+Repository.saveCaptureDraft(draft): Promise<void>
+Repository.commitCapture(draft, originalOnly?): Promise<CaptureCommitResult>
+Repository.getWorkHome(now?): Promise<WorkHome>
+Repository.setItemState(kind, item, done): Promise<CaptureCommitResult>
+Repository.undo(space, eventId?): Promise<MutationResult>
+Repository.query(space, kind, options): Promise<QueryPage>
+Repository.getCurrent(): AppSnapshotV5 // 已加载缓存，不读取整库
+Repository.subscribe(listener): () => void
 ```
 
-### 2.2 ToC【🌙 生活态】三大活体状态卡数据结构
-```typescript
-// C1: 💰 随口记账与心愿小金库
-export interface ExpenseEntry {
-  id: string;
-  title: string;
-  amount: number;
-  type: 'expense' | 'income' | 'saving';
-  category: '餐饮☕' | '购物🛍️' | '出行🚕' | '娱乐🎮' | '生活🏠' | '金库✨';
-  timestamp: number;
-}
+`context` 包括显式空间、稳定来源、当前分区、输入时间、可选目标项目及用户显式输入的新客户/项目。普通姓名没有明确绑定时不自动新建。提交负责结构、实体、幂等、前值和版本校验；撤销按倒序，仅允许指定事件确为最近事件时撤销。UI不能直接改数组绕开事件。
 
-export interface WalletCardState {
-  monthlyBudget: number;
-  wishTitle: string;
-  wishTarget: number;
-  wishSaved: number;
-  entries: ExpenseEntry[];
-}
+`saveDraft`只写工作空间active-work记录，不递增业务版本或产生撤销事件；同session拒绝较旧编辑版本，已提交session标记阻止迟到保存复活草稿。`commitCapture`固定来源和候选ID，在同一事务中归档必要来源、提交业务与事件、生成closure并删除草稿；重复相同命令不要求草稿仍存在。originalOnly只接受空业务操作，并准确标记回执。
 
-// C2: ⚡ 三维人生状态栏 (RPG 个人面板)
-export interface RpgStatusCardState {
-  energy: number;       // 0 - 100 精力值
-  waterCups: number;    // 今日饮水杯数 (目标 8 杯)
-  weightKg: number;     // 当前体重
-  targetWeightKg: number;
-  moodBuff: string;     // 当前状态 Buff，如 "🔥 灵感迸发" / "😴 急需补觉"
-  streakDays: number;   // 连续健康打卡天数
-}
+Repository将ACK后刷新失败作为committed附refreshWarning返回；失去ACK时按稳定closure ID查询，未能核查则unknown，保留原命令和草稿。不能因重试生成新批次。三方合并以候选前值、当前值和用户编辑为依据，保留不冲突编辑，对冲突字段逐项选择。
 
-// C3: ❤️ 人间关系与重要人脉备忘录
-export interface PersonProfile {
-  id: string;
-  name: string;
-  relation: string;     // 如 "挚友" / "家人" / "重要伙伴"
-  taboos: string[];     // ⚠️ 忌口与雷区（如 "海鲜过敏"、"不吃香菜"）
-  preferences: string[];// 🎁 喜好与心愿（如 "喜欢乌龙茶"、"猫奴"）
-  nextImportantDate?: string; // 如 "生日 11-15"
-  updatedAt: number;
-}
-```
+快照中的公开设置排除 Key；`AppSettings` 中可选的旧 `apiKey` 字段仅用于迁移兼容，不作为持久化公开设置或正常模型调用来源。
 
-### 2.3 ToB【💼 搞钱态】三大活体状态卡数据结构
-```typescript
-// B1: 🤝 零填表·客户商机跟进卡 (轻量活体 CRM)
-export type DealStage = '初步接触' | '需求确认' | '方案报价' | '商务谈判' | '赢单成交';
+## 三、存储、迁移和原子恢复
 
-export interface CrmDealItem {
-  id: string;
-  clientName: string;       // 如 "星辰科技·李总"
-  budgetAmount: number;     // 预计金额（元）
-  stage: DealStage;
-  winProbability: number;   // 预计赢率 20% - 100%
-  painPoints: string;       // 客户核心痛点（对外脱敏时可转为“核心诉求”）
-  internalBottomLine: string; // 🔒 内部底线/备注（一键外发时绝对隐藏！）
-  nextAction: string;       // 下一步跟进动作与死线
-  updatedAt: number;
-}
+桌面由主进程独占`userData/looma.sqlite`，SQLite WAL、FULL同步、事务和索引负责持久化；renderer通过来源校验的有限命令IPC调用，不接收原始SQL。浏览器沿用IndexedDB名称`looma-local-v4`，v5原地升级结构、索引与记录包装，不创建空库取代原资料。记录仍以records、terms、meta和processed维护。所有访问强制life/work，新三类记录只允许work。
 
-// B2: 🎯 碎碎念·项目死线推进看板
-export interface ProjectTaskItem {
-  id: string;
-  title: string;
-  assignee: string;
-  deadline: string;
-  priority: 'high' | 'medium' | 'low';
-  done: boolean;
-}
+每条记录保存space、kind、id、data、at；账本配置与expense分开，避免账单数组随历史增长。事务校验批次内容、基础版本、字段前值与实体引用；成功后才刷新UI缓存。批次ID与内容摘要绑定，重复相同命令幂等，不同内容复用ID报错。写入失败不得部分提交或报成功。业务数据库未加密，分区不是物理隔离。
 
-// B3: 📤 一键外发·客户交付对齐回执单 (从 B1/B2 自动脱敏合成)
-export interface ClientAlignmentPoster {
-  id: string;
-  clientName: string;
-  projectName: string;
-  consensusList: string[];  // 已达成共识项
-  nextDeliverables: string[]; // 我方下一步交付承诺
-  clientTodo: string;       // 需客户配合确认项
-  generatedDate: string;
-}
-```
+首次先校验旧v3快照，再按来源指纹一次迁入；旧版更早资料经既有迁移器读取实际键，不生成示例。旧日记和CRM等归属沿用v3规则，未关联任务不猜测项目。旧非凭据键保留回退，正常运行只读新仓储；旧版已截断的历史不可恢复。新用户为空白业务区。
 
-### 2.4 一句话自定义新活体卡数据结构
-```typescript
-export interface CustomLivingCard {
-  id: string;
-  mode: WorkspaceMode;
-  title: string;
-  icon: string;
-  metricLabel: string;
-  metricValue: number;
-  metricTarget: number;
-  unit: string;
-  checklist: { id: string; text: string; done: boolean }[];
-  notes: string;
-}
-```
+完整备份v5包含records、applied幂等记录、设置与版本。桌面JSONL流式导出，带结束计数及SHA256，接受v4/v5文件，先写暂存库完整校验再替换；坏DB保留不可读原文件后恢复有效备份。Web JSON接受looma-v4、looma-v5及v3完整快照，缺少新集合按空处理；使用一致只读事务导出，单写事务原子恢复。索引升级失败随升级事务回退。无5MB硬上限，浏览器全备份仍需足够内存；无效备份不得部分覆盖，凭据不进入备份。
 
----
+生活态先在detached draft计算差异，再单事务更新，按来源ID幂等，原文和回复分别保存；短缓存保存不得截断旧档案。业务成功但回复失败时提示勿重复提交。按空间分开控制刷新序列，旧响应不能覆盖当前界面或新设置。正常列表有界，完整遍历仅用于用户明确要求的备份、恢复或维护。
 
-## 三、 Talk-to-Live-State 混合嗅探与状态差分算法
+工作首页按状态与提醒时间索引查询，每组最多3项并返回计数，不通过前端读全库筛选。今日与逾期按上海自然日分组；等待、未定和最近收尾独立查询。常规列表沿用游标分页。
 
-为了做到**“无论用户是否配置 API Key，都能在 0.2 秒内实现说话即建卡改数”**，系统采用 **本地确定性语义规则引擎（Tier-0）+ 大模型结构化提取（Tier-1）** 的双层混合架构：
+检索使用结构化ID/关联过滤、全文资料与中文相邻双字索引；单字查询需限定实体。自然语言回忆采用有限关键词候选合并，当前业务值优先，最终最多12条、约4800字符。来源关系使被替代/忘记事实及关联摘要退出默认回忆。主动删原文时，同事务移除关联草稿、事件原文副本和可恢复原文的撤销内容；清理原文缓存和派生展示，独立业务字段仍保留，旧备份需另行处理，未承诺物理擦除。
 
-1. **Tier-0 本地毫秒级语义嗅探器（Local Deterministic Sniffer）**：
-   * **记账与金库嗅探**：自动捕获 `(花了|买了|吃了|打车|消费|付了)\s*(\d+(\.\d+)?)` 以及 `(存入|攒了|发工资)\s*(\d+)`，自动判定分类并写入 `WalletCardState`，生成 `StateMutationReceipt`。
-   * **身体与精力嗅探**：自动捕获 `体重\s*(\d+(\.\d+)?)`、`喝水`、`熬夜|好累|加班`（动态增减精力值并更换 Buff）、`跑步|健身|运动`。
-   * **人脉档案嗅探**：自动捕获 `([^\s，。]{2,4})(不吃|讨厌|过敏|喜欢|爱喝|生日是)([^，。！？]+)`，自动合并或新建 `PersonProfile`。
-   * **客户 CRM 嗅探（ToB）**：自动捕获 `([A-Za-z0-9\u4e00-\u9fa5]{2,8}(?:总|经理|总监|老板|客户|公司))` + `预算\s*(\d+)\s*(万|元|k)?` + `(?:痛点是|需要|想做)([^，。]+)`，自动新建或更新对应的客户商机卡，并根据关键词（报价/谈判/签合同/成交）自动跃迁商机阶段！
-   * **项目待办嗅探（ToB）**：自动捕获 `(周[一二三四五六日天]|明天|月底|\d+号)前?(?:要|完成|交|搞定)([^，。！？]+)`，自动拆解为带截止日期的高优待办项。
-   * **一句话造新卡嗅探**：捕获 `(?:建一张|新建|创建)《?([^》”]+)》?卡`，自动实例化包含进度条与检查清单的 `CustomLivingCard`。
+## 四、解析、并发与日期约束
 
-2. **公私物理隔离与单向精力桥接算法**：
-   * `StorageService` 将本地存储键严格切分为 `looma_life_*` 与 `looma_work_*` 两个独立命名空间。
-   * 当用户在 `work` 模式下新增商机或完成高优任务时，触发 `WorkLoadBridge.recordWorkIntensity(delta)`，仅向 `life` 模式的 `RpgStatusCardState.energy` 同步疲劳度扣减与温暖问候触发器，实现**“懂你的辛苦，但绝不窥探与泄露你的公私机密”**。
+规则解析只覆盖已测试句式。金额按显式单位转换，“300 元”保持 300，“从 8 万改为 12 万”取最终值；缺单位不猜测。否定、假设和不明确人物不产生确定的赢单或覆盖操作。同一客户多项目时选择目标，不能默认修改第一条。
+
+一次输入版本对应稳定来源和批次，同一候选重复确认不重复写入。候选携带基础版本，后续编辑后旧预览先重核，不能覆盖新值。草稿保留手改和冲突，确认、忽略、手改或切换空间后迟到模型不得覆盖新状态。异步请求固定发起空间，不能跨区展示。
+
+日期以输入时的Asia/Shanghai时间为锚点，预览显示绝对日期。我方待办仅日期无时刻默认09:00提醒；客户预计日期保存expectedDate，明确时刻才保存expectedAt，不补时刻为客户承诺。reviewAt是用户主动设置的回访时间，缺失不自动催促；未定费用保存问题，不改成确定预算。提醒只在应用运行（含胶囊）时工作，重开汇总遗漏，系统通知不含客户细节。
+
+## 五、桌面模型边界与凭据
+
+模型凭据由 Electron 主进程使用当前版本支持的 `safeStorage` 保存，安全存储不可用时仅在会话中使用，不明文落盘。界面保存后只获取是否配置、是否启用、持久化状态及非敏感连接资料，不获取 Key。旧明文 Key 仅在安全迁移成功后移除。
+
+桌面每次启动尝试migrateLegacyConnection。已有连接、Ollama或暂不可读的凭据文件不覆盖，旧连接另存系统加密归档looma-legacy-connection.json。加密落盘成功后才清理旧localStorage凭据，失败下次重试。清除配置同时清除当前连接和旧连接归档。
+
+主进程代发 OpenAI 兼容 `/chat/completions` 请求，可连接用户自己的服务或本地 Ollama。远程要求 HTTPS，HTTP 只允许 loopback；拒绝 URL 凭据和不允许的地址组成部分，限制重定向。请求设置超时与取消，错误不打印凭据或业务正文。
+
+模型只接收当前输入和所选项目必要字段，默认不附加内部资料、全部历史或另一空间。响应经过 JSON 结构、字段白名单、目标实体和数值校验后生成候选，不执行模型提供的代码、工具调用或存储命令。Web 预览不调用桌面凭据接口，只运行本地流程。
+
+memoryModelEnabled是独立、默认关闭的授权。回忆模型只接收当前问题和用户已经展示核对的当前空间证据，最多20条、8000字符；主进程再查授权、限制字段和长度，无业务写工具。事实、摘要和历史的优先级与来源标签作为资料进入提示，不允许原文指令覆盖系统约束。角色采用本地SVG/CSS，遵从减少动态效果；胶囊复用原窗口并恢复展开边界。
+
+保留 `contextIsolation`、关闭 Node 集成、启用 `webSecurity`；限制页面导航、新窗口和 IPC 发送来源。来源验证和模型输出验证是独立边界，不能由提示词代替。
+
+## 六、外发草稿与工程验证
+
+外发草稿从明确白名单构造，内部备注不属于草稿结构。预算默认不选；原文、另一空间和未经选择的待办不进入导出。自由文本即使属于允许字段，也仍需用户在完整预览中核对，不宣称自动识别所有敏感文字。
+
+自动化使用Node内置测试与TypeScript，覆盖解析、事务、撤销、幂等、迁移、恢复、失败、日期与隔离；浏览器验证完整交互及PNG，Electron另测本地启动、凭据、模型、通知和窗口。
+
+集成脚本通过LOOMA_PLAYWRIGHT_MODULE使用外部Playwright；当前执行入口与真实结果见v5实施记录，v4脚本保留历史场景。Node主机与原生SQLite测试分开运行，后者通过scripts/test-native.cjs启动Electron匹配ABI；覆盖草稿、原子收尾、幂等、未知ACK、刷新失败、冲突、明确操作、迁移/备份、删除及万条历史有界查询。浏览器与Electron均需完整旅程实跑。
+
+本次受控模型验证不代表真实云服务准确率。npm官方审计报告Electron/extract-zip两项高危，发布前须升级复测；静态检查不代替运行与Word逐页复核。

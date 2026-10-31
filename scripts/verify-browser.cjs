@@ -1,0 +1,142 @@
+// Optional browser integration checks; no dependency is added to the app.
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { chromium } = require(process.env.LOOMA_PLAYWRIGHT_MODULE || 'playwright');
+const url = process.env.LOOMA_TEST_URL || 'http://127.0.0.1:5173';
+const output = path.resolve(__dirname, '../output/playwright');
+
+async function main() {
+  const browser = await chromium.launch({ channel: process.env.LOOMA_BROWSER_CHANNEL || 'msedge', headless: true });
+  const results = [];
+  await fs.mkdir(output, { recursive: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
+    const page = await context.newPage(); const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(url);
+    const input = page.getByRole('textbox', { name: '客户沟通记录', exact: true });
+    await input.fill('李总的网站改版项目，预算300元，明天前发原型。还没成交。');
+    await page.getByRole('button', { name: '整理并核对', exact: true }).click();
+    const read = () => page.evaluate(() => JSON.parse(localStorage.getItem('looma_app_v3')));
+    assert.equal((await read()).partitions.work.engagements.length, 0);
+    assert.equal(await page.getByLabel('预算 1', { exact: true }).inputValue(), '300');
+    await page.getByLabel('合作项目 1', { exact: true }).fill('网站改版');
+    await page.getByLabel('预算 1', { exact: true }).fill('350');
+    await page.getByText('内部备注 · 不进入外发纪要', { exact: true }).click();
+    await page.getByLabel('内部备注 1', { exact: true }).fill('验收专用内部底价200和私人评价');
+    await page.getByRole('button', { name: '确认并保存', exact: true }).click();
+    assert.equal((await read()).partitions.work.engagements[0].budgetAmount, 350);
+    assert.notEqual((await read()).partitions.work.engagements[0].stage, '赢单成交');
+    await page.reload();
+    await page.getByRole('button', { name: '客户项目', exact: true }).click();
+    await page.getByText('网站改版', { exact: true }).waitFor();
+    results.push('候选无副作用、修改确认与刷新恢复');
+    await page.getByRole('button', { name: '准备纪要', exact: true }).click();
+    const draft = page.getByLabel('可手动复制的纪要全文');
+    assert.doesNotMatch(await draft.inputValue(), /内部底价|私人评价|350/);
+    assert.equal(await page.getByRole('button', { name: '导出 PNG', exact: true }).isDisabled(), true);
+    await page.getByLabel('纪要外发摘要').fill('讨论网站改版的页面结构、原型验收与后续安排。'.repeat(12));
+    await page.getByLabel('发原型', { exact: false }).check();
+    await page.getByLabel('我已核对预览内容，确认可以对外分享').check();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: '导出 PNG', exact: true }).click();
+    const download = await downloadPromise; await download.saveAs(path.join(output, 'looma-alignment-long.png'));
+    assert.match(await draft.inputValue(), /原型/);
+    assert.doesNotMatch(await draft.inputValue(), /内部底价|私人评价/);
+    await page.getByRole('button', { name: '关闭纪要', exact: true }).click();
+    results.push('外发白名单、人工审核门槛、长文本与真实PNG下载');
+    const beforeLife = JSON.stringify((await read()).partitions.work);
+    await page.getByRole('button', { name: '生活态', exact: true }).click();
+    await page.getByPlaceholder('输入花销、体重、饮水或亲友备忘文字...').fill('午饭花了35元');
+    await page.getByRole('button', { name: '发送文字记录', exact: true }).click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('looma_app_v3')).partitions.life.wallet.entries.length === 1);
+    assert.equal(JSON.stringify((await read()).partitions.work), beforeLife);
+    assert.doesNotMatch(await page.locator('main').innerText(), /网站改版|验收专用内部底价/);
+    await page.getByRole('button', { name: '工作态', exact: true }).click();
+    assert.doesNotMatch(await page.locator('main').innerText(), /午饭花了35元/);
+    results.push('生活真实录入与双空间显示/写入隔离');
+    await page.getByRole('button', { name: '打开设置', exact: true }).click();
+    const beforeImport = await page.evaluate(() => localStorage.getItem('looma_app_v3'));
+    await page.locator('input[type=file]').setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from('{"schemaVersion":3}') });
+    await page.getByLabel('我已备份，确认替换两个空间的业务数据').check();
+    await page.getByRole('button', { name: '校验并恢复', exact: true }).click();
+    await page.getByText('文件校验或写入失败，当前业务数据未替换。', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => localStorage.getItem('looma_app_v3')), beforeImport);
+    const backup = JSON.parse(beforeImport); backup.partitions.work.engagements[0].title = '从备份恢复的项目';
+    await page.locator('input[type=file]').setInputFiles({ name: 'valid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)) });
+    await page.getByLabel('我已备份，确认替换两个空间的业务数据').check();
+    await page.getByRole('button', { name: '校验并恢复', exact: true }).click();
+    assert.equal((await read()).partitions.work.engagements[0].title, '从备份恢复的项目');
+    await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+    results.push('坏备份不覆盖、完整备份恢复');
+    // Restore a valid confirmed snapshot before exercising history-based undo.
+    await page.getByRole('button', { name: '打开设置', exact: true }).click();
+    await page.locator('input[type=file]').setInputFiles({ name: 'original.json', mimeType: 'application/json', buffer: Buffer.from(beforeImport) });
+    await page.getByLabel('我已备份，确认替换两个空间的业务数据').check();
+    await page.getByRole('button', { name: '校验并恢复', exact: true }).click();
+    await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+    await page.getByRole('button', { name: '变更记录', exact: true }).click();
+    await page.getByRole('button', { name: '撤销最近变更', exact: true }).click();
+    assert.equal((await read()).partitions.work.engagements.length, 0);
+    assert.equal((await read()).partitions.work.tasks.length, 0);
+    assert.equal((await read()).partitions.life.wallet.entries.length, 1);
+    results.push('批次撤销不影响生活记录');
+    await page.getByRole('button', { name: '随口记录', exact: true }).click();
+    await page.screenshot({ path: path.join(output, 'looma-workbench-desktop.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth || document.querySelector('.app-shell').scrollWidth > innerWidth), false);
+    await page.screenshot({ path: path.join(output, 'looma-workbench-mobile.png') });
+    results.push('390px窄屏无横向溢出');
+    assert.deepEqual(errors, []);
+    const recoveryBackup = await page.evaluate(() => localStorage.getItem('looma_app_v3'));
+    await context.close();
+
+    const corruptContext = await browser.newContext(); const corruptPage = await corruptContext.newPage();
+    await corruptPage.addInitScript(() => { if (!sessionStorage.getItem('qa-corrupt-seeded')) { localStorage.setItem('looma_app_v3', '{"schemaVersion":3,"broken":true}'); sessionStorage.setItem('qa-corrupt-seeded', 'yes'); } });
+    await corruptPage.goto(url);
+    await corruptPage.getByRole('heading', { name: '暂时无法打开工作区', exact: true }).waitFor();
+    assert.equal(await corruptPage.evaluate(() => localStorage.getItem('looma_app_v3')), '{"schemaVersion":3,"broken":true}');
+    await corruptPage.getByLabel('选择恢复备份', { exact: true }).setInputFiles({ name: 'recovery.json', mimeType: 'application/json', buffer: Buffer.from(recoveryBackup) });
+    await corruptPage.getByLabel('确认使用此备份替换当前两个空间的业务数据').check();
+    await corruptPage.getByRole('button', { name: '校验并恢复工作区', exact: true }).click();
+    await corruptPage.getByRole('textbox', { name: '客户沟通记录', exact: true }).waitFor();
+    assert.equal(await corruptPage.evaluate(() => JSON.parse(localStorage.getItem('looma_app_v3')).partitions.life.wallet.entries.length), 1);
+    await corruptContext.close(); results.push('损坏快照不自动清除，错误页可校验恢复');
+
+    const quotaContext = await browser.newContext(); const quotaPage = await quotaContext.newPage();
+    await quotaPage.goto(url); await quotaPage.getByRole('button', { name: '生活态', exact: true }).click();
+    await quotaPage.getByPlaceholder('输入花销、体重、饮水或亲友备忘文字...').waitFor();
+    await quotaPage.evaluate(() => { const original = Storage.prototype.setItem; let calls = 0; Storage.prototype.setItem = function(key, value) { if (key === 'looma_app_v3' && ++calls === 3) throw new DOMException('quota', 'QuotaExceededError'); return original.call(this, key, value); }; });
+    await quotaPage.getByPlaceholder('输入花销、体重、饮水或亲友备忘文字...').fill('午饭花了35元');
+    await quotaPage.getByRole('button', { name: '发送文字记录', exact: true }).click();
+    await quotaPage.getByRole('alert').filter({ hasText: '生活卡片已保存，但回复未能保存' }).waitFor();
+    assert.equal(await quotaPage.evaluate(() => JSON.parse(localStorage.getItem('looma_app_v3')).partitions.life.wallet.entries.length), 1);
+    await quotaContext.close(); results.push('业务成功但回复写入失败时明确提示，避免误导重发');
+
+    for (const action of ['confirm', 'discard', 'edit', 'switch']) {
+      const ctx = await browser.newContext(); const p = await ctx.newPage();
+      await p.addInitScript(() => {
+        window.electronAPI = { modelStatus: async () => ({ configured: true, persistent: false, enabled: true, apiBaseUrl: 'http://localhost:11434/v1', modelName: 'controlled-test' }), setAlwaysOnTop: async () => false, cancelModel: async () => {}, proposeModel: async () => { await new Promise(r => setTimeout(r, 650)); return { content: JSON.stringify({ engagements: [{ clientName: '李总', title: '迟到模型项目', budgetAmount: 999 }], tasks: [], warnings: [] }) }; } };
+      });
+      await p.goto(url); await p.getByText('桌面模型增强', { exact: true }).waitFor();
+      await p.getByRole('textbox', { name: '客户沟通记录', exact: true }).fill('李总预算300元');
+      await p.getByRole('button', { name: '整理并核对', exact: true }).click();
+      if (action === 'confirm') await p.getByRole('button', { name: '确认并保存', exact: true }).click();
+      if (action === 'discard') await p.getByRole('button', { name: '忽略整批', exact: true }).click();
+      if (action === 'edit') await p.getByLabel('预算 1', { exact: true }).fill('333');
+      if (action === 'switch') await p.getByRole('button', { name: '生活态', exact: true }).click();
+      await p.waitForTimeout(850);
+      if (action === 'confirm' || action === 'discard') assert.equal(await p.getByRole('region', { name: '待确认变更', exact: true }).count(), 0);
+      if (action === 'edit') assert.equal(await p.getByLabel('预算 1', { exact: true }).inputValue(), '333');
+      if (action === 'switch') assert.doesNotMatch(await p.locator('main').innerText(), /迟到模型项目/);
+      const stored = await p.evaluate(() => JSON.parse(localStorage.getItem('looma_app_v3')).partitions.work.engagements);
+      assert.equal(stored.length, action === 'confirm' ? 1 : 0);
+      if (stored.length) assert.equal(stored[0].budgetAmount, 300);
+      await ctx.close(); results.push(`迟到模型结果不覆盖用户操作：${action}`);
+    }
+    await fs.writeFile(path.join(output, 'browser-verification.json'), JSON.stringify({ passed: results, errors: [] }, null, 2));
+    console.log(JSON.stringify({ passed: results, errors }, null, 2));
+  } finally { await browser.close(); }
+}
+main().catch(error => { console.error(error.message); process.exitCode = 1; });

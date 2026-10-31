@@ -15,6 +15,7 @@ export const MemoryTimeline: React.FC<MemoryTimelineProps> = ({
   onMemoriesChange,
 }) => {
   const [newFact, setNewFact] = useState('');
+  const [storageError, setStorageError] = useState<string | null>(null);
   const [newCategory, setNewCategory] = useState<MemoryItem['category']>(
     mode === 'work' ? 'business' : 'preference'
   );
@@ -22,16 +23,26 @@ export const MemoryTimeline: React.FC<MemoryTimelineProps> = ({
   const isWork = mode === 'work';
 
   const handleDelete = (id: string) => {
-    StorageService.deleteMemory(id, mode);
-    onMemoriesChange(StorageService.getMemories(mode));
+    try {
+      StorageService.deleteMemory(id, mode);
+      onMemoriesChange(StorageService.getMemories(mode));
+      setStorageError(null);
+    } catch {
+      setStorageError('删除失败，原记录已保留。请检查本地存储后重试。');
+    }
   };
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newFact.trim()) return;
-    StorageService.addMemory(newFact.trim(), newCategory, mode);
-    setNewFact('');
-    onMemoriesChange(StorageService.getMemories(mode));
+    try {
+      StorageService.addMemory(newFact.trim(), newCategory, mode);
+      onMemoriesChange(StorageService.getMemories(mode));
+      setNewFact('');
+      setStorageError(null);
+    } catch {
+      setStorageError('保存失败，输入尚未保存。请检查本地存储后重试。');
+    }
   };
 
   const getCategoryMeta = (cat: MemoryItem['category']) => {
@@ -97,7 +108,7 @@ export const MemoryTimeline: React.FC<MemoryTimelineProps> = ({
         <div className="flex items-center gap-2">
           <Brain className={`w-4 h-4 ${isWork ? 'text-blue-400' : 'text-[#8a5410]'}`} />
           <span className="font-bold text-xs">
-            {isWork ? '💼 搞钱态 · 独立商业记忆保险箱' : '🌙 生活态 · 私密温情记忆胶囊'}
+            {isWork ? '💼 工作态 · 商业备忘' : '🌙 生活态 · 生活备忘'}
           </span>
         </div>
         <span
@@ -122,10 +133,12 @@ export const MemoryTimeline: React.FC<MemoryTimelineProps> = ({
         />
         <span>
           {isWork
-            ? '双生隔离保护生效中：当前处于【搞钱态】，此处商业记忆与您的私人生活情绪完全物理隔离，投屏防窥。'
-            : '双生隔离保护生效中：当前处于【生活态】，所有记忆 100% 存储在您的本地设备，随时可一键彻底抹除。'}
+            ? '本地逻辑分区：这里显示工作备忘，不读取生活分区。请自行留意当前屏幕展示的内容。'
+            : '本地逻辑分区：这里显示生活备忘，不自动跨区写入。业务资料保存在本机，尚未加密。'}
         </span>
       </div>
+
+      {storageError && <p role="alert" className="px-3 py-2 text-xs text-rose-600">{storageError}</p>}
 
       {/* Add Memory Form */}
       <form
@@ -189,7 +202,7 @@ export const MemoryTimeline: React.FC<MemoryTimelineProps> = ({
               还没有记录下长期记忆哦
             </p>
             <p className={`text-[11px] mt-1 ${isWork ? 'text-slate-500' : 'text-[#a49f91]'}`}>
-              在聊天中提及你的喜好或客户信息，Looma 会自动为你沉淀到这里
+              可手动添加需要保留的备忘，并随时查看或删除记录。
             </p>
           </div>
         ) : (
