@@ -22,6 +22,8 @@ declare global {
       notifyDue(input: {count: number}): Promise<{shown: boolean}>;
       onQuickCapture?(handler: (text: string) => void): () => void;
       readClipboard?(): Promise<string>;
+      setContentProtection?(value: boolean): Promise<boolean>;
+      isContentProtected?(): Promise<boolean>;
     };
   }
   interface ModelConnectionStatus { configured: boolean; persistent: boolean; enabled: boolean; apiBaseUrl: string; modelName: string }

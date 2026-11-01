@@ -5,6 +5,13 @@ const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { getWindowTarget, isTrustedSender, createDesktopServices } = require('./desktop-services.cjs');
 
+// === 1. 运行时反调试与未授权参数熔断自检 (Anti-Debugging & Tamper Defense) ===
+const DANGEROUS_FLAGS = ['--remote-debugging-port', '--inspect', '--inspect-brk', '--remote-debugging-pipe'];
+if (Array.isArray(process?.argv) && process.argv.some(arg => typeof arg === 'string' && DANGEROUS_FLAGS.some(flag => arg.toLowerCase().startsWith(flag)))) {
+  console.error('[SECURITY DEFENSE] 检测到非授权调试参数注入，进程立即熔断退出。');
+  process.exit(1);
+}
+
 let mainWindow = null;
 let expectedUrl = '';
 let services;
@@ -29,6 +36,18 @@ function trustedHandler(handler) {
   };
 }
 
+// 剪贴板敏感凭据与高危数据特征过滤
+function sanitizeClipboard(text) {
+  if (typeof text !== 'string') return '';
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 12000) return '';
+  // 阻断 RSA / EC / OPENSSH 等私钥特征，防止误触泄密
+  if (/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/i.test(trimmed)) {
+    return '[SECURITY INTERCEPT] 检测到包含私钥特征，底座已自动阻止载入待办，保护您的凭据安全。';
+  }
+  return trimmed;
+}
+
 function registerHandlers() {
   const handle = (channel, callback) => ipcMain.handle(channel, trustedHandler(callback));
   handle('window:minimize', () => mainWindow.minimize());
@@ -46,6 +65,12 @@ function registerHandlers() {
     mainWindow.setAlwaysOnTop(flag);
     return mainWindow.isAlwaysOnTop();
   });
+  handle('window:setContentProtection', flag => {
+    if (typeof flag !== 'boolean') throw new Error('防截屏参数无效');
+    mainWindow.setContentProtection(flag);
+    return mainWindow.isContentProtected();
+  });
+  handle('window:isContentProtected', () => mainWindow.isContentProtected());
   handle('window:setCompact', flag => {
     if (typeof flag !== 'boolean') throw new Error('窗口状态无效');
     if (compact === flag) return { compact };
@@ -137,8 +162,8 @@ function registerHandlers() {
   handle('notifications:due', value => services.notifyDue(value));
   handle('clipboard:read', () => {
     try {
-      const text = clipboard.readText();
-      return (typeof text === 'string' && text.length <= 12000) ? text.trim() : '';
+      const raw = clipboard.readText();
+      return sanitizeClipboard(raw);
     } catch {
       return '';
     }
@@ -154,9 +179,10 @@ function registerGlobalShortcuts() {
       mainWindow.focus();
 
       try {
-        const text = clipboard.readText();
-        if (text && typeof text === 'string' && text.trim() && text.length <= 12000) {
-          mainWindow.webContents.send('quick-capture:paste', text.trim());
+        const raw = clipboard.readText();
+        const safe = sanitizeClipboard(raw);
+        if (safe) {
+          mainWindow.webContents.send('quick-capture:paste', safe);
         }
       } catch (err) {
         console.warn('[Looma] 剪贴板读取异常:', err);
@@ -190,8 +216,28 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
+      devTools: !app.isPackaged, // 生产打包环境下彻底封禁 DevTools 动态挂接
     },
   });
+
+  // === 2. 窗口防截屏与录屏物理隐身器 (Win32 SetWindowDisplayAffinity) ===
+  // 默认激活：本地显示器肉眼正常交互，远程会议投屏/录屏/截屏时呈全黑或穿透，物理防窥
+  try {
+    mainWindow.setContentProtection(true);
+  } catch (err) {
+    console.warn('[SECURITY] 开启防截屏隐身失败:', err);
+  }
+
+  // === 3. 生产环境快捷键防逆向注入拦截 ===
+  if (app.isPackaged) {
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      // 拦截 F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+U 等逆向调试组合键
+      if (input.key === 'F12' || (input.control && input.shift && ['I', 'J', 'C'].includes(input.key.toUpperCase())) || (input.control && input.key.toUpperCase() === 'U')) {
+        event.preventDefault();
+      }
+    });
+  }
+
   const window = mainWindow;
   let rendererReady = false, allowClose = false, pendingId = null, closeTimer = null, prompting = false;
   const clearCloseTimer = () => { if (closeTimer !== null) clearTimeout(closeTimer); closeTimer = null; };

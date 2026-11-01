@@ -35,4 +35,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('quick-capture:paste', listener);
   },
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
+  setContentProtection: flag => ipcRenderer.invoke('window:setContentProtection', flag),
+  isContentProtected: () => ipcRenderer.invoke('window:isContentProtected'),
 });
