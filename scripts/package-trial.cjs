@@ -18,7 +18,7 @@ function packageTrial(root, { outputRoot = path.join(root, 'output/trial') } = {
   if (JSON.stringify(manifest.runtime) !== JSON.stringify(runtime)) throw new Error('运行依赖清单不一致，请重新构建。');
   const directory = path.resolve(outputRoot, `Looma-${info.buildId}-win32-x64`);
   if (fs.existsSync(directory)) throw new Error('该构建目录已存在，未覆盖；请保留原包或重新生成构建。');
-  const required = ['electron/main.cjs', 'electron/preload.cjs', 'electron/desktop-services.cjs', 'electron/persistence.cjs', 'electron/mcp-server.cjs', 'shared/persistence-core.mjs', 'shared/build-info.json'];
+  const required = ['electron/main.cjs', 'electron/preload.cjs', 'electron/desktop-services.cjs', 'electron/persistence.cjs', 'shared/persistence-core.mjs', 'shared/build-info.json'];
   for (const name of required) if (!fs.existsSync(path.join(root, name))) throw new Error(`运行依赖缺失：${name}`);
   fs.mkdirSync(directory, { recursive: true });
   for (const row of runtime) {
@@ -28,6 +28,8 @@ function packageTrial(root, { outputRoot = path.join(root, 'output/trial') } = {
   }
   const app = path.join(directory, 'resources/app');
   for (const name of required) copyFile(root, name, path.join(app, name));
+  const optionalApp = ['electron/mcp-server.cjs'];
+  for (const name of optionalApp) if (fs.existsSync(path.join(root, name))) copyFile(root, name, path.join(app, name));
   for (const name of [...files, 'build-manifest.json']) copyFile(root, `dist/${name}`, path.join(app, 'dist', name));
   fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'looma-internal-trial', productName: 'Looma', version: info.productVersion, description: 'Looma internal local trial', main: 'electron/main.cjs', type: 'module', license: 'MIT' }, null, 2) + '\n');
   fs.writeFileSync(path.join(directory, 'build-info.json'), JSON.stringify(info, null, 2) + '\n');
