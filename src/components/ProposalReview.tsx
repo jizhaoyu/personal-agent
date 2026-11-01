@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, X, AlertCircle, RotateCcw, ArrowRight, FileText } from 'lucide-react';
+import { Check, X, AlertCircle, RotateCcw, ArrowRight, FileText, ShieldCheck } from 'lucide-react';
 import type { ProposedChangeSet, Engagement, ProposalConflict, WorkOperation } from '../types';
 
 const stages = ['初步接触', '需求确认', '方案报价', '商务谈判', '赢单成交'];
@@ -27,6 +27,7 @@ export function ProposalReview({ proposal, engagements, conflicts = [], onResolv
     onChange({ ...proposal, operations: proposal.operations.map((operation, i) => i === index ? { ...operation, after: { ...operation.after, ...patch } } as WorkOperation : operation) });
   }
   const projects = [...new Map([...engagements, ...proposal.operations.filter(operation => operation.target === 'engagement' && operation.after).map(operation => operation.after as Engagement)].map(project => [project.id, project])).values()];
+  const isolatedInternalNoteCount = engagements.filter(item => (item.internalContext || '').trim().length > 0).length;
   const groups = new Map<string, { name: string; operations: { operation: WorkOperation; index: number }[] }>();
   proposal.operations.forEach((operation, index) => {
     const projectId = operation.target === 'engagement' ? operation.entityId : operation.target === 'task' || operation.target === 'followup' ? operation.after?.engagementId || operation.before?.engagementId || '' : '';
@@ -97,6 +98,7 @@ export function ProposalReview({ proposal, engagements, conflicts = [], onResolv
     })}</div>)}
     {!proposal.operations.length && <p className="empty-text">尚无明确的业务变化。可以补充归属，或先仅保存原文，稍后继续。</p>}
     <details className="review-source"><summary><FileText size={14}/>本次原文依据</summary><p>{proposal.sourceText}</p></details>
+    <details className="review-boundary"><summary><ShieldCheck size={14}/>最小范围与隔离边界核验</summary><p>本次核对仅读取工作空间当前关联项目的公开字段；已自动隔离保护 {isolatedInternalNoteCount} 个项目的内部备注及全部生活空间资料，未确认前不会改写业务记录。</p></details>
     <footer className="button-row proposal-actions"><button className="primary-btn" onClick={onConfirm} disabled={busy || !!proposal.clarification || !proposal.operations.length || conflicts.length > 0}><Check size={15}/>确认并保存</button><button className="soft-btn" onClick={onReparse} disabled={busy}><RotateCcw size={14}/>重新核对当前资料</button><button className="text-btn" onClick={onDiscard}><X size={14}/>忽略整批</button></footer>
   </section>;
 }

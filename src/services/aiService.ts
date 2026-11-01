@@ -2,6 +2,67 @@ import type { AppSettings, Message, MemoryItem, JournalArtifact, WorkspaceMode, 
 import { StateEngine, budgetIsUncertain, dateIsUncertain } from './stateEngine';
 import { resolveDeadline, shanghaiDateKey } from './dates';
 
+export interface AlignmentBoundaryProof {
+  allowedFields: string[];
+  withheldFields: string[];
+  internalNotesWithheld: boolean;
+  internalNotesChars: number;
+  unselectedTaskCount: number;
+  budgetWithheld: boolean;
+}
+
+export function inspectAlignmentBoundary(engagement: Engagement, tasks: ProjectTaskItem[], selectedIds: string[], includeBudget = false): AlignmentBoundaryProof {
+  const projectTasks = tasks.filter(t => t.engagementId === engagement.id);
+  const selectedCount = projectTasks.filter(t => selectedIds.includes(t.id)).length;
+  const unselectedTaskCount = Math.max(0, projectTasks.length - selectedCount);
+  const internalNotesChars = (engagement.internalContext || '').trim().length;
+  const internalNotesWithheld = internalNotesChars > 0;
+  const budgetWithheld = !includeBudget;
+  const allowedFields = [
+    `客户与项目名称（${engagement.clientName} · ${engagement.title}）`,
+    '外发摘要（经发送者编辑审阅）',
+    ...(includeBudget && engagement.budgetAmount !== undefined ? [`预算参考（¥${engagement.budgetAmount.toLocaleString('zh-CN')}）`] : []),
+    ...(selectedCount > 0 ? [`已勾选待核对行动（${selectedCount} 项）`] : []),
+  ];
+  const withheldFields = [
+    internalNotesWithheld ? `内部备注已拦截（${internalNotesChars} 字不外发）` : '内部备注（空，默认隔离不外发）',
+    ...(budgetWithheld ? ['项目预算已隐藏（默认不选入外发草稿）'] : []),
+    ...(unselectedTaskCount > 0 ? [`未勾选内部待办已拦截（${unselectedTaskCount} 项不外发）`] : []),
+    '原始沟通全文与生活空间资料（零外发）',
+  ];
+  return {
+    allowedFields,
+    withheldFields,
+    internalNotesWithheld,
+    internalNotesChars,
+    unselectedTaskCount,
+    budgetWithheld,
+  };
+}
+
+export interface ProposalContextBoundaryProof {
+  space: WorkspaceMode;
+  scopedProjectCount: number;
+  isolatedInternalNoteCount: number;
+  crossSpaceIsolated: true;
+}
+
+export function inspectProposalContextBoundary(proposal: ProposedChangeSet, engagements: Engagement[]): ProposalContextBoundaryProof {
+  const touchedIds = new Set(
+    proposal.operations
+      .map(op => op.target === 'engagement' ? op.entityId : (op.after as any)?.engagementId || (op.before as any)?.engagementId)
+      .filter(Boolean)
+  );
+  const scopedProjects = engagements.filter(e => touchedIds.has(e.id));
+  const isolatedInternalNoteCount = engagements.filter(e => (e.internalContext || '').trim().length > 0).length;
+  return {
+    space: proposal.mode,
+    scopedProjectCount: scopedProjects.length || (touchedIds.size > 0 ? touchedIds.size : 0),
+    isolatedInternalNoteCount,
+    crossSpaceIsolated: true,
+  };
+}
+
 export function createAlignmentDraft(engagement: Engagement, tasks: ProjectTaskItem[], selectedIds: string[], includeBudget = false): AlignmentDraft {
   const draft: AlignmentDraft = { title: '沟通纪要草稿 / 待对方确认', clientName: engagement.clientName, projectTitle: engagement.title, summary: engagement.shareableSummary,
     actions: tasks.filter(t => t.engagementId === engagement.id && selectedIds.includes(t.id)).map(t => ({ title: t.title, ...(t.dueAt ? { dueAt: t.dueAt } : {}) })) };

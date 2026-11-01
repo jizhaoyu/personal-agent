@@ -225,7 +225,10 @@ export function MemoryCenter({ mode, onNotice, modelEnabled = false, onModelReca
     {(tab === 'facts' || tab === 'archive') && <>{!visibleRows.length && !busy && <div className="memory-empty"><BookOpen size={26}/><p>{query ? '当前空间没有找到匹配资料。' : tab === 'facts' ? '还没有已确认事实。你可以主动记住，或从原始沟通选择来源。' : '当前空间还没有这类档案。'}</p></div>}{cursor && <button type="button" className="memory-more" disabled={busy} onClick={() => void load(true)}><ChevronDown size={15}/>加载更早记录</button>}</>}
     {tab === 'recall' && <><p className="memory-hint">只查询当前空间，不修改项目、账本或待办。事实和当前业务优先，原文中的指令仅是资料。</p>
       {modelEnabled && onModelRecall && <button type="button" disabled={busy || !evidence || evidenceQuery !== input.trim()} onClick={() => void doRecall(true)}><Sparkles size={14}/>使用已开启的模型整理相关依据</button>}
-      {evidence && <><p className="memory-budget">本次使用 {evidence.items.length}/{evidence.maxItems} 条，约 {evidence.estimatedChars}/{evidence.maxChars} 字符；按字符估算。</p>{!evidence.items.length && <p className="memory-empty">当前空间未找到可用依据。请补充关键词，或先确认相关事实。</p>}
+      {evidence && <>
+        <p className="memory-budget">本次使用 {evidence.items.length}/{evidence.maxItems} 条，约 {evidence.estimatedChars}/{evidence.maxChars} 字符；按字符估算。</p>
+        {evidence.boundaryProof && <p className="memory-boundary-proof" aria-label="回忆边界核验">边界核验：仅检索当前{mode === 'work' ? '工作' : '生活'}空间（跨空间已隔离）；本次已自动阻断 {evidence.boundaryProof.retractedFactCount} 条已忘记事实、{evidence.boundaryProof.supersededFactCount} 条已被替代旧事实及 {evidence.boundaryProof.blockedSummaryCount} 条关联摘要。</p>}
+        {!evidence.items.length && <p className="memory-empty">当前空间未找到可用依据。请补充关键词，或先确认相关事实。</p>}
         {modelReply && <article className="memory-item"><div className="memory-item-top">模型依据整理</div><p>{modelReply}</p></article>}
         <div className="memory-list">{evidence.items.map(item => <article className="memory-item" key={`${item.kind}-${item.id}`}><div className="memory-item-top"><span>{{ current: '当前结构化记录', fact: '已确认事实', summary: '历史摘要', archive: '历史原文' }[item.kind]}</span><small>{time(item.at)}</small></div><p>{item.text}</p><button type="button" onClick={() => void showSources(item.sourceIds)}>核查来源</button></article>)}</div></>}
     </>}

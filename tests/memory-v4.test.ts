@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 let policy: any = {};
 try { policy = require('../src/persistence/memory'); } catch { /* The first run exposes the missing feature as an assertion. */ }
+let aiService: any = {};
+try { aiService = require('../src/services/aiService'); } catch { /* Optional load check */ }
 const fact = (id: string, value: string, extras = {}) => ({ id, mode: 'work', category: 'business', fact: value,
   createdAt: 10, importance: 3, status: 'active', subject: '张三', topic: '偏好', sourceIds: ['source-1'], ...extras });
 
@@ -41,7 +43,7 @@ test('confirmed correction preserves origins and supersedes only the selected fa
   assert.equal(original.status, 'active');
 });
 
-test('recall uses authoritative current budget and never recalls superseded or forgotten derivations', () => {
+test('recall uses authoritative current budget, never recalls superseded or forgotten derivations, and exposes boundaryProof', () => {
   assert.equal(typeof policy.buildRecallEvidence, 'function');
   const result = policy.buildRecallEvidence({ query: '张三预算', space: 'work',
     engagements: [{ id: 'project', clientName: '张三', title: '官网', budgetAmount: 120000, updatedAt: 30 }],
@@ -53,6 +55,29 @@ test('recall uses authoritative current budget and never recalls superseded or f
   assert.doesNotMatch(result.text, /6万元|8万元/);
   assert.equal(result.items[0].kind, 'current');
   assert.deepEqual(result.items[0].sourceIds, ['project']);
+  assert.ok(result.boundaryProof);
+  assert.equal(result.boundaryProof.retractedFactCount, 1);
+  assert.equal(result.boundaryProof.supersededFactCount, 1);
+  assert.equal(result.boundaryProof.blockedSummaryCount, 1);
+  assert.equal(result.boundaryProof.crossSpaceIsolated, true);
+});
+
+test('alignment and proposal boundary inspectors explicitly report withheld internal notes and unselected tasks', () => {
+  assert.equal(typeof aiService.inspectAlignmentBoundary, 'function');
+  const project = {
+    id: 'p1', clientName: '王总', title: '品牌升级', budgetAmount: 98000, stage: '方案报价',
+    internalContext: '内部底价7.5万，绝不外发', shareableSummary: '首轮方案讨论', nextAction: '周五发报价单', updatedAt: 10,
+  };
+  const tasks = [
+    { id: 't1', engagementId: 'p1', title: '发送报价单', assignee: '我', deadline: '', priority: 'medium', done: false },
+    { id: 't2', engagementId: 'p1', title: '内部核算毛利', assignee: '我', deadline: '', priority: 'high', done: false },
+  ];
+  const proof = aiService.inspectAlignmentBoundary(project, tasks, ['t1'], false);
+  assert.equal(proof.internalNotesWithheld, true);
+  assert.equal(proof.unselectedTaskCount, 1);
+  assert.equal(proof.budgetWithheld, true);
+  assert.ok(proof.withheldFields.some((item: string) => item.includes('内部备注已拦截')));
+  assert.ok(proof.withheldFields.some((item: string) => item.includes('未勾选内部待办已拦截')));
 });
 
 test('recall is bounded, space scoped and treats original instructions as cited data', () => {
@@ -165,7 +190,7 @@ test('an inactive older refresh cannot roll back new metadata or discard active 
     if (command.op === 'init') return { ready: true, mode: 'work' };
     if (command.op === 'bootstrap') {
       if (deferred) return new Promise(resolve => pending.push({ space: command.space, resolve }));
-      return makeBootstrap({ mode: 'work', settings: { personaName: 'original' } }, [], { space: command.space });
+      return makeBootstrap({ mode: 'work', settings: { personaName: 'original' } }, [], { space: 'work' });
     }
   } });
   await repository.initialize(); deferred = true;

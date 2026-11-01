@@ -24,6 +24,14 @@ export interface RecallItem {
   sourceIds: string[];
   at: number;
 }
+export interface RecallBoundaryProof {
+  space: WorkspaceMode;
+  retractedFactCount: number;
+  supersededFactCount: number;
+  blockedSummaryCount: number;
+  blockedSourceCount: number;
+  crossSpaceIsolated: true;
+}
 export interface RecallEvidence {
   items: RecallItem[];
   text: string;
@@ -31,6 +39,7 @@ export interface RecallEvidence {
   maxChars: number;
   maxItems: number;
   readOnly: true;
+  boundaryProof: RecallBoundaryProof;
 }
 const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 export const memorySources = (item: Pick<ManagedMemory, 'sourceIds' | 'sourceMessageId'>): string[] =>
@@ -93,16 +102,23 @@ export function buildRecallEvidence(input: {
   const maxItems = Math.max(1, Math.min(input.maxItems ?? 12, 20));
   const scoped = input.facts.filter(item => item.mode === input.space);
   const blocked = new Set<string>();
+  const blockedSources = new Set<string>();
+  let retractedFactCount = 0;
+  let supersededFactCount = 0;
   for (const fact of scoped) if (fact.status === 'retracted' || fact.status === 'superseded') {
-    blocked.add(fact.id); for (const id of memorySources(fact)) blocked.add(id);
+    if (fact.status === 'retracted') retractedFactCount++;
+    else supersededFactCount++;
+    blocked.add(fact.id);
+    for (const id of memorySources(fact)) { blocked.add(id); blockedSources.add(id); }
   }
   // A retracted derivation remains excluded even if its original archive is retained for manual inspection.
   const summaries = input.summaries || [];
+  let blockedSummaryCount = 0;
   let changed = true;
   while (changed) {
     changed = false;
     for (const summary of summaries) if (!blocked.has(summary.id) && summary.sourceIds.some(id => blocked.has(id))) {
-      blocked.add(summary.id); changed = true;
+      blocked.add(summary.id); blockedSummaryCount++; changed = true;
     }
   }
   const candidates: RecallItem[] = [];
@@ -134,7 +150,22 @@ export function buildRecallEvidence(input: {
     items.push({ ...candidate, text }); lines.push(prefix + text);
   }
   const text = lines.join('\n');
-  return { items, text, estimatedChars: text.length, maxChars, maxItems, readOnly: true };
+  return {
+    items,
+    text,
+    estimatedChars: text.length,
+    maxChars,
+    maxItems,
+    readOnly: true,
+    boundaryProof: {
+      space: input.space,
+      retractedFactCount,
+      supersededFactCount,
+      blockedSummaryCount,
+      blockedSourceCount: blockedSources.size,
+      crossSpaceIsolated: true,
+    },
+  };
 }
 
 /** Rebuildable navigation aid. Event text never becomes a fact automatically. */
