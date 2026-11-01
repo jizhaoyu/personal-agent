@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, safeStorage, Notification, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, safeStorage, Notification, dialog, globalShortcut, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
@@ -84,33 +84,31 @@ function registerHandlers() {
     if (importing) throw new Error('已有完整备份正在恢复，请稍候。');
     importing = true;
     try {
-    // When the original DB cannot open, validate into a fresh DB before preserving
-    // the unreadable files and switching to the restored one. No invalid import moves them.
-    let staged;
-    const databasePath = path.join(app.getPath('userData'), 'looma.sqlite');
-    const stagePath = `${databasePath}.recovery-${randomUUID()}`;
-    if (!persistence) staged = await createPersistence({ filePath: stagePath });
-    const restored = await (persistence || staged).restoreFromFile(result.filePaths[0]);
-    staged?.close();
-    if (staged && restored.ok) {
-      const suffix = `.unreadable-${randomUUID()}`;
-      const moved = [];
-      try {
-        for (const extra of ['', '-wal', '-shm']) {
-          const original = databasePath + extra;
-          if (fs.existsSync(original)) { fs.renameSync(original, original + suffix); moved.push([original, original + suffix]); }
+      let staged;
+      const databasePath = path.join(app.getPath('userData'), 'looma.sqlite');
+      const stagePath = `${databasePath}.recovery-${randomUUID()}`;
+      if (!persistence) staged = await createPersistence({ filePath: stagePath });
+      const restored = await (persistence || staged).restoreFromFile(result.filePaths[0]);
+      staged?.close();
+      if (staged && restored.ok) {
+        const suffix = `.unreadable-${randomUUID()}`;
+        const moved = [];
+        try {
+          for (const extra of ['', '-wal', '-shm']) {
+            const original = databasePath + extra;
+            if (fs.existsSync(original)) { fs.renameSync(original, original + suffix); moved.push([original, original + suffix]); }
+          }
+          fs.renameSync(stagePath, databasePath);
+          persistence = await createPersistence({ filePath: databasePath }); persistenceInitError = '';
+        } catch (error) {
+          for (const [original, saved] of moved.reverse()) if (!fs.existsSync(original)) fs.renameSync(saved, original);
+          throw error;
         }
-        fs.renameSync(stagePath, databasePath);
-        persistence = await createPersistence({ filePath: databasePath }); persistenceInitError = '';
-      } catch (error) {
-        for (const [original, saved] of moved.reverse()) if (!fs.existsSync(original)) fs.renameSync(saved, original);
-        throw error;
+      } else if (staged) {
+        for (const extra of ['', '-wal', '-shm']) if (fs.existsSync(stagePath + extra)) fs.unlinkSync(stagePath + extra);
       }
-    } else if (staged) {
-      for (const extra of ['', '-wal', '-shm']) if (fs.existsSync(stagePath + extra)) fs.unlinkSync(stagePath + extra);
-    }
-    if (!restored.ok) throw new Error(restored.error || '备份校验失败，原数据未替换');
-    return { canceled: false };
+      if (!restored.ok) throw new Error(restored.error || '备份校验失败，原数据未替换');
+      return { canceled: false };
     } finally { importing = false; }
   });
   handle('window:resize', size => {
@@ -137,6 +135,36 @@ function registerHandlers() {
   });
   handle('model:cancel', requestId => services.cancelModel(requestId));
   handle('notifications:due', value => services.notifyDue(value));
+  handle('clipboard:read', () => {
+    try {
+      const text = clipboard.readText();
+      return (typeof text === 'string' && text.length <= 12000) ? text.trim() : '';
+    } catch {
+      return '';
+    }
+  });
+}
+
+function registerGlobalShortcuts() {
+  try {
+    globalShortcut.register('CommandOrControl+Shift+L', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+
+      try {
+        const text = clipboard.readText();
+        if (text && typeof text === 'string' && text.trim() && text.length <= 12000) {
+          mainWindow.webContents.send('quick-capture:paste', text.trim());
+        }
+      } catch (err) {
+        console.warn('[Looma] 剪贴板读取异常:', err);
+      }
+    });
+  } catch (err) {
+    console.warn('[Looma] 注册全局快捷键 CommandOrControl+Shift+L 失败:', err);
+  }
 }
 
 function createWindow() {
@@ -230,11 +258,15 @@ app.whenReady().then(async () => {
   services = createDesktopServices({ userDataPath: app.getPath('userData'), safeStorage, Notification });
   registerHandlers();
   createWindow();
+  registerGlobalShortcuts();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
-app.on('will-quit', () => persistence?.close());
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch (e) {}
+  persistence?.close();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

@@ -20,6 +20,8 @@ declare global {
       recallModel?(input: {requestId: string; query: string; space: 'life'|'work'; evidence: unknown[]}): Promise<{content: string}>;
       cancelModel(requestId: string): Promise<void>;
       notifyDue(input: {count: number}): Promise<{shown: boolean}>;
+      onQuickCapture?(handler: (text: string) => void): () => void;
+      readClipboard?(): Promise<string>;
     };
   }
   interface ModelConnectionStatus { configured: boolean; persistent: boolean; enabled: boolean; apiBaseUrl: string; modelName: string }

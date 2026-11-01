@@ -103,6 +103,16 @@ export function App() {
   }, []);
   useEffect(() => {
     const api = window.electronAPI;
+    if (!api?.onQuickCapture) return;
+    return api.onQuickCapture(text => {
+      if (!text || modeRef.current !== 'work') return;
+      if (compact) void toggleCompact(false);
+      changeDraft({ text });
+      setToast('已从剪贴板自动载入沟通内容（快捷键 Ctrl+Shift+L）');
+    });
+  }, [compact]);
+  useEffect(() => {
+    const api = window.electronAPI;
     if (!api?.onBeforeClose) return;
     return api.onBeforeClose(async requestId => {
       try { await controller.current?.flush(); await api.confirmClose(true, requestId); }

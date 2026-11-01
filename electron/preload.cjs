@@ -28,4 +28,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recallModel: (request) => ipcRenderer.invoke('model:recall', request),
   cancelModel: (requestId) => ipcRenderer.invoke('model:cancel', requestId),
   notifyDue: (summary) => ipcRenderer.invoke('notifications:due', summary),
+  onQuickCapture: handler => {
+    if (typeof handler !== 'function') throw new TypeError('快速整理处理器无效');
+    const listener = (_event, text) => handler(text);
+    ipcRenderer.on('quick-capture:paste', listener);
+    return () => ipcRenderer.removeListener('quick-capture:paste', listener);
+  },
+  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
 });
