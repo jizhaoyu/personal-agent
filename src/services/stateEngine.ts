@@ -197,6 +197,69 @@ export const StateEngine = {
           }
           if (/(?:费用|预算|报价|金额|价格|尾款|合同额)/.test(clause) && /未定|待定|没(?:有)?(?:谈定|确定|确认)|尚未|待确认|不确定|先别定|还没拍板|未拍板/.test(clause)) addFollowUp('question', clause);
           if (/(?:预算|报价|金额|费用|合同额)\s*\d+(?:\.\d+)?\s*$/.test(clause)) addFollowUp('question', `确认${clause}的金额单位`);
+
+          // 关键商务事实与决策约束沉淀为长期工作事实
+          if (/(?:底线|底价|最低价|成本线|付款方式|付款流程|结款|专票|增值税|分期|预付款|质保金|押金)/.test(clause) && !new RegExp(DATE).test(clause)) {
+            const memId = newId('memory');
+            addOperation({
+              target: 'memory',
+              entityId: memId,
+              before: null,
+              after: {
+                id: memId,
+                mode: 'work',
+                category: 'business',
+                fact: clause.trim(),
+                subject: engagement.clientName || '客户商务事实',
+                topic: '商务底线与付款规则',
+                importance: 5,
+                status: 'active',
+                pinned: true,
+                createdAt: now,
+                sourceIds: [context.sourceMessageId],
+              } as any,
+            });
+          } else if (/(?:决策人|拍板人|负责人是|老板是|董事长|总经理|主管|偏好微信|开会不接|不要打电话|沟通偏好)/.test(clause)) {
+            const memId = newId('memory');
+            addOperation({
+              target: 'memory',
+              entityId: memId,
+              before: null,
+              after: {
+                id: memId,
+                mode: 'work',
+                category: 'person',
+                fact: clause.trim(),
+                subject: engagement.clientName || '关键人脉背景',
+                topic: '决策链与沟通习惯',
+                importance: 5,
+                status: 'active',
+                pinned: false,
+                createdAt: now,
+                sourceIds: [context.sourceMessageId],
+              } as any,
+            });
+          } else if (/(?:必须兼容|不能动|严禁修改|技术约束|信创|私有化部署|老系统架构)/.test(clause)) {
+            const memId = newId('memory');
+            addOperation({
+              target: 'memory',
+              entityId: memId,
+              before: null,
+              after: {
+                id: memId,
+                mode: 'work',
+                category: 'experience',
+                fact: clause.trim(),
+                subject: engagement.title || engagement.clientName || '交付约束',
+                topic: '技术与交付约束',
+                importance: 4,
+                status: 'active',
+                pinned: false,
+                createdAt: now,
+                sourceIds: [context.sourceMessageId],
+              } as any,
+            });
+          }
         }
         engagement.updatedAt = now;
         if (!before || JSON.stringify({ ...before, updatedAt: now }) !== JSON.stringify(engagement)) {
@@ -403,6 +466,97 @@ export const StateEngine = {
     }
     for (const name of touchedPersons) {
       receipt('relationships', `已记录 ${name} 的亲友资料`);
+    }
+
+    // 7. 随口说深度记忆沉淀（偏好、习惯、人脉档案、生活关键事实）
+    life.memories ||= [];
+    const newMemories: any[] = [];
+    const pushLifeMem = (subject: string, topic: string, fact: string, category: 'preference' | 'habit' | 'person' | 'experience' | 'business', importance = 4) => {
+      const cleanFact = fact.trim();
+      if (!cleanFact || cleanFact.length < 2) return;
+      if (/^已记录|^今日饮水|^自报体重/.test(cleanFact)) return;
+      const norm = (s: string) => s.replace(/[\s，,。；;！？!、]/g, '').toLowerCase();
+      const existing = life.memories.find(m => norm(m.fact) === norm(cleanFact) || (m.subject === subject && m.topic === topic && norm(m.fact).includes(norm(cleanFact))));
+      if (!existing && !newMemories.some(m => norm(m.fact) === norm(cleanFact))) {
+        const mem = {
+          id: newId('memory'),
+          mode: 'life',
+          category,
+          fact: cleanFact,
+          subject,
+          topic,
+          importance,
+          status: 'active',
+          pinned: importance >= 5,
+          createdAt: Date.now(),
+          sourceIds: [],
+        };
+        newMemories.push(mem);
+        life.memories.push(mem as any);
+        receipt('relationships' as any, `🧠 记忆已收录：【${subject}】${cleanFact}`);
+      }
+    };
+
+    // 7.1 从亲友档案中提炼人脉记忆
+    for (const p of life.persons) {
+      if (touchedPersons.has(p.name)) {
+        const subject = ['妈', '爸'].includes(p.name) ? `我${p.name}` : p.name;
+        if (p.taboos?.length) {
+          pushLifeMem(subject, '忌口与过敏', `【${subject}】忌口与雷区：${p.taboos.join('、')}`, 'person', 5);
+        }
+        if (p.preferences?.length) {
+          pushLifeMem(subject, '喜好与偏好', `【${subject}】喜好与心愿：${p.preferences.join('、')}`, 'person', 4);
+        }
+        if (p.nextImportantDate) {
+          pushLifeMem(subject, '重要日期', `【${subject}】重要日期或生日：${p.nextImportantDate}`, 'person', 5);
+        }
+      }
+    }
+
+    // 7.2 个人偏好与禁忌 (我喜欢... / 我讨厌... / 我不吃... / 对...过敏 / 喝咖啡只喝无糖拿铁)
+    for (const cl of clauses) {
+      if (/(?:预算|项目|张总|李总|王总|陈姐|合同额|报价|工作|存入|花了|买了)/.test(cl)) continue;
+
+      // 句式 A: 包含特定事物与排他/专属习惯（如 "喝咖啡只喝无糖拿铁"、"吃火锅只吃清汤"、"喝奶茶只要三分糖"）
+      const scopedPref = cl.match(/(?:我|平时|自己)?\s*([^\s，,。；！？]+?)\s*(?:只喝|只要|只吃|只用|只选|只买|不吃|不喝|不放|不要|偏好|最爱)\s*([^\s，,。；！？]+)/);
+      if (scopedPref) {
+        const fullPref = cl.replace(/^(?:记一下|记住|还有|另外|顺便)[，,：:\s]*/, '').trim();
+        if (fullPref.length >= 3 && !/^\d+$/.test(fullPref)) {
+          pushLifeMem('我', '个人喜好与偏好', fullPref, 'preference', 4);
+          continue;
+        }
+      }
+
+      // 句式 B: 通用偏好动词句式（喜欢/偏好/讨厌/忌口/过敏/不碰）
+      const prefMatch = cl.match(/(?:我|平时|自己)?\s*(?:特别?|极其|最|一直|比较)?\s*(喜欢|爱吃|爱喝|最爱|偏爱|偏好|想要|讨厌|最烦|最怕|不吃|不能吃|不喝|不能喝|只吃|只喝|只选|只买|只用|只看|不要|不碰|忌口|对.+?过敏|从不(?:吃|喝|碰)?)\s*(.+)/);
+      if (prefMatch) {
+        const verb = prefMatch[1];
+        const content = prefMatch[2].replace(/[，,。！？\s]+$/, '').trim();
+        if (content && content.length >= 2 && !/^\d+$/.test(content)) {
+          const isTaboo = /讨厌|最烦|最怕|不吃|不能吃|不喝|不能喝|不要|不碰|忌口|过敏|从不/.test(verb);
+          pushLifeMem('我', isTaboo ? '生活禁忌与不适' : '个人偏好与心愿', `我${verb}${content}`, 'preference', 4);
+          continue;
+        }
+      }
+
+      // 7.3 生活作息与习惯 (平时习惯... / 每天... / 经常... / 每周...)
+      const habitMatch = cl.match(/(?:我|平时|自己)?\s*(?:习惯(?:于)?|每天|经常|通常|总是|每(?:周|天|月))\s*(.+)/);
+      if (habitMatch && !/(?:花了|买了|存了|发工资|打车|元|块)/.test(cl)) {
+        const habitContent = habitMatch[1].replace(/[，,。！？\s]+$/, '').trim();
+        if (habitContent && habitContent.length >= 3) {
+          pushLifeMem('我', '作息与生活规律', `平时习惯${habitContent}`, 'habit', 4);
+          continue;
+        }
+      }
+
+      // 7.4 生活经验与重要事实 (记一下... / 备忘... / 提醒我记住... / 合同... / 密码...)
+      const factMatch = cl.match(/(?:记一下|记住|备忘|提醒我记住|千万别忘|家里|合同|密码|卡放在|地址是|停在)\s*[:：]?\s*(.+)/);
+      if (factMatch && !/(?:花了|买了|存了|发工资)/.test(cl)) {
+        const factContent = factMatch[1].replace(/[，,。！？\s]+$/, '').trim();
+        if (factContent && factContent.length >= 3) {
+          pushLifeMem('生活备忘', '重要生活事实', factContent, 'experience', 4);
+        }
+      }
     }
 
     return receipts;

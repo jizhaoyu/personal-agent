@@ -167,7 +167,7 @@ export function MemoryCenter({ mode, onNotice, modelEnabled = false, onModelReca
   async function doRecall(withModel = false) {
     const ownedMode = mode; const requestGeneration = generation.current;
     await perform(async () => {
-      if (input.trim().length < 2) throw new Error('请用至少两个字描述想回忆的内容。');
+      if (!input.trim()) throw new Error('请输入想回忆的内容。');
       if (withModel && (!evidence || evidenceQuery !== input.trim())) throw new Error('请先查找并核对本次依据，再使用模型整理。');
       const result = withModel ? evidence! : await recall(input.trim(), ownedMode);
       if (ownedMode !== modeRef.current || requestGeneration !== generation.current) return;
@@ -195,7 +195,7 @@ export function MemoryCenter({ mode, onNotice, modelEnabled = false, onModelReca
       <button key={value} type="button" className={tab === value ? 'active' : ''} aria-pressed={tab === value} onClick={() => { setTab(value); setQuery(''); setInput(''); }}><Icon size={15}/>{label}</button>)}</nav>
     {issue && <p className="memory-error" role="alert">{issue}</p>}
     {tab !== 'capacity' && <form className="memory-search" onSubmit={event => { event.preventDefault(); tab === 'recall' ? void doRecall() : setQuery(input.trim()); }}>
-      <Search size={17}/><input aria-label={tab === 'recall' ? '想回忆什么' : '搜索当前空间'} value={input} onChange={event => setInput(event.target.value)} placeholder={tab === 'recall' ? '例如：张三的预算、上次讨论的绿茶…' : '搜索姓名、项目或至少两个字的关键词'}/>
+      <Search size={17}/><input aria-label={tab === 'recall' ? '想回忆什么' : '搜索当前空间'} value={input} onChange={event => setInput(event.target.value)} placeholder={tab === 'recall' ? '例如：张三、预算、普洱茶、小猫…' : '搜索姓名、项目、单字或关键词'}/>
       <button type="submit" disabled={busy}>{tab === 'recall' ? '查找依据' : '搜索'}</button>{query && <button type="button" onClick={() => { setQuery(''); setInput(''); }}>清空</button>}
     </form>}
     {tab === 'facts' && <>

@@ -248,7 +248,6 @@ async function createPersistence({ filePath }) {
       if (typeof command.query !== 'string' || command.query.length > 1000) throw new Error('搜索文本无效。');
       const terms = searchTerms(command.query);
       if (!terms.length) return { items: [], nextCursor: null };
-      if (terms.some(term => [...term].length === 1) && !command.ids?.length && !command.names?.length && !command.relatedId) throw new Error('单字搜索请先限定人物、项目或来源。');
       for (const term of terms) {
         if ([...term].length === 1) where.push('EXISTS (SELECT 1 FROM record_fts WHERE rowid=r.rid AND instr(lower(text),?)>0)');
         else where.push('EXISTS (SELECT 1 FROM search_terms st WHERE st.space=r.space AND st.kind=r.kind AND st.id=r.id AND st.term=?)');

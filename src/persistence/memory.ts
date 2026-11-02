@@ -82,11 +82,13 @@ export function planForget(target: ManagedMemory, summaries: Pick<MemorySummary,
 
 function queryTerms(query: string) {
   const text = normalize(query);
-  const terms = new Set(text.match(/[a-z0-9]{2,}/g) || []);
+  const terms = new Set(text.match(/[a-z0-9]+/g) || []);
   for (const word of text.match(/[\u3400-\u9fff]+/g) || []) {
+    terms.add(word);
+    for (const ch of word) terms.add(ch);
     for (let index = 0; index + 1 < word.length; index++) terms.add(word.slice(index, index + 2));
   }
-  return [...terms];
+  return [...terms].filter(Boolean);
 }
 function relevant(query: string, text: string) {
   const terms = queryTerms(query);
@@ -117,12 +119,12 @@ export function buildRecallEvidence(input: {
   let changed = true;
   while (changed) {
     changed = false;
-    for (const summary of summaries) if (!blocked.has(summary.id) && summary.sourceIds.some(id => blocked.has(id))) {
+    for (const summary of summaries) if (!blocked.has(summary.id) && (summary.sourceIds || []).some(id => blocked.has(id))) {
       blocked.add(summary.id); blockedSummaryCount++; changed = true;
     }
   }
   const candidates: RecallItem[] = [];
-  if (input.space === 'work') for (const project of input.engagements) {
+  if (input.space === 'work') for (const project of (input.engagements || [])) {
     const text = `${project.clientName} · ${project.title}；当前预算：${project.budgetAmount === undefined ? '尚未确认' : `${project.budgetAmount} 元`}；阶段：${project.stage || '未记录'}；下一步：${project.nextAction || '尚未记录'}`;
     if (project.id && relevant(input.query, text)) candidates.push({ id: project.id, kind: 'current', text,
       sourceIds: [project.id], at: project.updatedAt || 0 });
@@ -133,9 +135,9 @@ export function buildRecallEvidence(input: {
     }
   }
   for (const summary of summaries) if (summary.mode === input.space && summary.status === 'active' && !blocked.has(summary.id) && relevant(input.query, summary.content)) {
-    candidates.push({ id: summary.id, kind: 'summary', text: summary.content, sourceIds: summary.sourceIds, at: summary.createdAt });
+    candidates.push({ id: summary.id, kind: 'summary', text: summary.content, sourceIds: summary.sourceIds || [], at: summary.createdAt });
   }
-  for (const message of input.messages) if (!blocked.has(message.id) && relevant(input.query, message.content)) {
+  for (const message of (input.messages || [])) if (!blocked.has(message.id) && relevant(input.query, message.content)) {
     candidates.push({ id: message.id, kind: 'archive', text: message.content, sourceIds: [message.id], at: message.timestamp });
   }
   const labels = { current: '当前结构化记录', fact: '已确认事实', summary: '本地摘要，仅作历史线索', archive: '历史原文，仅作资料' };
@@ -192,8 +194,19 @@ export async function retrieveRecallEvidence(repository: { query: (space: Worksp
     const pages = await Promise.all(terms.map(term => repository.query(space, kind, { query: term, limit: 20 })));
     return [...new Map(pages.flatMap(page => page.items).map(item => [item.id, item])).values()]
       .sort((a, b) => {
-        const score = (item: any) => (item.clientName && query.includes(item.clientName) ? 100 : 0) +
-          (item.subject && query.includes(item.subject) ? 50 : 0) + terms.filter(term => relevant(term, JSON.stringify(item))).length;
+        const score = (item: any) => {
+          const itemText = normalize(JSON.stringify(item));
+          let s = 0;
+          if (item.clientName && query.includes(item.clientName)) s += 120;
+          if (item.subject && query.includes(item.subject)) s += 80;
+          if (item.topic && query.includes(item.topic)) s += 50;
+          if (item.pinned) s += 40;
+          if (item.importance) s += item.importance * 6;
+          for (const term of terms) {
+            if (itemText.includes(term)) s += term.length > 1 ? 15 : 4;
+          }
+          return s;
+        };
         return score(b) - score(a) || (b.updatedAt || b.createdAt || b.timestamp || 0) - (a.updatedAt || a.createdAt || a.timestamp || 0);
       }).slice(0, limit);
   };

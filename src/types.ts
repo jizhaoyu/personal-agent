@@ -31,6 +31,13 @@ export interface MemoryItem {
   sourceMessageId?: string;
   createdAt: number;
   importance: number;
+  status?: 'active' | 'superseded' | 'retracted';
+  subject?: string;
+  topic?: string;
+  pinned?: boolean;
+  sourceIds?: string[];
+  supersedesId?: string;
+  validFrom?: number;
 }
 
 export interface JournalArtifact {

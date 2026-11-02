@@ -228,7 +228,7 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
     async getMemories(space: WorkspaceMode): Promise<MemoryItem[]> { return (await api.query<MemoryItem>(space, 'memory')).items; },
     async saveMemories(memories: MemoryItem[], space: WorkspaceMode) { await api.upsert(space, 'memory', memories.map(item => ({ ...item, mode: space })), true); },
     async addMemory(fact: string, category: MemoryItem['category'], space: WorkspaceMode): Promise<MemoryItem> {
-      const item = { id: newId('memory'), mode: space, category, fact, createdAt: Date.now(), importance: 3, status: 'active' };
+      const item: MemoryItem = { id: newId('memory'), mode: space, category, fact, createdAt: Date.now(), importance: 3, status: 'active' };
       await api.saveMemories([item], space); return item;
     },
     async deleteMemory(id: string, space: WorkspaceMode): Promise<void> {

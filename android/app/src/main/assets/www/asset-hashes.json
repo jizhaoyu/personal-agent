@@ -1,21 +1,21 @@
 {
-  "generatedAt": "2026-11-02T07:46:30.752Z",
+  "generatedAt": "2026-11-02T08:29:28.813Z",
   "fileCount": 14,
   "algorithm": "SHA-256",
   "files": {
-    ".vite/manifest.json": "0db5e8ae0f20cfd906551e18cd86320cbc18239370b01ccf100289f768d9d2fa",
-    "assets/ChatPill-JszktyR6.js": "85592cb772ae409199f42e997209494cb329244868295817b7e502b0b925da66",
+    ".vite/manifest.json": "7f42483ef210b76696e73ad0d01bc90ddd20f8c7b80877f2ddef6d72c91dbeed",
+    "assets/ChatPill-BbIRHKzq.js": "8be6f1900cb198ce5a45d71a162370d5880066b124da73ebe5493d05567e2963",
     "assets/html2canvas.esm-QH1iLAAe.js": "061c08e50c0dc57b8d5e6531f0b8237a52a68b233260d49ab2f2c2906ad112c4",
     "assets/index-CfGXDCgK.css": "ab8ea8d8c421d63683099f0e04c61899aa72e830fcf333e68a4e597fe3b1aa26",
-    "assets/index-DBYh_L93.js": "8599f92bdaee4fb213c28c5e0061f2ce19b8b451158c440eeb60973b556ff20c",
-    "assets/LivingCardsBoard-BR_5tVEk.js": "cf41c3a137ecd97e767621c18f857986504122e1950251ab428d4378303dcc9a",
-    "assets/MemoryCenter-CB8MUcU3.js": "0d37dce67d57cde4a5b647d820cbeee593af3ef9a325f66935deb1e4c970d324",
+    "assets/index-CXbg8YI5.js": "ddd796cef17e895974f43b3b7365d27c94b82f08f692c3dbaa012ed7a7689413",
+    "assets/LivingCardsBoard-Bw50pUAb.js": "db6793b5fac7844208a69708cadeed7c65df4501241277b7f4067bd5bbf71e6f",
     "assets/MemoryCenter-jizYsCl6.css": "ca5b89d10e6ff6423e44e5ec3330fa70513684396e690401860dcebc099a95b6",
-    "assets/PracticeModal-B389FhJa.js": "0b5f7f8129ff02d83efde9dc2bdc3165aa85685d81df4691659bc63579fbb1b5",
+    "assets/MemoryCenter-QBQRahrn.js": "f02c112fa96891ef878317f31b133520453ed78177e3984c87642e2beccb8dd4",
+    "assets/PracticeModal-bBk-jJ7H.js": "49aba930c58cd4fb791e9a9893e6d36ce0f1926a17f4cd6277b8027757c0fd38",
     "assets/PracticeModal-BKLHpFJD.css": "8258306ddf4eae02f7579101608a7303b6d853e27b5b2b7b7bf5271b9d5cc1ba",
-    "assets/zap-BKGptwSU.js": "8c065670d9838fe5b78eabb5fe42a1464ec72e3caee69a8941b11f8c9d32f391",
-    "build-info.json": "53dd6f0624ad6dd2b133e3c7aeb7f5f42460569b096a77a8464fb420123969fb",
-    "build-manifest.json": "459619a18c51c4d5b8222244f1f3599783b148d656578bcd2bf4ee1d9d4da82a",
-    "index.html": "32e2d42ac66c9b20b8ab72e2d4802a0a63bf1851ff48d40cde014065c12e7102"
+    "assets/zap-CKqEC_Zv.js": "555495dd6614ffe1450c958710a93012f941c0ce43675a78e918264234de441b",
+    "build-info.json": "7eb39b2d7c9bb6b5d38d9c98a835ff6fac11ee3ef82c44c3911f76b0ea842cb2",
+    "build-manifest.json": "ea45d520ef86b2a3c44a001248ecd15d58aa63b31720cad16f3d3f0a04fb3cea",
+    "index.html": "d2c0183f5d07220d196416c6847def8c0fa5ca30b16ffec17cbed6ee0bc8f7d0"
   }
 }

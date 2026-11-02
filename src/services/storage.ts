@@ -60,9 +60,14 @@ function validTask(x: unknown): x is ProjectTaskItem {
     (x.dueAt === undefined || (str(x.dueAt) && Number.isFinite(Date.parse(x.dueAt))));
 }
 function validMemory(x: unknown, mode: WorkspaceMode): x is MemoryItem {
-  return baseEntity(x) && only(x, ['id', 'mode', 'category', 'fact', 'sourceMessageId', 'createdAt', 'importance']) && x.mode === mode &&
-    ['preference', 'habit', 'experience', 'person', 'business'].includes(x.category) && str(x.fact) && num(x.createdAt) && num(x.importance) &&
-    x.importance >= 0 && x.importance <= 10 && (x.sourceMessageId === undefined || str(x.sourceMessageId));
+  return baseEntity(x) && only(x, ['id', 'mode', 'category', 'fact', 'sourceMessageId', 'createdAt', 'importance',
+    'status', 'subject', 'topic', 'pinned', 'sourceIds', 'supersedesId', 'validFrom']) && (x as any).mode === mode &&
+    ['preference', 'habit', 'experience', 'person', 'business'].includes((x as any).category) && str((x as any).fact) && !!(x as any).fact.trim() && num((x as any).createdAt) &&
+    num((x as any).importance) && (x as any).importance >= 0 && (x as any).importance <= 10 && ((x as any).sourceMessageId === undefined || str((x as any).sourceMessageId)) &&
+    ((x as any).status === undefined || ['active', 'superseded', 'retracted'].includes((x as any).status)) &&
+    ((x as any).subject === undefined || str((x as any).subject)) && ((x as any).topic === undefined || str((x as any).topic)) &&
+    ((x as any).supersedesId === undefined || str((x as any).supersedesId)) && ((x as any).pinned === undefined || typeof (x as any).pinned === 'boolean') &&
+    ((x as any).sourceIds === undefined || strings((x as any).sourceIds)) && ((x as any).validFrom === undefined || num((x as any).validFrom));
 }
 function validOperation(x: any, mode: WorkspaceMode): x is WorkOperation {
   if (!isRecord(x) || !only(x, ['target', 'entityId', 'before', 'after']) || !str(x.entityId) || !x.entityId ||
