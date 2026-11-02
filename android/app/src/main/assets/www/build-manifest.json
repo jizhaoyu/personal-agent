@@ -1,41 +1,41 @@
 {
-  "buildId": "trial-20261102T071051Z-bb61917207",
+  "buildId": "trial-20261102T074001Z-024076c86e",
   "files": [
     {
       "file": ".vite/manifest.json",
-      "sha256": "6c89e5113bb140603416fbdb93a2915f88a62e3507dfefd5a790b54eb7585d0b"
+      "sha256": "31efabc745371ecc07ab4b30e452ff27b2341d4668c4487d056b1cf2f352fa9c"
     },
     {
-      "file": "assets/ArtifactGomoku-CUM-nQXe.js",
-      "sha256": "f2c3db8f8d800e3229a5b3413c920b295092b55b8c1941e70e68bc86115cc0e8"
+      "file": "assets/ArtifactGomoku-BusFT_7F.js",
+      "sha256": "ccc48ca9f85bfb63cf6c734dcbdd023e15c8d4e27ac14b68aa3de10899472f76"
     },
     {
-      "file": "assets/ArtifactJournal-DUXaYFUD.js",
-      "sha256": "4d7dd90ac97bd51a793aa12f6c917c6ea277f5049a63ed983d0d5ca526d68c9f"
+      "file": "assets/ArtifactJournal-DCyqaEdf.js",
+      "sha256": "5bfc7386b40278e9ab222c0a095a9d3e24ec8ebe5b0eb62aa34088ebd5b011a4"
     },
     {
-      "file": "assets/ChatPill-DUJZELTE.js",
-      "sha256": "e123421eb4743b002fe677f656ab7e5f1de34803958f868871cee61c7650cf99"
+      "file": "assets/ChatPill-BN1wVlwU.js",
+      "sha256": "9665c3f1e057dcf08ca00c56c4eee311322d50847ad387de52729be832684493"
     },
     {
       "file": "assets/html2canvas.esm-QH1iLAAe.js",
       "sha256": "061c08e50c0dc57b8d5e6531f0b8237a52a68b233260d49ab2f2c2906ad112c4"
     },
     {
-      "file": "assets/index-DFSn5vMZ.css",
-      "sha256": "e17550813f3532624e616840bfb95cabffeada033b2811d6e470201b2a5ad2fe"
+      "file": "assets/index-BkxxxmJp.js",
+      "sha256": "f2ace4c472a82bcccc7db3271c45c6da691e88199bbd2308d00e365e4d4c11d8"
     },
     {
-      "file": "assets/index-DPZ69bL_.js",
-      "sha256": "fb06fcaa3cf45e288014fcb2f31e8fdd7b0220e526d306d61e6859149c743770"
+      "file": "assets/index-CfGXDCgK.css",
+      "sha256": "ab8ea8d8c421d63683099f0e04c61899aa72e830fcf333e68a4e597fe3b1aa26"
     },
     {
-      "file": "assets/LivingCardsBoard-SswM2oNY.js",
-      "sha256": "ee1ab1c1eee53a8ce6f898b31e318ddd7c05c27a5318ea33602bb4d47cb56b7d"
+      "file": "assets/LivingCardsBoard-1ryHb9VB.js",
+      "sha256": "cbf1645231456796aaf3d45d16a12748c12fc1a1fe1f9b650ae4661bcce495c7"
     },
     {
-      "file": "assets/MemoryCenter-DU0UKe2w.js",
-      "sha256": "f85af2efc9d29c8537de56b1894007de6808c355325592bc17139d377241f2af"
+      "file": "assets/MemoryCenter-BU8WDzu0.js",
+      "sha256": "b74d700b1ff5899bfe0b5b1df4df8c3568db55f101aec4240424cdcb5f26ad7a"
     },
     {
       "file": "assets/MemoryCenter-jizYsCl6.css",
@@ -46,24 +46,24 @@
       "sha256": "8258306ddf4eae02f7579101608a7303b6d853e27b5b2b7b7bf5271b9d5cc1ba"
     },
     {
-      "file": "assets/PracticeModal-CUk-ONvC.js",
-      "sha256": "db8137461a03ed3519ebc1d5428ed6a4ea83838312487b0120be9feefbb975f5"
+      "file": "assets/PracticeModal-uRmF9lCo.js",
+      "sha256": "4d207e2cf19a1d00d527771bd6ab52ba932da77f61bdad783dc112487a3823b8"
     },
     {
-      "file": "assets/refresh-cw-Crx1dHuz.js",
-      "sha256": "8490f54f8c9c7919c402c83786c73ea16c82bc54cb5e39099edaeac68242b37f"
+      "file": "assets/refresh-cw-In-4blvY.js",
+      "sha256": "3f78b53fd6ad6ba7c983e563d81d7b6ade42562e3b28afc4daf0a37e94b6a4b2"
     },
     {
-      "file": "assets/zap-BKpOHaTJ.js",
-      "sha256": "4b1e2742b0030e518cacf80212d4f07e53c755094d668c6c1243d27d8e11eb88"
+      "file": "assets/zap-BmIWE8lN.js",
+      "sha256": "28cb9c8a083e5dc8d4bc01349d9356a238a81a787db3c47e14256e1d457aa2b2"
     },
     {
       "file": "build-info.json",
-      "sha256": "4c754655c18bcfa79b3df73b183c2dcf3dbaee6d788cd3cb401eb1fe2cb99974"
+      "sha256": "ab83c7773b80d6f125dfb5fa3ceaac06100307d5dccd0c08ad79560d4746e3c1"
     },
     {
       "file": "index.html",
-      "sha256": "b451bcd57ed555e3464d834d378ccc58e55ded0b7ae07b1899b1d3d3753638be"
+      "sha256": "e2d1355ad96200c1b042355d6d7e7149590cf7edbb8d88963ea6fc9fc3909e76"
     }
   ],
   "runtime": [

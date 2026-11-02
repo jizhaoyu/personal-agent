@@ -1,20 +1,20 @@
 {
-  "_refresh-cw-Crx1dHuz.js": {
-    "file": "assets/refresh-cw-Crx1dHuz.js",
+  "_refresh-cw-In-4blvY.js": {
+    "file": "assets/refresh-cw-In-4blvY.js",
     "name": "refresh-cw",
     "imports": [
       "index.html"
     ]
   },
-  "_zap-BKpOHaTJ.js": {
-    "file": "assets/zap-BKpOHaTJ.js",
+  "_zap-BmIWE8lN.js": {
+    "file": "assets/zap-BmIWE8lN.js",
     "name": "zap",
     "imports": [
       "index.html"
     ]
   },
   "index.html": {
-    "file": "assets/index-DPZ69bL_.js",
+    "file": "assets/index-BkxxxmJp.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -29,7 +29,7 @@
       "src/components/ArtifactGomoku.tsx"
     ],
     "css": [
-      "assets/index-DFSn5vMZ.css"
+      "assets/index-CfGXDCgK.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -39,7 +39,7 @@
     "isDynamicEntry": true
   },
   "src/components/ArtifactGomoku.tsx": {
-    "file": "assets/ArtifactGomoku-CUM-nQXe.js",
+    "file": "assets/ArtifactGomoku-BusFT_7F.js",
     "name": "ArtifactGomoku",
     "src": "src/components/ArtifactGomoku.tsx",
     "isDynamicEntry": true,
@@ -48,44 +48,44 @@
     ]
   },
   "src/components/ArtifactJournal.tsx": {
-    "file": "assets/ArtifactJournal-DUXaYFUD.js",
+    "file": "assets/ArtifactJournal-DCyqaEdf.js",
     "name": "ArtifactJournal",
     "src": "src/components/ArtifactJournal.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_refresh-cw-Crx1dHuz.js"
+      "_refresh-cw-In-4blvY.js"
     ],
     "dynamicImports": [
       "node_modules/html2canvas/dist/html2canvas.esm.js"
     ]
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-DUJZELTE.js",
+    "file": "assets/ChatPill-BN1wVlwU.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_zap-BKpOHaTJ.js",
-      "_refresh-cw-Crx1dHuz.js"
+      "_zap-BmIWE8lN.js",
+      "_refresh-cw-In-4blvY.js"
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-SswM2oNY.js",
+    "file": "assets/LivingCardsBoard-1ryHb9VB.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_zap-BKpOHaTJ.js"
+      "_zap-BmIWE8lN.js"
     ],
     "dynamicImports": [
       "node_modules/html2canvas/dist/html2canvas.esm.js"
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-DU0UKe2w.js",
+    "file": "assets/MemoryCenter-BU8WDzu0.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
@@ -100,7 +100,7 @@
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-CUk-ONvC.js",
+    "file": "assets/PracticeModal-uRmF9lCo.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,

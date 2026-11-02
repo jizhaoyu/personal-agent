@@ -344,9 +344,9 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
             {/* 月度预算血条 */}
             <div className="p-3 rounded-xl bg-white border border-[#e6decd] shadow-xs space-y-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-[#23293a]">💰 近期账单预算参考</span>
+                <span className="font-semibold text-[#23293a]">💰 本月支出与预算</span>
                 <span className="font-mono text-[#a8681a] font-bold">
-                  已加载本月支出 ¥{totalSpent.toFixed(0)} / 预算 ¥{wallet.monthlyBudget}
+                  已支出 ¥{totalSpent.toFixed(0)} / 预算 ¥{wallet.monthlyBudget}
                 </span>
               </div>
               <div className="w-full h-2.5 bg-[#efeadd] rounded-full overflow-hidden">
@@ -355,9 +355,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   style={{ width: `${budgetUsedPct}%` }}
                 />
               </div>
-              <p className="text-[11px] text-[#6b7183]">
-                仅汇总已加载的近期账单，本月完整支出可能更高。文字示例：“午饭花了35元”。
-              </p>
             </div>
 
             {/* 心愿攒钱罐 */}
@@ -401,10 +398,10 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   </div>
                   <span
                     className={`font-mono font-semibold ${
-                      item.type === 'saving' ? 'text-emerald-600' : 'text-[#23293a]'
+                      (item.type === 'saving' || item.type === 'income') ? 'text-emerald-600' : 'text-[#23293a]'
                     }`}
                   >
-                    {item.type === 'saving' ? `+¥${item.amount}` : `-¥${item.amount}`}
+                    {(item.type === 'saving' || item.type === 'income') ? `+¥${item.amount}` : `-¥${item.amount}`}
                   </span>
                 </div>
               ))}
@@ -494,9 +491,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
         {/* ==================== ToC 3: 人脉与亲友档案簿 ==================== */}
         {!isWork && activeSubTab === 'relationships' && (
           <div className="space-y-2.5">
-            <div className="px-3 py-2 rounded-xl bg-[#f5f1e6] text-[11px] text-[#8a5410]">
-              💡 可输入：“记一下王叔对海鲜过敏，喜欢喝普洱”。请在这里查看并核对亲友备忘。
-            </div>
             {persons.map((p) => (
               <div
                 key={p.id}
@@ -645,9 +639,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
         {/* ==================== ToB 2: 项目死线推进看板 ==================== */}
         {isWork && activeSubTab === 'projects' && (
           <div className="space-y-2.5">
-            <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-[11px] text-slate-300">
-              💡 输入待办文字后，请在工作台预览并确认事项与日期。
-            </div>
             {tasks.map((t) => (
               <div
                 key={t.id}

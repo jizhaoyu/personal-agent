@@ -213,8 +213,13 @@ details p { margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .review-boundary { margin-top: 8px; }
 .review-boundary summary { display: inline-flex; align-items: center; gap: 6px; color: #547249; }
 .life-shell { background: #f7f1e5; }
-.life-workspace { padding-top: 30px; }
-.life-panel { max-width: 450px; margin: 25px auto; }
+.life-workspace { padding-top: 20px; }
+.life-tabs-wrapper { display: flex; justify-content: center; margin: 8px 0 16px; padding: 0 10px; }
+.life-tabs { display: inline-flex; align-items: center; gap: 4px; background: rgba(61, 43, 31, 0.06); border: 1px solid rgba(61, 43, 31, 0.1); border-radius: 10px; padding: 4px; max-width: 100%; overflow-x: auto; box-shadow: inset 0 1px 2px rgba(61, 43, 31, 0.04); }
+.life-tabs button { border: 0; background: transparent; color: #7c6248; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 7px; transition: all 0.15s ease; white-space: nowrap; flex-shrink: 0; }
+.life-tabs button:hover { color: #3d2b1f; background: rgba(61, 43, 31, 0.06); }
+.life-tabs button.active { color: #ffffff; background: #a8681a; font-weight: 600; box-shadow: 0 1px 3px rgba(168, 104, 26, 0.28); }
+.life-panel { max-width: 450px; margin: 16px auto 25px; }
 .life-panel > div { height: min(550px, 68dvh); }
 .recovery-screen { background: #f4f3ed; padding: 40px; height: 100dvh; color: #35482f; }
 .recovery-screen h1 { font-size: 22px; margin-bottom: 18px; }
