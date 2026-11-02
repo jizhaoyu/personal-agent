@@ -1,0 +1,25 @@
+{
+  "generatedAt": "2026-11-02T04:37:47.293Z",
+  "fileCount": 18,
+  "algorithm": "SHA-256",
+  "files": {
+    ".vite/manifest.json": "3e35648fe9c8ba41c5d7e6c0c02aea057efc2a4130d263dd6fcf9f1543625f1d",
+    "assets/ArtifactGomoku-DSHmc7a6.js": "a74b6e14dd5b8e1d023869b8c9fa34fcbcbb4f771beb6e715642e81b78d8e2dc",
+    "assets/ArtifactJournal-_bcI_gUX.js": "e80c272ead3a9e6c29576925608864b00c5be6c2ed7facd2845c25faf1bb5702",
+    "assets/ChatPill-B7cQ50ux.js": "b79b7c9c4dee526edf81ab05514531f87e3ecd4c4273e99bd2b03436f116ab1f",
+    "assets/html2canvas.esm-QH1iLAAe.js": "061c08e50c0dc57b8d5e6531f0b8237a52a68b233260d49ab2f2c2906ad112c4",
+    "assets/index-DdbDUsOY.css": "c9fb26834db4b544fc5a690085954c402f9f78dec05b1ff6cf80a2074268baaf",
+    "assets/index-gjQUDtcc.js": "20f746869507352886d8f3dbd4b8da8bd915f69c4a1f49f3651207f916741b10",
+    "assets/LivingCardsBoard-BjQEjLPl.js": "ba7743c00082c2a734325a2e12f73b2180fc3f10f51875633b2481554ea45d45",
+    "assets/MemoryCenter-4DoS2wLs.js": "78ccc63961823bbdd00780b356bcbeb50f450aa9f8d76e8594bc49da5d123358",
+    "assets/MemoryCenter-jizYsCl6.css": "ca5b89d10e6ff6423e44e5ec3330fa70513684396e690401860dcebc099a95b6",
+    "assets/PracticeModal-BEJb6Rp9.js": "0b26d6b94c561eb45c2dd9711e3d1429d2ad36bc27853e85ba06639f38331bec",
+    "assets/PracticeModal-BKLHpFJD.css": "8258306ddf4eae02f7579101608a7303b6d853e27b5b2b7b7bf5271b9d5cc1ba",
+    "assets/refresh-cw-DNlaxjUU.js": "a6f190d10bb9cfa5b01055af5aafa2fc0c3989201ee3a0f6f19f86f4326f1b8d",
+    "assets/sparkles-C1_0PUBC.js": "5a0ea8549ada4d6c123d2df07ac7a1d7f52e70989c3ba742ad480442da8935c0",
+    "assets/zap-CIlRb7_S.js": "edc989aa40059d5f2c1bdf03d2ad84023a7122c99ee69b6bc8f3c05b242356d1",
+    "build-info.json": "1ee8e5adc94313daf87ec6f9176ef8af78ce5812df9b3e47a750bcbd259a0c20",
+    "build-manifest.json": "df14943306f3d4e9e9975302984a0b1bfa6fb5069081c968008c339317ca47a9",
+    "index.html": "b134ba80151149fc3583462f261d76616f9dabe9bff7c095260b7bf45629343f"
+  }
+}

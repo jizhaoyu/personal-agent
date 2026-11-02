@@ -1,0 +1,124 @@
+{
+  "_refresh-cw-DNlaxjUU.js": {
+    "file": "assets/refresh-cw-DNlaxjUU.js",
+    "name": "refresh-cw",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_sparkles-C1_0PUBC.js": {
+    "file": "assets/sparkles-C1_0PUBC.js",
+    "name": "sparkles",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_zap-CIlRb7_S.js": {
+    "file": "assets/zap-CIlRb7_S.js",
+    "name": "zap",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "index.html": {
+    "file": "assets/index-gjQUDtcc.js",
+    "name": "index",
+    "src": "index.html",
+    "isEntry": true,
+    "isDynamicEntry": true,
+    "dynamicImports": [
+      "node_modules/html2canvas/dist/html2canvas.esm.js",
+      "src/components/PracticeModal.tsx",
+      "src/components/ChatPill.tsx",
+      "src/components/LivingCardsBoard.tsx",
+      "src/components/MemoryCenter.tsx",
+      "src/components/ArtifactJournal.tsx",
+      "src/components/ArtifactGomoku.tsx"
+    ],
+    "css": [
+      "assets/index-DdbDUsOY.css"
+    ]
+  },
+  "node_modules/html2canvas/dist/html2canvas.esm.js": {
+    "file": "assets/html2canvas.esm-QH1iLAAe.js",
+    "name": "html2canvas.esm",
+    "src": "node_modules/html2canvas/dist/html2canvas.esm.js",
+    "isDynamicEntry": true
+  },
+  "src/components/ArtifactGomoku.tsx": {
+    "file": "assets/ArtifactGomoku-DSHmc7a6.js",
+    "name": "ArtifactGomoku",
+    "src": "src/components/ArtifactGomoku.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html"
+    ]
+  },
+  "src/components/ArtifactJournal.tsx": {
+    "file": "assets/ArtifactJournal-_bcI_gUX.js",
+    "name": "ArtifactJournal",
+    "src": "src/components/ArtifactJournal.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_refresh-cw-DNlaxjUU.js",
+      "_sparkles-C1_0PUBC.js"
+    ],
+    "dynamicImports": [
+      "node_modules/html2canvas/dist/html2canvas.esm.js"
+    ]
+  },
+  "src/components/ChatPill.tsx": {
+    "file": "assets/ChatPill-B7cQ50ux.js",
+    "name": "ChatPill",
+    "src": "src/components/ChatPill.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_zap-CIlRb7_S.js",
+      "_refresh-cw-DNlaxjUU.js"
+    ]
+  },
+  "src/components/LivingCardsBoard.tsx": {
+    "file": "assets/LivingCardsBoard-BjQEjLPl.js",
+    "name": "LivingCardsBoard",
+    "src": "src/components/LivingCardsBoard.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_zap-CIlRb7_S.js",
+      "_sparkles-C1_0PUBC.js"
+    ],
+    "dynamicImports": [
+      "node_modules/html2canvas/dist/html2canvas.esm.js"
+    ]
+  },
+  "src/components/MemoryCenter.tsx": {
+    "file": "assets/MemoryCenter-4DoS2wLs.js",
+    "name": "MemoryCenter",
+    "src": "src/components/MemoryCenter.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_sparkles-C1_0PUBC.js"
+    ],
+    "dynamicImports": [
+      "index.html"
+    ],
+    "css": [
+      "assets/MemoryCenter-jizYsCl6.css"
+    ]
+  },
+  "src/components/PracticeModal.tsx": {
+    "file": "assets/PracticeModal-BEJb6Rp9.js",
+    "name": "PracticeModal",
+    "src": "src/components/PracticeModal.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html"
+    ],
+    "css": [
+      "assets/PracticeModal-BKLHpFJD.css"
+    ]
+  }
+}

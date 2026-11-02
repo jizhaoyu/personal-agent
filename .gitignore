@@ -34,3 +34,9 @@ lerna-debug.log*
 *.sln
 *.sw?
 Thumbs.db
+
+# Android build artifacts
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

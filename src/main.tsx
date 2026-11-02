@@ -1,7 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App, { AppBoundary } from './App';
+import { installAndroidBridge } from './services/androidBridge';
 import './index.css';
+
+installAndroidBridge();
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

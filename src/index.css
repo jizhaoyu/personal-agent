@@ -229,3 +229,20 @@ details p { margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .work-tabs { gap: 20px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* Android 沉浸式安全区与移动端触控适配 */
+@media (max-width: 760px) {
+  .app-shell {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: max(16px, env(safe-area-inset-left, 16px));
+    padding-right: max(16px, env(safe-area-inset-right, 16px));
+  }
+  .app-toast {
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .icon-btn, .primary-btn, .soft-btn, .text-btn {
+    min-height: 36px;
+    touch-action: manipulation;
+  }
+}
