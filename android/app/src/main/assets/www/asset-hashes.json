@@ -1,21 +1,21 @@
 {
-  "generatedAt": "2026-11-02T12:35:06.982Z",
+  "generatedAt": "2026-11-02T13:09:29.404Z",
   "fileCount": 14,
   "algorithm": "SHA-256",
   "files": {
-    ".vite/manifest.json": "1959e74dedb42e7118e59e18bd4fe9b119e97b240a9c9dff7ff332d33f2d1991",
-    "assets/ChatPill-uUgyUlxB.js": "ebe31efc7289f7ba26aed7ea6b3ddf031095000a6da21d7910358326c42f4952",
+    ".vite/manifest.json": "4da1534de0c20ddb9bdd54f5eb27f5f4b389f57d8fbd6665e92e2a8706081bda",
+    "assets/ChatPill-Vwqppe-l.js": "4bcd105372176bd109a67e7694207db00f54fc9c9811b17d45d97a102dfef3cd",
     "assets/html2canvas.esm-QH1iLAAe.js": "061c08e50c0dc57b8d5e6531f0b8237a52a68b233260d49ab2f2c2906ad112c4",
-    "assets/index-Bu-agDYs.js": "a7fcfdfb75305ca0ea230e9164bf4aad2f5a6c83ab68027cb14f33fdc678842b",
     "assets/index-C8-i7_Mb.css": "935f743fb7e7d15e9898517b028fd3d6430494d65cfd5aed0acb68a60962aeb2",
-    "assets/LivingCardsBoard-CTRW12Zf.js": "293a62cceee4d39d41b67a3459bfd868be3e19c973289ece936bd579c55be960",
-    "assets/MemoryCenter-CvbV9bAg.js": "3730c3b6ff0395c38c2f235f127c9a6168b0313b896378db67830195f038cf37",
+    "assets/index-XllBeriB.js": "16845b53bbe79afb01e256d74ec84a864dc31e1693d6e9832bd0214917e2dde0",
+    "assets/LivingCardsBoard-BX138M5k.js": "a3b26d2615cfa6bdac7db35448a60909d9a1c4eec9c296e8b32e297172202f9d",
+    "assets/MemoryCenter-CvO3jiR5.js": "bf68da9cadf301039a6e5f0fdbd430d50fe450e35403f6d60c2a4d6dfaa28eb2",
     "assets/MemoryCenter-jizYsCl6.css": "ca5b89d10e6ff6423e44e5ec3330fa70513684396e690401860dcebc099a95b6",
     "assets/PracticeModal-BKLHpFJD.css": "8258306ddf4eae02f7579101608a7303b6d853e27b5b2b7b7bf5271b9d5cc1ba",
-    "assets/PracticeModal-DXdzFgTe.js": "a90f1ff453155f9820c759d9524528e4c3a617aeaf5c41c89d106974cf12167e",
-    "assets/zap-BFlGzFvV.js": "344a3c05db9e7115f690d048b89fdb12aa695a5a7119038f309a7dbeb5481a58",
-    "build-info.json": "da57fbba4ab60e8b837a4da410c1789caa8b2f83349a9bac8413e21f74ac5a84",
-    "build-manifest.json": "517ad68e1175c017348c186be3d0b6b0bab51bf55c717824df1afb97282f98e8",
-    "index.html": "aeaa5c19b393c25848bf62d25fa4996d485e476d970d7cae233bdf09c09f5ebd"
+    "assets/PracticeModal-DfnffXId.js": "0ef3181d1a608898bc74e2c292c968f7264b610a2eaf21f33d09d8140d255f21",
+    "assets/zap-CrEmr2bg.js": "5182282b18e0fd28b39b3b98de1574ebdb226bf76da68bb22bd72ceb03278cbf",
+    "build-info.json": "ea6a0364c2b41e6ffc6a70168b5d944f340695fcdc3b7533c83ce4788ff7e6ea",
+    "build-manifest.json": "0d875ec968a13dfb5faf0a0b616bd6629054530a875ef423f3218e042d42e801",
+    "index.html": "9879d0349237e51558cd3d726d42369949da0f2b4297263199ba48b79302e1ad"
   }
 }

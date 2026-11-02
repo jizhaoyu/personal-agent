@@ -1,13 +1,13 @@
 {
-  "_zap-BFlGzFvV.js": {
-    "file": "assets/zap-BFlGzFvV.js",
+  "_zap-CrEmr2bg.js": {
+    "file": "assets/zap-CrEmr2bg.js",
     "name": "zap",
     "imports": [
       "index.html"
     ]
   },
   "index.html": {
-    "file": "assets/index-Bu-agDYs.js",
+    "file": "assets/index-XllBeriB.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -30,30 +30,30 @@
     "isDynamicEntry": true
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-uUgyUlxB.js",
+    "file": "assets/ChatPill-Vwqppe-l.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_zap-BFlGzFvV.js"
+      "_zap-CrEmr2bg.js"
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-CTRW12Zf.js",
+    "file": "assets/LivingCardsBoard-BX138M5k.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_zap-BFlGzFvV.js"
+      "_zap-CrEmr2bg.js"
     ],
     "dynamicImports": [
       "node_modules/html2canvas/dist/html2canvas.esm.js"
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-CvbV9bAg.js",
+    "file": "assets/MemoryCenter-CvO3jiR5.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
@@ -68,7 +68,7 @@
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-DXdzFgTe.js",
+    "file": "assets/PracticeModal-DfnffXId.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,

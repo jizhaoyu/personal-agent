@@ -473,33 +473,7 @@ export const StateEngine = {
       receipt('rpg_status', `今日活动已记录，连续 ${rpg.streakDays} 天`);
     }
 
-    // 6. 亲友档案：过敏、忌口、喜好、生日（支持单句多亲友与多属性批量提取）
-    const personClause = clean.replace(/^(?:记一下|记住|备忘|提醒我)[，,：:\s]*/, '');
-    const personPattern = /(?:^|[，,。；\s])(我妈|妈妈|老妈|妈|我爸|爸爸|老爸|爸|老婆|媳妇|老公|对象|女朋友|女友|男朋友|男友|儿子|女儿|孩子|爷爷|奶奶|外公|外婆|丈母娘|婆婆|闺蜜|室友|[^\s，,。！？、“”]{2,5}?)\s*(?:对([^，,。！？]+?)过敏|([^，,。！？]{1,8}?)过敏|(?:不吃|不能吃|忌口|不喝|不能喝|不碰|戒了?)([^，,。！？]+)|(?:讨厌|最烦|最怕)([^，,。！？]+)|(?:喜欢|爱吃|爱喝|最爱|偏好|想买|想要)([^，,。！？]+)|(?:生日|纪念日)\s*(?:是|在)?\s*([^，,。！？]+))/g;
-    const touchedPersons = new Set<string>();
-    for (const personMatch of personClause.matchAll(personPattern)) {
-      if (['我', '今天', '刚刚', '我们', '自己', '大家'].includes(personMatch[1])) continue;
-      const rawName = personMatch[1].replace(/^我(?=[妈爸])/, '');
-      const persons = life.persons;
-      let person = persons.find(item => item.name === rawName || item.name === personMatch[1]);
-      if (!person) {
-        person = { id: newId('person'), name: rawName, relation: '亲友', taboos: [], preferences: [], updatedAt: Date.now() };
-        persons.push(person);
-      }
-      const allergy = (personMatch[2] || personMatch[3] || '').trim();
-      if (allergy) person.taboos = [...new Set([...person.taboos, `${allergy}过敏`])];
-      if (personMatch[4]) person.taboos = [...new Set([...person.taboos, `不吃${personMatch[4].trim()}`])];
-      if (personMatch[5]) person.taboos = [...new Set([...person.taboos, `讨厌${personMatch[5].trim()}`])];
-      if (personMatch[6]) person.preferences = [...new Set([...person.preferences, `喜欢${personMatch[6].trim()}`])];
-      if (personMatch[7]) person.nextImportantDate = personMatch[7].trim();
-      person.updatedAt = Date.now();
-      touchedPersons.add(person.name);
-    }
-    for (const name of touchedPersons) {
-      receipt('relationships', `已记录 ${name} 的亲友资料`);
-    }
-
-    // 7. 随口说深度记忆沉淀（偏好、习惯、人脉档案、生活关键事实）
+    // 6. 亲友档案与个人深度记忆精准提取
     life.memories ||= [];
     const newMemories: any[] = [];
     const pushLifeMem = (subject: string, topic: string, fact: string, category: 'preference' | 'habit' | 'person' | 'experience' | 'business', importance = 4) => {
@@ -507,8 +481,17 @@ export const StateEngine = {
       if (!cleanFact || cleanFact.length < 2) return;
       if (/^已记录|^今日饮水|^自报体重/.test(cleanFact)) return;
       const norm = (s: string) => s.replace(/[\s，,。；;！？!、]/g, '').toLowerCase();
-      const existing = life.memories.find(m => norm(m.fact) === norm(cleanFact) || (m.subject === subject && m.topic === topic && norm(m.fact).includes(norm(cleanFact))));
-      if (!existing && !newMemories.some(m => norm(m.fact) === norm(cleanFact))) {
+      const existing = life.memories.find(m => m.subject === subject && m.topic === topic);
+      if (existing) {
+        if (norm(existing.fact) !== norm(cleanFact)) {
+          existing.fact = cleanFact;
+          (existing as any).updatedAt = Date.now();
+          const badge = cleanFact.startsWith(`【${subject}】`)
+            ? `🧠 记忆已收录：${cleanFact}`
+            : `🧠 记忆已收录：【${subject}】${cleanFact}`;
+          receipt('relationships' as any, badge);
+        }
+      } else if (!newMemories.some(m => norm(m.fact) === norm(cleanFact))) {
         const mem = {
           id: newId('memory'),
           mode: 'life',
@@ -524,13 +507,155 @@ export const StateEngine = {
         };
         newMemories.push(mem);
         life.memories.push(mem as any);
-        receipt('relationships' as any, `🧠 记忆已收录：【${subject}】${cleanFact}`);
+        const summaryBadge = cleanFact.startsWith(`【${subject}】`)
+          ? `🧠 记忆已收录：${cleanFact}`
+          : `🧠 记忆已收录：【${subject}】${cleanFact}`;
+        receipt('relationships' as any, summaryBadge);
       }
     };
 
-    // 7.1 从亲友档案中提炼人脉记忆
-    for (const p of life.persons) {
-      if (touchedPersons.has(p.name)) {
+    const KIN_TITLES = ['妈妈', '老妈', '母亲', '妈', '爸爸', '老爸', '父亲', '爸', '老婆', '媳妇', '爱人', '妻子', '太太', '老公', '丈夫', '先生', '对象', '女朋友', '女友', '男友', '男朋友', '儿子', '女儿', '闺女', '孩子', '宝宝', '爷爷', '奶奶', '姥姥', '姥爷', '外公', '外婆', '公公', '婆婆', '岳父', '岳母', '丈母娘', '哥哥', '姐姐', '弟弟', '妹妹', '嫂子', '姐夫', '妹夫', '叔叔', '阿姨', '舅舅', '姑姑', '表哥', '表姐', '表弟', '表妹', '堂哥', '堂姐', '堂弟', '堂妹', '闺蜜', '室友', '发小', '同学', '同事', '朋友'];
+    const KIN_REGEX = new RegExp('^(?:我|我的|咱|咱们)?(' + KIN_TITLES.join('|') + ')');
+    const normalizeKin = (raw: string) => {
+      if (/^(?:我|我的|咱|咱们)?(?:老妈|妈|母亲)$/.test(raw)) return raw.startsWith('我') && raw.length === 2 ? '妈' : '妈妈';
+      if (/^(?:我|我的|咱|咱们)?(?:老爸|爸|父亲)$/.test(raw)) return raw.startsWith('我') && raw.length === 2 ? '爸' : '爸爸';
+      return raw.replace(/^(?:我|我的|咱|咱们)/, '');
+    };
+    const SELF_PREFIX = /^(?:而且|而|但|但是|另外|还有|然后|至于)?\s*(我自己|我本人|我们|我)(?![妈爸老媳丈公婆哥姐弟妹叔姨舅姑闺室发同朋儿女丈孩宝外爷奶])/;
+    const NON_PERSON_BLACKLIST = new Set(['今天', '明天', '后天', '昨天', '前天', '刚才', '刚刚', '现在', '我们', '你们', '他们', '大家', '有人', '自己', '本人', '家里', '公司', '工作', '预算', '平时', '经常', '总是', '有时', '一直', '顺便', '另外', '还有', '如果', '并且', '然后', '但是', '至于', '而我', '但我']);
+
+    const updatePersonInfo = (name: string, restInfo: string) => {
+      let person = life.persons.find(item => item.name === name || item.name === `我${name}` || item.name.replace(/^我/, '') === name);
+      if (!person) {
+        person = { id: newId('person'), name, relation: '亲友', taboos: [], preferences: [], updatedAt: Date.now() };
+        life.persons.push(person);
+      }
+      let updated = false;
+
+      const allergyMatch = restInfo.match(/^(?:对\s*([^，,。！？]+?)\s*过敏|([^，,。！？]{1,8}?)\s*过敏)/);
+      if (allergyMatch) {
+        const val = (allergyMatch[1] || allergyMatch[2]).trim() + '过敏';
+        if (!person.taboos.includes(val)) { person.taboos.push(val); updated = true; }
+      }
+      const notEatMatch = restInfo.match(/^(?:不吃|不能吃|忌口|不喝|不能喝|不碰|戒了?)\s*([^，,。！？]+)/);
+      if (notEatMatch) {
+        const val = '不吃' + notEatMatch[1].trim();
+        if (!person.taboos.includes(val)) { person.taboos.push(val); updated = true; }
+      }
+      const hateMatch = restInfo.match(/^(?:讨厌|最烦|最怕)\s*([^，,。！？]+)/);
+      if (hateMatch) {
+        const val = '讨厌' + hateMatch[1].trim();
+        if (!person.taboos.includes(val)) { person.taboos.push(val); updated = true; }
+      }
+
+      const likeMatch = restInfo.match(/^(?:喜欢|爱吃|爱喝|最爱|偏好|偏爱|爱)\s*([^，,。！？]+)/);
+      if (likeMatch) {
+        const val = '喜欢' + likeMatch[1].trim();
+        if (!person.preferences.includes(val)) { person.preferences.push(val); updated = true; }
+      }
+      const wantMatch = restInfo.match(/^(?:想要|想买)\s*([^，,。！？]+)/);
+      if (wantMatch) {
+        const val = '想要' + wantMatch[1].trim();
+        if (!person.preferences.includes(val)) { person.preferences.push(val); updated = true; }
+      }
+
+      const dateMatch = restInfo.match(/^(?:生日|纪念日)\s*(?:是|在)?\s*([^，,。！？]+)/);
+      if (dateMatch) {
+        person.nextImportantDate = dateMatch[1].trim();
+        updated = true;
+      }
+
+      if (updated) {
+        person.updatedAt = Date.now();
+        touchedPersons.add(person.name);
+      }
+    };
+
+    const touchedPersons = new Set<string>();
+
+    for (const rawCl of clauses) {
+      if (/(?:预算|项目|张总|李总|王总|陈姐|合同额|报价|工作|存入|攒了|花了|买了|打车|发工资)/.test(rawCl)) continue;
+      let cl = rawCl.replace(/^(?:记一下|记住|备忘|提醒我(?:记住)?|顺便说一下|还有|另外|而且|而|但|但是|然后|至于|其实|平时|今天|昨天|刚才|顺便)[，,：:\s]*/, '').trim();
+      if (!cl) continue;
+
+      // 1. 已知亲友称谓
+      const kinMatch = cl.match(KIN_REGEX);
+      if (kinMatch) {
+        const personName = normalizeKin(kinMatch[0]);
+        let rest = cl.slice(kinMatch[0].length).trim();
+        rest = rest.replace(/^(?:还|也|又|其实|平时|经常|特别|很|十分|最|比较|超级|极其|一直|就|都)+/, '').trim();
+        updatePersonInfo(personName, rest);
+        continue;
+      }
+
+      // 2. 专属排他习惯与偏好（如“我喝咖啡只喝无糖拿铁”或“喝咖啡只喝无糖拿铁”）
+      const scopedMatch = cl.match(/(?:(?:我|平时|自己)\s*)?([^\s，,。；！？]+?)\s*(?:只喝|只要|只吃|只用|只选|只买|不吃|不喝|不放|不要|偏好|最爱)\s*([^\s，,。；！？]+)/);
+      if (scopedMatch) {
+        const fullPref = cl.replace(/^(?:记一下|记住|还有|另外|顺便)[，,：:\s]*/, '').trim();
+        if (fullPref.length >= 3 && !/^\d+$/.test(fullPref)) {
+          pushLifeMem('我', '个人喜好与偏好', `我${fullPref.replace(/^我/, '')}`, 'preference', 4);
+          continue;
+        }
+      }
+
+      // 3. 主语为【我】（通用偏好、禁忌）
+      const selfMatch = cl.match(SELF_PREFIX);
+      if (selfMatch) {
+        let restSelf = cl.slice(selfMatch[0].length).trim();
+        restSelf = restSelf.replace(/^(?:还|也|又|其实|平时|经常|特别|很|十分|最|比较|超级|极其|一直|就|都)+/, '').trim();
+        
+        const prefMatch = restSelf.match(/^(?:特别?|极其|最|一直|比较)?\s*(喜欢|爱吃|爱喝|最爱|偏爱|偏好|想要|讨厌|最烦|最怕|不吃|不能吃|不喝|不能喝|只吃|只喝|只选|只买|只用|只看|不要|不碰|忌口|对.+?过敏|从不(?:吃|喝|碰)?)\s*(.+)/);
+        if (prefMatch) {
+          const verb = prefMatch[1];
+          const content = prefMatch[2].replace(/[，,。！？\s]+$/, '').trim();
+          if (content && content.length >= 2 && !/^\d+$/.test(content)) {
+            const isTaboo = /讨厌|最烦|最怕|不吃|不能吃|不喝|不能喝|不要|不碰|忌口|过敏|从不/.test(verb);
+            pushLifeMem('我', isTaboo ? '生活禁忌与不适' : '个人偏好与心愿', `我${verb}${content}`, 'preference', 4);
+            continue;
+          }
+        }
+
+        if (restSelf.length >= 3) {
+          pushLifeMem('我', '个人喜好与偏好', `我${restSelf}`, 'preference', 4);
+          continue;
+        }
+      }
+
+      // 4. 作息生活规律（习惯）
+      const habitMatch = rawCl.match(/(?:(?:我|平时|自己)\s*)?(?:习惯(?:于)?|每天|经常|通常|总是|每(?:周|天|月))\s*(.+)/);
+      if (habitMatch) {
+        const habitContent = habitMatch[1].replace(/[，,。！？\s]+$/, '').trim();
+        if (habitContent && habitContent.length >= 3) {
+          pushLifeMem('我', '作息与生活规律', `平时习惯${habitContent}`, 'habit', 4);
+          continue;
+        }
+      }
+
+      // 5. 自定义亲友姓名（如老王芒果过敏，排除以“我”开头和黑名单）
+      const nameMatch = cl.match(/^([^我\s，,。！？\d]{2,4}?)\s*(?:还|也|又|其实|平时|经常|特别|很|十分|最|比较|超级|极其|一直|就|都)?\s*(?:对.+?过敏|[^，,。！？\s]{1,8}?过敏|不吃|不能吃|忌口|不喝|不能喝|不碰|戒了?|讨厌|最烦|最怕|喜欢|爱吃|爱喝|最爱|偏好|偏爱|想要|想买|生日|纪念日)/);
+      if (nameMatch && !NON_PERSON_BLACKLIST.has(nameMatch[1])) {
+        const personName = nameMatch[1];
+        let restName = cl.slice(nameMatch[1].length).trim();
+        restName = restName.replace(/^(?:还|也|又|其实|平时|经常|特别|很|十分|最|比较|超级|极其|一直|就|都)+/, '').trim();
+        updatePersonInfo(personName, restName);
+        continue;
+      }
+
+      // 6. 泛生活经验与备忘事实
+      const factMatch = rawCl.match(/(?:记一下|记住|备忘|提醒我记住|千万别忘|家里|合同|密码|卡放在|地址是|停在)\s*[:：]?\s*(.+)/);
+      if (factMatch) {
+        const factContent = factMatch[1].replace(/[，,。！？\s]+$/, '').trim();
+        if (factContent && factContent.length >= 3) {
+          pushLifeMem('生活备忘', '重要生活事实', factContent, 'experience', 4);
+        }
+      }
+    }
+
+    // 亲友档案记忆同步与回执
+    for (const name of touchedPersons) {
+      receipt('relationships', `已记录 ${name} 的亲友资料`);
+      const p = life.persons.find(item => item.name === name);
+      if (p) {
         const subject = ['妈', '爸'].includes(p.name) ? `我${p.name}` : p.name;
         if (p.taboos?.length) {
           pushLifeMem(subject, '忌口与过敏', `【${subject}】忌口与雷区：${p.taboos.join('、')}`, 'person', 5);
@@ -543,53 +668,6 @@ export const StateEngine = {
         }
       }
     }
-
-    // 7.2 个人偏好与禁忌 (我喜欢... / 我讨厌... / 我不吃... / 对...过敏 / 喝咖啡只喝无糖拿铁)
-    for (const cl of clauses) {
-      if (/(?:预算|项目|张总|李总|王总|陈姐|合同额|报价|工作|存入|花了|买了)/.test(cl)) continue;
-
-      // 句式 A: 包含特定事物与排他/专属习惯（如 "喝咖啡只喝无糖拿铁"、"吃火锅只吃清汤"、"喝奶茶只要三分糖"）
-      const scopedPref = cl.match(/(?:我|平时|自己)?\s*([^\s，,。；！？]+?)\s*(?:只喝|只要|只吃|只用|只选|只买|不吃|不喝|不放|不要|偏好|最爱)\s*([^\s，,。；！？]+)/);
-      if (scopedPref) {
-        const fullPref = cl.replace(/^(?:记一下|记住|还有|另外|顺便)[，,：:\s]*/, '').trim();
-        if (fullPref.length >= 3 && !/^\d+$/.test(fullPref)) {
-          pushLifeMem('我', '个人喜好与偏好', fullPref, 'preference', 4);
-          continue;
-        }
-      }
-
-      // 句式 B: 通用偏好动词句式（喜欢/偏好/讨厌/忌口/过敏/不碰）
-      const prefMatch = cl.match(/(?:我|平时|自己)?\s*(?:特别?|极其|最|一直|比较)?\s*(喜欢|爱吃|爱喝|最爱|偏爱|偏好|想要|讨厌|最烦|最怕|不吃|不能吃|不喝|不能喝|只吃|只喝|只选|只买|只用|只看|不要|不碰|忌口|对.+?过敏|从不(?:吃|喝|碰)?)\s*(.+)/);
-      if (prefMatch) {
-        const verb = prefMatch[1];
-        const content = prefMatch[2].replace(/[，,。！？\s]+$/, '').trim();
-        if (content && content.length >= 2 && !/^\d+$/.test(content)) {
-          const isTaboo = /讨厌|最烦|最怕|不吃|不能吃|不喝|不能喝|不要|不碰|忌口|过敏|从不/.test(verb);
-          pushLifeMem('我', isTaboo ? '生活禁忌与不适' : '个人偏好与心愿', `我${verb}${content}`, 'preference', 4);
-          continue;
-        }
-      }
-
-      // 7.3 生活作息与习惯 (平时习惯... / 每天... / 经常... / 每周...)
-      const habitMatch = cl.match(/(?:我|平时|自己)?\s*(?:习惯(?:于)?|每天|经常|通常|总是|每(?:周|天|月))\s*(.+)/);
-      if (habitMatch && !/(?:花了|买了|存了|发工资|打车|元|块)/.test(cl)) {
-        const habitContent = habitMatch[1].replace(/[，,。！？\s]+$/, '').trim();
-        if (habitContent && habitContent.length >= 3) {
-          pushLifeMem('我', '作息与生活规律', `平时习惯${habitContent}`, 'habit', 4);
-          continue;
-        }
-      }
-
-      // 7.4 生活经验与重要事实 (记一下... / 备忘... / 提醒我记住... / 合同... / 密码...)
-      const factMatch = cl.match(/(?:记一下|记住|备忘|提醒我记住|千万别忘|家里|合同|密码|卡放在|地址是|停在)\s*[:：]?\s*(.+)/);
-      if (factMatch && !/(?:花了|买了|存了|发工资)/.test(cl)) {
-        const factContent = factMatch[1].replace(/[，,。！？\s]+$/, '').trim();
-        if (factContent && factContent.length >= 3) {
-          pushLifeMem('生活备忘', '重要生活事实', factContent, 'experience', 4);
-        }
-      }
-    }
-
     return receipts;
   },
   /** Compatibility for v3 migration/tests; the production UI uses the async repository. */
