@@ -1,8 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './index.css';
 import App, { AppBoundary } from './App';
 import { installAndroidBridge } from './services/androidBridge';
-import './index.css';
 
 installAndroidBridge();
 
