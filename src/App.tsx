@@ -323,7 +323,7 @@ export function App() {
     try {
       await Repository.saveMessages([{ id: sourceId, role: 'user', content: text, timestamp: Date.now() }], 'life');
       const mutations = await Repository.updateLifeAtomically(life => StateEngine.mutateLifeDraft(text, life), sourceId, text);
-      const reply = mutations.length ? `已更新生活记录：\n${mutations.map(m => m.summaryText).join('\n')}` : '这句话已保留在当前生活对话中，尚未识别出可更新的生活卡片。';
+      const reply = mutations.length ? mutations.map(m => m.summaryText).join('\n') : '已归档。';
       try { await Repository.saveMessages([{ id: id(), role: 'assistant', content: reply, timestamp: Date.now(), mutations }], 'life'); }
       catch { if (modeRef.current === 'life') setIssue('生活记录已保存，但回复未保存，请查看生活卡片，勿重复提交。'); }
       if (modeRef.current === 'life') recorded(mutations.length ? '生活记录已保存。' : '生活原文已本地归档。');

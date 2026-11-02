@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Send,
   RefreshCw,
-  ShieldCheck,
   Zap,
   ArrowUpRight,
 } from 'lucide-react';
@@ -59,27 +58,15 @@ export const ChatPill: React.FC<ChatPillProps> = ({
           : 'bg-[#fcfaf5]/95 border-[#e5dec9] text-[#23293a]'
       }`}
     >
-      {/* 顶栏：当前本地逻辑分区 */}
+      {/* 极简顶栏 */}
       <div
         className={`flex items-center justify-between px-3.5 py-2.5 border-b ${
           isWork ? 'bg-slate-900/90 border-slate-800' : 'bg-[#f9f6ed] border-[#ece6d5]'
         }`}
       >
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold">
-            {isWork ? '💼 首席商务幕僚 · Looma Pro' : `🌙 ${settings.personaName || 'Looma'}`}
-          </span>
-          {isWork ? (
-            <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              <ShieldCheck size={11} />
-              <span>工作本地分区</span>
-            </span>
-          ) : (
-            <span className="text-[10px] text-[#8a5410] bg-[#f2ecdc] px-2 py-0.5 rounded-full">
-              生活本地分区
-            </span>
-          )}
-        </div>
+        <span className="text-xs font-bold">
+          {isWork ? '💼 Looma' : `🌙 ${settings.personaName || 'Looma'}`}
+        </span>
 
         <button
           onClick={onOpenCards}
@@ -90,17 +77,12 @@ export const ChatPill: React.FC<ChatPillProps> = ({
           }`}
         >
           <Zap size={11} />
-          <span>看活体卡</span>
+          <span>卡片</span>
         </button>
       </div>
 
-      {/* 消息与活体变更徽章流 */}
+      {/* 消息与状态变更流 */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-3">
-        {messages.length === 0 && (
-          <p className="text-xs leading-relaxed text-[#6b7183] py-4">
-            这里记录你主动输入的生活文字。可尝试记录账单、饮水和体重，请核对整理结果。
-          </p>
-        )}
         {messages.map((msg) => {
           const isUser = msg.role === 'user';
           return (
@@ -134,7 +116,6 @@ export const ChatPill: React.FC<ChatPillProps> = ({
                 <p className="whitespace-pre-wrap">{msg.content}</p>
               </div>
 
-              {/* ⚡ Talk-to-Live-State 状态自动更新微徽章 */}
               {msg.mutations && msg.mutations.length > 0 && (
                 <div className="mt-1.5 space-y-1 w-[88%]">
                   {msg.mutations.map((mut) => (
@@ -174,51 +155,8 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             }`}
           >
             <RefreshCw size={12} className="animate-spin" />
-            <span>正在整理文字记录...</span>
+            <span>记录中…</span>
           </div>
-        )}
-      </div>
-
-      {/* 底部：一秒体验魔法演示胶囊（随双态切换） */}
-      <div
-        className={`px-2.5 py-1.5 border-t flex items-center gap-1.5 overflow-x-auto text-[11px] no-drag ${
-          isWork ? 'bg-slate-900/80 border-slate-800' : 'bg-[#f5f1e6] border-[#ece6d5]'
-        }`}
-      >
-        {!isWork ? (
-          <>
-            <button
-              onClick={() => setInputText('午饭吃了42元，顺便喝了一杯水，今天体重64.1kg')}
-              className="whitespace-nowrap px-2.5 py-1 rounded-full bg-[#fcfaf5] border border-[#e2d8c3] text-[#8a5410] hover:border-[#a8681a] cursor-pointer"
-            >
-              ✨ 填入示例：记账与体重
-            </button>
-            <button
-              onClick={() => setInputText('记一下，王叔对花生过敏，喜欢喝龙井茶')}
-              className="whitespace-nowrap px-2.5 py-1 rounded-full bg-[#fcfaf5] border border-[#e2d8c3] text-[#6b7183] hover:text-[#8a5410] cursor-pointer"
-            >
-              ❤️ 填入示例：亲友忌口
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() =>
-                setInputText(
-                  '刚见完远景科技王总，预算26万，痛点是跨部门数据割裂，下周三前要完成定制方案汇报'
-                )
-              }
-              className="whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-800 border border-blue-500/40 text-blue-300 hover:bg-slate-700 cursor-pointer"
-            >
-              💼 填入客户跟进示例
-            </button>
-            <button
-              onClick={() => setInputText('星辰科技李总把预算加到22万了，进入商务谈判阶段')}
-              className="whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300 hover:text-white cursor-pointer"
-            >
-              📈 填入预算变更示例
-            </button>
-          </>
         )}
       </div>
 
@@ -239,11 +177,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={
-              isWork
-                ? '输入客户跟进、预算变更或待办文字...'
-                : '输入花销、体重、饮水或亲友备忘文字...'
-            }
+            placeholder="随手记录…"
             rows={1}
             className={`w-full resize-none text-[12.5px] bg-transparent focus:outline-none max-h-20 leading-5 ${
               isWork
