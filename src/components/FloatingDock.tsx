@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { AppSettings, WorkspaceMode } from '../types';
 
-export type MainTabType = 'chat' | 'cards' | 'journal' | 'gomoku' | 'memory';
+export type MainTabType = 'chat' | 'cards' | 'memory';
 
 interface FloatingDockProps {
   settings: AppSettings;
@@ -116,36 +116,6 @@ export const FloatingDock: React.FC<FloatingDockProps> = ({
           >
             <Layers size={14} />
           </button>
-
-          <button
-            onClick={() => onSelectTab('journal')}
-            className={`p-1.5 rounded-full transition-colors cursor-pointer ${
-              activeTab === 'journal'
-                ? isWork
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-[#a8681a] text-white'
-                : isWork
-                ? 'text-slate-400 hover:bg-slate-800'
-                : 'text-[#6b7183] hover:bg-[#efeadd]'
-            }`}
-            title={isWork ? '今日商务推进战报' : '今日双人生活手帐'}
-          >
-            <BookOpen size={14} />
-          </button>
-
-          {!isWork && (
-            <button
-              onClick={() => onSelectTab('gomoku')}
-              className={`p-1.5 rounded-full transition-colors cursor-pointer ${
-                activeTab === 'gomoku'
-                  ? 'bg-[#a8681a] text-white'
-                  : 'text-[#6b7183] hover:bg-[#efeadd]'
-              }`}
-              title="摸鱼五子棋"
-            >
-              <Grid3X3 size={14} />
-            </button>
-          )}
 
           <button
             onClick={() => onSelectTab('memory')}

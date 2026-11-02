@@ -81,7 +81,7 @@ test('4. Unpacked APK assets match SHA-256 tamper manifest and compiled Java cla
 
     const manifest = JSON.parse(fs.readFileSync(hashFile, 'utf8'));
     assert.equal(manifest.algorithm, 'SHA-256');
-    assert.ok(manifest.fileCount >= 17);
+    assert.ok(manifest.fileCount >= 10);
 
     for (const [relPath, expectedHash] of Object.entries(manifest.files)) {
       const fullPath = path.join(wwwDir, relPath);
