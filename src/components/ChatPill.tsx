@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { Message, AppSettings, WorkspaceMode, StateMutationReceipt } from '../types';
+import { Character } from './Companion';
 
 interface ChatPillProps {
   messages: Message[];
@@ -58,31 +59,58 @@ export const ChatPill: React.FC<ChatPillProps> = ({
           : 'bg-[#fcfaf5]/95 border-[#e5dec9] text-[#23293a]'
       }`}
     >
-      {/* 极简顶栏 */}
+      {/* 极简顶栏（小宠物伴侣置于顶栏左侧） */}
       <div
-        className={`flex items-center justify-between px-3.5 py-2.5 border-b ${
+        className={`flex items-center justify-between px-3.5 py-2 border-b ${
           isWork ? 'bg-slate-900/90 border-slate-800' : 'bg-[#f9f6ed] border-[#ece6d5]'
         }`}
       >
-        <span className="text-xs font-bold">
-          {isWork ? '💼 Looma' : `🌙 ${settings.personaName || 'Looma'}`}
-        </span>
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full overflow-hidden bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+            <div className="scale-65 -translate-y-0.5 pointer-events-none">
+              <Character state={isLoading ? 'thinking' : 'idle'} />
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-bold leading-tight">
+              {isWork ? '💼 Looma Pro' : `🌙 ${settings.personaName || 'Looma'}`}
+            </div>
+            <div className="text-[10px] text-emerald-600 font-medium leading-tight">
+              {isLoading ? '正在记录…' : '随口说，我在听'}
+            </div>
+          </div>
+        </div>
 
         <button
           onClick={onOpenCards}
-          className={`text-[11px] flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+          className={`text-[11px] flex items-center gap-1 px-2.5 py-1 rounded-lg cursor-pointer transition-colors ${
             isWork
               ? 'bg-blue-600/20 text-blue-300 hover:bg-blue-600/30'
               : 'bg-[#efeadd] text-[#8a5410] hover:bg-[#e2d8c3]'
           }`}
         >
           <Zap size={11} />
-          <span>卡片</span>
+          <span>查看卡片</span>
         </button>
       </div>
 
       {/* 消息与状态变更流 */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-3">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-10 px-4 text-center space-y-3">
+            <div className="w-16 h-16 rounded-full bg-amber-50 border border-amber-200/60 flex items-center justify-center shadow-xs overflow-hidden">
+              <div className="scale-80 pointer-events-none">
+                <Character state={isLoading ? 'thinking' : 'idle'} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <h4 className="text-sm font-semibold text-[#3d2b1f]">随口说，无需刻意排版</h4>
+              <p className="text-xs text-[#7c6248] max-w-xs leading-relaxed">
+                例如：“我今天攒了30块钱”、“喝了3杯水”、“今天花了25吃午饭”、“妈妈不吃香菜”…
+              </p>
+            </div>
+          </div>
+        )}
         {messages.map((msg) => {
           const isUser = msg.role === 'user';
           return (

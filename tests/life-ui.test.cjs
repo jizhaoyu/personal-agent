@@ -57,6 +57,7 @@ function component(name, storageOverrides = {}, repositoryOverrides = {}, aiOver
       if (dependency === '../services/storage') return { StorageService: storage };
       if (dependency === '../persistence/repository') return { Repository: repository };
       if (dependency === '../services/aiService') return { AiService: aiOverrides };
+      if (dependency === './Companion') return { Character: () => hooks.createElement('span', { 'data-testid': 'character' }) };
       return require(dependency);
     }, Date, Intl, console,
   }, { filename });

@@ -1,13 +1,13 @@
 {
-  "_zap-CR9-gNRE.js": {
-    "file": "assets/zap-CR9-gNRE.js",
+  "_zap-BFlGzFvV.js": {
+    "file": "assets/zap-BFlGzFvV.js",
     "name": "zap",
     "imports": [
       "index.html"
     ]
   },
   "index.html": {
-    "file": "assets/index-0WzCD47I.js",
+    "file": "assets/index-Bu-agDYs.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -20,7 +20,7 @@
       "src/components/MemoryCenter.tsx"
     ],
     "css": [
-      "assets/index-C718zKm4.css"
+      "assets/index-C8-i7_Mb.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -30,30 +30,30 @@
     "isDynamicEntry": true
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-Dj32CxQU.js",
+    "file": "assets/ChatPill-uUgyUlxB.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_zap-CR9-gNRE.js"
+      "_zap-BFlGzFvV.js"
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-G4N7qVre.js",
+    "file": "assets/LivingCardsBoard-CTRW12Zf.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_zap-CR9-gNRE.js"
+      "_zap-BFlGzFvV.js"
     ],
     "dynamicImports": [
       "node_modules/html2canvas/dist/html2canvas.esm.js"
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-48jXc13G.js",
+    "file": "assets/MemoryCenter-CvbV9bAg.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
@@ -68,7 +68,7 @@
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-CN7E-OgM.js",
+    "file": "assets/PracticeModal-DXdzFgTe.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,

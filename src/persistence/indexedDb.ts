@@ -16,7 +16,7 @@ const key = (space: string, kind: string, id: string) => [space, kind, id];
 const encoded = (value: unknown) => JSON.stringify(value);
 const normalized = (value: string) => value.normalize('NFKC').toLowerCase().trim();
 const freshStats = () => ({ counts: Object.fromEntries(RECORD_KINDS.map(kind => [kind, 0])), openTasks: 0, dueTasks: 0, storageBytes: 0 });
-const freshMeta = (): Meta => ({ ready: false, settings: { ...DEFAULT_PUBLIC_SETTINGS }, mode: 'work', revisions: { life: 0, work: 0 }, snapshotRevision: 0,
+const freshMeta = (): Meta => ({ ready: false, settings: { ...DEFAULT_PUBLIC_SETTINGS }, mode: 'life', revisions: { life: 0, work: 0 }, snapshotRevision: 0,
   stats: { life: freshStats(), work: freshStats() } });
 const wrap = <T,>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
 const completed = (tx: IDBTransaction) => new Promise<void>((resolve, reject) => {

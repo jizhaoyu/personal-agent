@@ -19,7 +19,7 @@ const stateLabels: Record<CompanionState, string> = {
   saved: '已确认保存', reminder: '待跟进提醒', error: '需要处理',
 };
 
-function Character({ state }: { state: CompanionState }) {
+export function Character({ state }: { state: CompanionState }) {
   const closedEyes = state === 'saved';
   return <div className="looma-companion__figure" aria-hidden="true">
     <svg className="looma-companion__drawing" viewBox="0 0 180 180" focusable="false">

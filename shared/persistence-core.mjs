@@ -163,7 +163,7 @@ export function validateRecord(space, kind, x) {
     case 'wallet': return only(x, ['monthlyBudget', 'wishTitle', 'wishTarget', 'wishSaved', 'wishes', 'activeWishId']) &&
       ['monthlyBudget', 'wishTarget', 'wishSaved'].every(k => finite(x[k]) && x[k] >= 0) && str(x.wishTitle) &&
       optional(x, 'activeWishId', str) &&
-      optional(x, 'wishes', arr => Array.isArray(arr) && arr.every(w => isRecord(w) && str(w.id) && str(w.title) && finite(w.targetAmount) && finite(w.savedAmount)));
+      optional(x, 'wishes', arr => Array.isArray(arr) && arr.every(w => object(w) && str(w.id) && str(w.title) && finite(w.targetAmount) && finite(w.savedAmount) && optional(w, 'group', str) && optional(w, 'isPrimary', v => typeof v === 'boolean') && optional(w, 'createdAt', finite) && optional(w, 'deadline', str)));
     case 'rpg': return only(x, ['energy', 'waterCups', 'weightKg', 'targetWeightKg', 'streakDays', 'moodBuff', 'dateKey', 'lastActivityDate']) &&
       ['energy', 'waterCups', 'weightKg', 'targetWeightKg', 'streakDays'].every(k => finite(x[k]) && x[k] >= 0) && x.energy <= 100 && x.waterCups <= 8 &&
       str(x.moodBuff) && optional(x, 'dateKey', str) && optional(x, 'lastActivityDate', str);
@@ -259,7 +259,7 @@ function emptyPartition() { return { revision: 0, messages: [], memories: [], su
 export function makeBootstrap(meta, rows, stats) {
   const space = stats.space;
   if (!spaces.includes(space)) throw new Error('读取快照必须明确空间。');
-  const snapshot = { schemaVersion: 5, snapshotRevision: meta.snapshotRevision || 0, activeMode: meta.mode || 'work',
+  const snapshot = { schemaVersion: 5, snapshotRevision: meta.snapshotRevision || 0, activeMode: meta.mode || 'life',
     settings: { ...DEFAULT_PUBLIC_SETTINGS, ...meta.settings }, partitions: {
       life: { ...emptyPartition(), wallet: { monthlyBudget: 5000, wishTitle: '心愿小金库', wishTarget: 10000, wishSaved: 0, entries: [] },
         rpg: { energy: 80, waterCups: 0, weightKg: 0, targetWeightKg: 0, moodBuff: '尚未记录', streakDays: 0 }, persons: [] },

@@ -19,7 +19,7 @@ export interface QueryOptions { limit?: number; cursor?: string; query?: string;
 export interface QueryPage<T = any> { items: T[]; nextCursor?: string | null; total?: number }
 export interface RecordMutation { kind: RecordKind; id: string; before: any | null; after: any | null }
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-const emptyCurrent = (): AppSnapshotV4 => makeBootstrap({ settings: DEFAULT_PUBLIC_SETTINGS, mode: 'work', revisions: { life: 0, work: 0 } }, [], { space: 'work' }).snapshot;
+const emptyCurrent = (): AppSnapshotV4 => makeBootstrap({ settings: DEFAULT_PUBLIC_SETTINGS, mode: 'life', revisions: { life: 0, work: 0 } }, [], { space: 'life' }).snapshot;
 const onlyPublicSettings = (settings: AppSettings) => Object.fromEntries(Object.keys(DEFAULT_PUBLIC_SETTINGS).filter(key => settings[key] !== undefined).map(key => [key, settings[key]]));
 
 /** The production API returns bounded windows. Full archives are only traversed by explicit backup / maintenance flows. */
@@ -27,7 +27,7 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
   let current = emptyCurrent();
   let initialized: Promise<Bootstrap> | undefined;
   let stats: any = {};
-  let active: WorkspaceMode = 'work';
+  let active: WorkspaceMode = 'life';
   const partitionRefreshSequence = { life: 0, work: 0 };
   let metadataRequestSequence = 0;
   let acceptedMetadataSequence = 0;
@@ -50,7 +50,7 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
         const state = await backend.request({ op: 'init' });
         if (epoch !== dataEpoch) return api.initialize();
         if (state?.ok === false) throw new Error(state.error || '本地资料初始化失败，原数据保留。');
-        active = state.mode || 'work';
+        active = state.mode || 'life';
         if (!state.ready) {
           const snapshot = readLegacy();
           // This fingerprint is an idempotency label, not a security checksum. No original source is removed.

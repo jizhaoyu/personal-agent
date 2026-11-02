@@ -109,3 +109,39 @@ test('切换主攻心愿后，存入与挣钱自动注入新主攻心愿', () =>
   assert.equal(wish2.savedAmount, initialWish2 + 500, '新主攻心愿必须接收500元入账');
   assert.equal(life.wallet.wishTitle, '换一台4K高刷显示器');
 });
+
+test('随口说“我今天攒了30块钱”：正确识别攒钱并无缝通过 persistence-core 校验与入库', async () => {
+  const { validateRecord } = await import('../shared/persistence-core.mjs');
+  const life = emptyLife();
+  const initialSaved = life.wallet.wishSaved;
+  const targetWish = life.wallet.wishes.find(w => w.id === life.wallet.activeWishId);
+  const initialWishSaved = targetWish.savedAmount;
+
+  const receipts = StateEngine.mutateLifeDraft('我今天攒了30块钱', life);
+
+  assert.ok(receipts.length > 0, '必须生成记录回执');
+  assert.equal(life.wallet.wishSaved, initialSaved + 30, '金库已攒必须增加30');
+  assert.equal(targetWish.savedAmount, initialWishSaved + 30, '主攻心愿必须增加30');
+
+  const savingEntry = life.wallet.entries.find(e => e.type === 'saving');
+  assert.ok(savingEntry, '必须生成 saving 类型的账单条目');
+  assert.equal(savingEntry.amount, 30);
+
+  // 严格检验 persistence-core 校验
+  const { entries, ...walletConfig } = life.wallet;
+  const isWalletValid = validateRecord('life', 'wallet', walletConfig);
+  assert.equal(isWalletValid, true, '更新后的 wallet 数据必须 100% 通过 validateRecord 校验');
+
+  const isEntryValid = validateRecord('life', 'expense', savingEntry);
+  assert.equal(isEntryValid, true, '新增的 saving 账单条目必须通过 validateRecord 校验');
+});
+
+test('随口说“今天花了30”：正确识别无单位/日常支出', () => {
+  const life = emptyLife();
+  const receipts = StateEngine.mutateLifeDraft('今天花了30', life);
+  assert.ok(receipts.length > 0, '必须生成支出记录');
+  const expenseEntry = life.wallet.entries.find(e => e.type === 'expense');
+  assert.ok(expenseEntry, '必须生成支出条目');
+  assert.equal(expenseEntry.amount, 30);
+  assert.equal(expenseEntry.title, '日常开销');
+});

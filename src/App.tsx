@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import { Settings, Briefcase, Moon, Minus, X, ArrowUpRight, RotateCcw, BookOpen, ChevronsDown } from 'lucide-react';
+import { Settings, Briefcase, Moon, Minus, X, ArrowUpRight, RotateCcw, BookOpen } from 'lucide-react';
 import { Repository } from './persistence/repository';
 import type { AppSnapshotV5 } from './persistence/repository';
 import type { RecallEvidence } from './persistence/memory';
@@ -47,7 +47,7 @@ export function App() {
   const [exportProject, setExportProject] = useState<Engagement | null>(null);
   const [exportTasks, setExportTasks] = useState<ProjectTaskItem[]>([]);
   const [lifeTab, setLifeTab] = useState('chat');
-  const modeRef = useRef<WorkspaceMode>('work');
+  const modeRef = useRef<WorkspaceMode>('life');
   const operation = useRef(0);
   const requestRef = useRef<string | null>(null);
   const notified = useRef(new Set<string>());
@@ -57,7 +57,7 @@ export function App() {
   const homeSequence = useRef(0);
   const pending = draftState?.draft.proposal || null;
   const selectedId = draftState?.draft.selectedEngagementId || '';
-  const mode = snapshot?.activeMode || 'work'; modeRef.current = mode;
+  const mode = snapshot?.activeMode || 'life'; modeRef.current = mode;
   function setToast(message: string) { setToastValue(message); setUndoEventId(''); }
   function installDraft(draft: CaptureDraft) {
     stopModelRequest();
@@ -85,6 +85,7 @@ export function App() {
     const unsubscribe = Repository.subscribe(update);
     void (async () => { try {
       const boot = await Repository.initialize();
+      await Repository.saveWorkspaceMode('life');
       if (boot.snapshot.activeMode === 'work') { const stored = await Repository.getCaptureDraft(); if (active) installDraft(stored || createCaptureDraft()); }
       if (active) { ready = true; setSnapshot(Repository.getCurrent()); }
     } catch { if (active) setStartupError('本地数据库读取或迁移失败，旧资料已保留。'); } })();
@@ -339,11 +340,12 @@ export function App() {
   const { settings } = snapshot, work = snapshot.partitions.work, life = snapshot.partitions.life, stats = Repository.getStats();
   const reminderCount = mode === 'work' ? (stats.dueTasks || 0) + (stats.dueFollowUps || 0) : 0;
   const state = deriveCompanionState({ busy: busy || committing, pending: mode === 'work' && !!pending, saved, error: issue, reminderCount });
-  const companion = <Companion state={state} mode={mode} name={settings.personaName} reminderCount={reminderCount} onToggle={mode === 'life' ? () => void toggleCompact() : undefined} onOpenMemory={mode === 'life' ? () => void openMemory() : undefined}/>;
-  if (compact) return <div className="capsule-shell drag-region"><Companion compact state={state} mode={mode} name={settings.personaName} reminderCount={reminderCount} onToggle={() => void toggleCompact(false)} onOpenMemory={() => void openMemory()}/></div>;
+  const companion = <Companion state={state} mode={mode} name={settings.personaName} reminderCount={reminderCount} onOpenMemory={mode === 'life' ? () => void openMemory() : undefined}/>;
+  const isMobileOrAndroid = typeof navigator !== 'undefined' && (/android|iphone|ipad|ipod/i.test(navigator.userAgent) || (typeof window !== 'undefined' && 'LoomaNative' in window) || (typeof window !== 'undefined' && window.innerWidth < 768));
+  if (compact && !isMobileOrAndroid) return <div className="capsule-shell drag-region"><Companion compact state={state} mode={mode} name={settings.personaName} reminderCount={reminderCount} onToggle={() => void toggleCompact(false)} onOpenMemory={() => void openMemory()}/></div>;
   return <div className={`app-shell ${mode === 'life' ? 'life-shell' : ''}`}>
     <div className="workspace-content" inert={practiceOpen || trialInfoOpen}>
-    <header className="app-header drag-region"><div className="app-header-left no-drag"><a className="wordmark" href="#" onClick={e => e.preventDefault()}>looma</a><div className={`space-switch ${mode === 'work' ? 'space-switch--work' : ''}`} aria-label="工作空间"><button className={mode === 'work' ? 'active' : ''} onClick={() => void switchMode('work')}><Briefcase size={13}/>工作态</button><button className={mode === 'life' ? 'active' : ''} onClick={() => void switchMode('life')}><Moon size={13}/>生活态</button></div></div><div className="header-tools no-drag"><button className="icon-btn" onClick={() => void openMemory()} aria-label="打开记忆中心"><BookOpen size={17}/></button><button className="icon-btn" onClick={() => void toggleCompact(true)} aria-label="收起为伴侣胶囊"><ChevronsDown size={17}/></button><button className="icon-btn" onClick={() => void openSettings()} aria-label="打开设置"><Settings size={17}/></button>{window.electronAPI && <><button className="icon-btn" onClick={() => void window.electronAPI!.minimizeWindow()} aria-label="最小化"><Minus size={17}/></button><button className="icon-btn" onClick={() => void window.electronAPI!.closeWindow()} aria-label="退出应用"><X size={17}/></button></>}</div></header>
+    <header className="app-header drag-region"><div className="app-header-left no-drag"><a className="wordmark" href="#" onClick={e => e.preventDefault()}>looma</a><div className={`space-switch ${mode === 'work' ? 'space-switch--work' : ''}`} aria-label="工作空间"><button className={mode === 'work' ? 'active' : ''} onClick={() => void switchMode('work')}><Briefcase size={11}/>工作态</button><button className={mode === 'life' ? 'active' : ''} onClick={() => void switchMode('life')}><Moon size={11}/>生活态</button></div></div><div className="header-tools no-drag"><button className="icon-btn" onClick={() => void openMemory()} aria-label="打开记忆中心"><BookOpen size={16}/></button><button className="icon-btn" onClick={() => void openSettings()} aria-label="打开设置"><Settings size={16}/></button>{window.electronAPI && !isMobileOrAndroid && <button className="icon-btn" onClick={() => void window.electronAPI!.minimizeWindow()} aria-label="最小化"><Minus size={16}/></button>}{window.electronAPI && <button className="icon-btn" onClick={() => void window.electronAPI!.closeWindow()} aria-label="退出应用"><X size={16}/></button>}</div></header>
     <main>{issue && <div className="app-alert" role="alert">{issue}{unknownCapture ? <button className="text-btn" disabled={committing} onClick={() => void saveCapture(unknownOriginalOnly.current)}>核查本次保存结果</button> : <button className="text-btn" onClick={async () => { try { if (restoreNeedsRead) { await dataImported(); } else { await Repository.refresh(mode); await refreshHome(); setIssue(''); } } catch { setIssue('暂未读取成功，资料仍保留。'); } }}>重新读取</button>}<button className="text-btn" disabled={unknownCapture} onClick={() => setIssue('')}>收起</button></div>}
       {memoryOpen ? <><button className="text-btn" onClick={() => void closeMemory()}>← 返回当前空间</button><Suspense fallback={<p>正在打开记忆中心…</p>}><MemoryCenter key={mode} mode={mode} onNotice={setToast} modelEnabled={!!settings.memoryModelEnabled && !!connection?.enabled} onModelRecall={modelRecall} onEditBusiness={mode === 'work' ? editBusiness : undefined}/></Suspense></> : mode === 'work' ? <WorkBench onPractice={() => void openPractice()} onRetryDraft={() => { void flushDraft().then(() => setIssue('')).catch(() => setIssue('草稿暂未保存，原文仍在输入框中。')); }} projectLookup={projectLookup} draft={draftState?.draft || null} draftSaveState={draftState?.status || 'idle'} home={home} closure={closure} onDraftChange={patch => { stopModelRequest(); changeDraft(patch); }} onContinue={continueCapture} onResume={() => setClosure(null)} onOriginalOnly={() => void saveCapture(true)} onRebase={() => void reparse()} onResolveConflict={resolveConflict} onSetItemState={setItemState} onUndoEvent={eventId => void undo(eventId)} onOpenMemory={() => void openMemory()} onOpenClosure={setClosure} modelBusy={busy && !!requestRef.current} work={work} stats={stats} companion={companion} pending={pending} busy={committing || unknownCapture || restoreNeedsRead || (busy && !pending)} selectedId={selectedId} onSelect={setSelectedId} onPropose={propose} onChange={p => { stopModelRequest(); setPending(p); }} onConfirm={() => void saveCapture()} onDiscard={() => { stopModelRequest(); setPending(null); setIssue(''); }} onReparse={() => void reparse()} onManual={(ops, text) => void manual(ops, text)} onUndo={() => void undo()} onExport={async project => { try { const tasks: ProjectTaskItem[] = []; let cursor: string | undefined; do { const page = await Repository.query<ProjectTaskItem>('work', 'task', { relatedId: project.id, limit: 200, cursor }); tasks.push(...page.items); cursor = page.nextCursor || undefined; } while (cursor); if (modeRef.current === 'work') { setExportProject(project); setExportTasks(tasks); } } catch { setIssue('关联行动读取失败，请重试。'); } }} modelEnabled={!!connection?.enabled && !!connection?.configured} onCancel={() => { stopModelRequest(); setIssue('模型请求已取消，本地候选与原文已保留。'); }}/>
         : <section className="life-workspace"><div className="life-tabs-wrapper"><nav className="life-tabs" aria-label="生活导航">{[['chat', '随口说'], ['cards', '生活卡片'], ['memory', '记忆']].map(([tab, label]) => <button key={tab} className={lifeTab === tab ? 'active' : ''} onClick={() => setLifeTab(tab)}>{label}</button>)}</nav></div><div className="life-panel" key={lifeTab}><Suspense fallback={<p className="muted small">正在打开生活空间…</p>}>
