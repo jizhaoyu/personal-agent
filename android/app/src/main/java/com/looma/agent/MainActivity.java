@@ -1,6 +1,7 @@
 package com.looma.agent;
 
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -11,10 +12,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
-import androidx.activity.OnBackPressedCallback;
-import androidx.appcompat.app.AppCompatActivity;
-
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
     private WebView webView;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -25,7 +23,7 @@ public class MainActivity extends AppCompatActivity {
 
         super.onCreate(savedInstanceState);
 
-        // 2. 默认激活硬件级防截屏、防录屏与多任务切换界面高斯遮蔽 (FLAG_SECURE)
+        // 2. 默认激活硬件级防截屏、防录屏与多任务切换界面遮蔽 (FLAG_SECURE)
         Window window = getWindow();
         window.setFlags(
                 WindowManager.LayoutParams.FLAG_SECURE,
@@ -60,18 +58,16 @@ public class MainActivity extends AppCompatActivity {
 
         // 5. 加载本地打包的前端工作台
         webView.loadUrl("file:///android_asset/www/index.html");
+    }
 
-        // 6. 物理返回键处理
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            @Override
-            public void handleOnBackPressed() {
-                if (webView != null && webView.canGoBack()) {
-                    webView.goBack();
-                } else {
-                    moveTaskToBack(true);
-                }
-            }
-        });
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            moveTaskToBack(true);
+        }
     }
 
     @Override

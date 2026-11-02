@@ -11,6 +11,7 @@
     "start": "cross-env NODE_ENV=production electron .",
     "build": "node scripts/build-info.cjs && tsc && vite build && node scripts/build-info.cjs --stamp-dist",
     "build:android": "npm run build && node scripts/sync-android.cjs",
+    "package:android": "npm run build && node scripts/package-android.cjs",
     "package:trial": "npm run build && node scripts/package-trial.cjs",
     "preview": "vite preview",
     "test": "node scripts/test.mjs",

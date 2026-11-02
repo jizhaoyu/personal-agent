@@ -1,6 +1,7 @@
 package com.looma.agent;
 
 import android.app.Activity;
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.ClipData;
@@ -9,8 +10,6 @@ import android.content.Context;
 import android.os.Build;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
-
-import androidx.core.app.NotificationCompat;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -227,11 +226,12 @@ public final class LoomaBridge {
         try {
             NotificationManager manager = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
             if (manager == null) return false;
-            NotificationCompat.Builder builder = new NotificationCompat.Builder(activity, CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_popup_reminder)
+            Notification.Builder builder = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    ? new Notification.Builder(activity, CHANNEL_ID)
+                    : new Notification.Builder(activity);
+            builder.setSmallIcon(android.R.drawable.ic_popup_reminder)
                     .setContentTitle("Looma 跟进提醒")
                     .setContentText("当前有 " + Math.min(count, 9999) + " 项待办或等待回音已到期。")
-                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .setAutoCancel(true);
             manager.notify(1001, builder.build());
             return true;
