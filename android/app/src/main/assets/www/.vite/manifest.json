@@ -1,27 +1,27 @@
 {
-  "_refresh-cw-DNlaxjUU.js": {
-    "file": "assets/refresh-cw-DNlaxjUU.js",
+  "_refresh-cw-psy54ILE.js": {
+    "file": "assets/refresh-cw-psy54ILE.js",
     "name": "refresh-cw",
     "imports": [
       "index.html"
     ]
   },
-  "_sparkles-C1_0PUBC.js": {
-    "file": "assets/sparkles-C1_0PUBC.js",
+  "_sparkles-CJVNwQpL.js": {
+    "file": "assets/sparkles-CJVNwQpL.js",
     "name": "sparkles",
     "imports": [
       "index.html"
     ]
   },
-  "_zap-CIlRb7_S.js": {
-    "file": "assets/zap-CIlRb7_S.js",
+  "_zap-ZI-JB9vT.js": {
+    "file": "assets/zap-ZI-JB9vT.js",
     "name": "zap",
     "imports": [
       "index.html"
     ]
   },
   "index.html": {
-    "file": "assets/index-gjQUDtcc.js",
+    "file": "assets/index-CpjsD2k-.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -36,7 +36,7 @@
       "src/components/ArtifactGomoku.tsx"
     ],
     "css": [
-      "assets/index-DdbDUsOY.css"
+      "assets/index-DdnKhnLh.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -46,7 +46,7 @@
     "isDynamicEntry": true
   },
   "src/components/ArtifactGomoku.tsx": {
-    "file": "assets/ArtifactGomoku-DSHmc7a6.js",
+    "file": "assets/ArtifactGomoku-B4BCvYJx.js",
     "name": "ArtifactGomoku",
     "src": "src/components/ArtifactGomoku.tsx",
     "isDynamicEntry": true,
@@ -55,52 +55,52 @@
     ]
   },
   "src/components/ArtifactJournal.tsx": {
-    "file": "assets/ArtifactJournal-_bcI_gUX.js",
+    "file": "assets/ArtifactJournal-DWnr3HfJ.js",
     "name": "ArtifactJournal",
     "src": "src/components/ArtifactJournal.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_refresh-cw-DNlaxjUU.js",
-      "_sparkles-C1_0PUBC.js"
+      "_refresh-cw-psy54ILE.js",
+      "_sparkles-CJVNwQpL.js"
     ],
     "dynamicImports": [
       "node_modules/html2canvas/dist/html2canvas.esm.js"
     ]
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-B7cQ50ux.js",
+    "file": "assets/ChatPill-1kVY7TAU.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_zap-CIlRb7_S.js",
-      "_refresh-cw-DNlaxjUU.js"
+      "_zap-ZI-JB9vT.js",
+      "_refresh-cw-psy54ILE.js"
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-BjQEjLPl.js",
+    "file": "assets/LivingCardsBoard-CAq_JupI.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_zap-CIlRb7_S.js",
-      "_sparkles-C1_0PUBC.js"
+      "_zap-ZI-JB9vT.js",
+      "_sparkles-CJVNwQpL.js"
     ],
     "dynamicImports": [
       "node_modules/html2canvas/dist/html2canvas.esm.js"
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-4DoS2wLs.js",
+    "file": "assets/MemoryCenter-DSPGVj1h.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_sparkles-C1_0PUBC.js"
+      "_sparkles-CJVNwQpL.js"
     ],
     "dynamicImports": [
       "index.html"
@@ -110,7 +110,7 @@
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-BEJb6Rp9.js",
+    "file": "assets/PracticeModal-CQrwf-E6.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,
