@@ -52,7 +52,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
 
   return (
     <div
-      className={`flex flex-col h-[460px] backdrop-blur-md border rounded-2xl shadow-float overflow-hidden transition-all duration-300 ${
+      className={`flex flex-col h-full min-h-[420px] md:h-[460px] backdrop-blur-md border rounded-2xl shadow-float overflow-hidden transition-all duration-300 ${
         isWork
           ? 'bg-[#0f172a]/95 border-slate-700 text-slate-100'
           : 'bg-[#fcfaf5]/95 border-[#e5dec9] text-[#23293a]'

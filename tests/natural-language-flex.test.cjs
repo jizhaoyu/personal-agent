@@ -72,9 +72,9 @@ test('life parser records expenses without requiring 元/块 and supports divers
 test('life parser supports unitless savings, income, weight, multi-cup water and multi-person colloquial kinship', () => {
   const life = emptyLife();
 
-  // 1. 无单位攒钱与收入
+  // 1. 无单位攒钱与收入（收入同步注入心愿小金库）
   StateEngine.mutateLifeDraft('存了500，发工资8000', life);
-  assert.equal(life.wallet.wishSaved, 500);
+  assert.equal(life.wallet.wishSaved, 8500);
   assert.ok(life.wallet.entries.some(e => e.type === 'saving' && e.amount === 500));
   assert.ok(life.wallet.entries.some(e => e.type === 'income' && e.amount === 8000));
 

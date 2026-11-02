@@ -106,8 +106,10 @@ function validPartition(x: any, mode: WorkspaceMode) {
   if (mode === 'work') return Array.isArray(x.engagements) && x.engagements.every(validEngagement) && unique(x.engagements) &&
     Array.isArray(x.tasks) && x.tasks.every(validTask) && unique(x.tasks) && x.tasks.every(t => !t.engagementId || x.engagements.some(e => e.id === t.engagementId));
   const wallet = x.wallet, rpg = x.rpg;
-  return isRecord(wallet) && only(wallet, ['monthlyBudget', 'wishTitle', 'wishTarget', 'wishSaved', 'entries']) &&
+  return isRecord(wallet) && only(wallet, ['monthlyBudget', 'wishTitle', 'wishTarget', 'wishSaved', 'entries', 'wishes', 'activeWishId']) &&
     num(wallet.monthlyBudget) && wallet.monthlyBudget >= 0 && num(wallet.wishTarget) && wallet.wishTarget >= 0 && num(wallet.wishSaved) && wallet.wishSaved >= 0 && str(wallet.wishTitle) &&
+    (wallet.activeWishId === undefined || str(wallet.activeWishId)) &&
+    (wallet.wishes === undefined || (Array.isArray(wallet.wishes) && wallet.wishes.every((w: any) => isRecord(w) && str(w.id) && str(w.title) && num(w.targetAmount) && num(w.savedAmount)))) &&
     Array.isArray(wallet.entries) && unique(wallet.entries) && wallet.entries.every(e => baseEntity(e) && only(e, ['id', 'title', 'amount', 'type', 'category', 'timestamp']) &&
       str(e.title) && num(e.amount) && e.amount >= 0 && ['expense', 'income', 'saving'].includes(e.type) &&
       ['餐饮☕', '购物🛍️', '出行🚕', '娱乐🎮', '生活🏠', '金库✨'].includes(e.category) && num(e.timestamp)) &&

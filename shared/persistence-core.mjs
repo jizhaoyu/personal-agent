@@ -160,8 +160,10 @@ export function validateRecord(space, kind, x) {
       Array.isArray(x.checklist) && unique(x.checklist) && x.checklist.every(item => base(item) && only(item, ['id', 'text', 'done']) && str(item.text) && typeof item.done === 'boolean');
     case 'expense': return base(x) && only(x, ['id', 'title', 'amount', 'type', 'category', 'timestamp']) && str(x.title) && finite(x.amount) && x.amount >= 0 &&
       ['expense', 'income', 'saving'].includes(x.type) && ['餐饮☕', '购物🛍️', '出行🚕', '娱乐🎮', '生活🏠', '金库✨'].includes(x.category) && finite(x.timestamp);
-    case 'wallet': return only(x, ['monthlyBudget', 'wishTitle', 'wishTarget', 'wishSaved']) &&
-      ['monthlyBudget', 'wishTarget', 'wishSaved'].every(k => finite(x[k]) && x[k] >= 0) && str(x.wishTitle);
+    case 'wallet': return only(x, ['monthlyBudget', 'wishTitle', 'wishTarget', 'wishSaved', 'wishes', 'activeWishId']) &&
+      ['monthlyBudget', 'wishTarget', 'wishSaved'].every(k => finite(x[k]) && x[k] >= 0) && str(x.wishTitle) &&
+      optional(x, 'activeWishId', str) &&
+      optional(x, 'wishes', arr => Array.isArray(arr) && arr.every(w => isRecord(w) && str(w.id) && str(w.title) && finite(w.targetAmount) && finite(w.savedAmount)));
     case 'rpg': return only(x, ['energy', 'waterCups', 'weightKg', 'targetWeightKg', 'streakDays', 'moodBuff', 'dateKey', 'lastActivityDate']) &&
       ['energy', 'waterCups', 'weightKg', 'targetWeightKg', 'streakDays'].every(k => finite(x[k]) && x[k] >= 0) && x.energy <= 100 && x.waterCups <= 8 &&
       str(x.moodBuff) && optional(x, 'dateKey', str) && optional(x, 'lastActivityDate', str);
@@ -242,7 +244,7 @@ export function flattenV3(snapshot) {
     if (space === 'work' && partition.tasks.some(task => task.engagementId && !partition.engagements.some(item => item.id === task.engagementId))) throw new Error('待办关联项目缺失。');
     if (space === 'life') {
       const wallet = partition.wallet;
-      if (!only(wallet, ['monthlyBudget', 'wishTitle', 'wishTarget', 'wishSaved', 'entries']) || !Array.isArray(wallet.entries) ||
+      if (!only(wallet, ['monthlyBudget', 'wishTitle', 'wishTarget', 'wishSaved', 'entries', 'wishes', 'activeWishId']) || !Array.isArray(wallet.entries) ||
           !wallet.entries.every(item => validateRecord(space, 'expense', item)) || !unique(wallet.entries) || !validateRecord(space, 'rpg', partition.rpg)) throw new Error('旧版生活资料无效。');
       const { entries, ...config } = wallet;
       if (!validateRecord(space, 'wallet', config)) throw new Error('旧版钱包配置无效。');

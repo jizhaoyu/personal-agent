@@ -63,12 +63,25 @@ export interface ExpenseEntry {
   timestamp: number;
 }
 
+export interface WishItem {
+  id: string;
+  title: string;
+  targetAmount: number;
+  savedAmount: number;
+  group?: string;
+  isPrimary?: boolean;
+  createdAt?: number;
+  deadline?: string;
+}
+
 export interface WalletCardState {
   monthlyBudget: number;
   wishTitle: string;
   wishTarget: number;
   wishSaved: number;
   entries: ExpenseEntry[];
+  wishes?: WishItem[];
+  activeWishId?: string;
 }
 
 export interface RpgStatusCardState {

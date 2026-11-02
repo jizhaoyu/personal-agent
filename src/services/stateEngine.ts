@@ -315,18 +315,45 @@ export const StateEngine = {
 
     const wallet = life.wallet;
 
+    // 确保多心愿结构与主攻目标就绪
+    if (!wallet.wishes || !wallet.wishes.length) {
+      wallet.wishes = [{
+        id: 'default-wish',
+        title: wallet.wishTitle || '心愿小金库',
+        targetAmount: wallet.wishTarget || 10000,
+        savedAmount: wallet.wishSaved || 0,
+        group: '品质生活',
+        isPrimary: true,
+        createdAt: Date.now(),
+      }];
+    }
+    if (!wallet.activeWishId) {
+      wallet.activeWishId = wallet.wishes.find(w => w.isPrimary)?.id || wallet.wishes[0]?.id || 'default-wish';
+    }
+
+    const syncWishProgress = (addAmount: number) => {
+      wallet.wishSaved += addAmount;
+      const targetWish = wallet.wishes?.find(w => w.id === wallet.activeWishId) || wallet.wishes?.[0];
+      if (targetWish) {
+        targetWish.savedAmount += addAmount;
+        wallet.wishTitle = targetWish.title;
+        wallet.wishTarget = targetWish.targetAmount;
+      }
+      return targetWish;
+    };
+
     // 2. 心愿金库存入 / 攒钱（无需强制写“元/块”，支持 万/w/k）
     const save = clean.match(/(?:存入|存了?|攒了?|存进|小金库\s*(?:加|存|\+|入了?)?)\s*[¥￥]?\s*(\d+(?:\.\d+)?)\s*(万|w|千|k|块钱|块|元)?/i);
     if (save) {
       const unit = (save[2] || '').toLowerCase();
       const mult = unit === '万' || unit === 'w' ? 10000 : unit === '千' || unit === 'k' ? 1000 : 1;
       const amount = +save[1] * mult;
-      wallet.wishSaved += amount;
+      const primaryWish = syncWishProgress(amount);
       wallet.entries.push({ id: newId('expense'), title: '心愿金库存入', amount, type: 'saving', category: '金库✨', timestamp: Date.now() });
-      receipt('wallet', `已记录心愿存入 ¥${amount}`);
+      receipt('wallet', `已记录心愿存入 ¥${amount}（${primaryWish ? primaryWish.title : '心愿金库'}）`);
     }
 
-    // 3. 收入记录（发工资 / 兼职 / 报销 / 红包 / 入账，无需强制写“元/块”）
+    // 3. 收入记录（发工资 / 兼职 / 报销 / 红包 / 入账 / 挣了 / 赚了，无需强制写“元/块”）
     const incomeMatch = clean.match(/(?:(发工资|工资|兼职|报销|红包|奖金|退款|退税|外快|副业)\s*(?:发了|到了|到账|收到|入账|进账|赚了?|挣了?|有|是)?|(?:收到|入账|进账|赚了?|挣了?|收入)\s*([^\d，,。；！？\s]{0,8}?))\s*[¥￥]?\s*(\d+(?:\.\d+)?)\s*(万|w|千|k|块钱|块|元)?/i);
     if (incomeMatch) {
       const title = (incomeMatch[1] || incomeMatch[2] || '日常收入').trim() || '日常收入';
@@ -334,7 +361,8 @@ export const StateEngine = {
       const mult = unit === '万' || unit === 'w' ? 10000 : unit === '千' || unit === 'k' ? 1000 : 1;
       const amount = +incomeMatch[3] * mult;
       wallet.entries.push({ id: newId('expense'), title, amount, type: 'income', category: '金库✨', timestamp: Date.now() });
-      receipt('wallet', `已记录收入 ${title} ¥${amount}`);
+      const primaryWish = syncWishProgress(amount);
+      receipt('wallet', `已记录收入 ${title} ¥${amount}，已存入心愿金库（${primaryWish ? primaryWish.title : '心愿金库'}）`);
     }
 
     // 4. 消费记账（支持无单位如“今天花了30”、“买水杯60”、“花了30买水杯”、“早饭15”、“打车28”等全部日常口语）
@@ -419,7 +447,10 @@ export const StateEngine = {
       if (waterMatch[1] || waterMatch[3]) cups = parseChineseCount(waterMatch[1] || waterMatch[3]);
       else if (waterMatch[2]) cups = Math.max(1, Math.round(+waterMatch[2] / 250));
       rpg.waterCups = Math.min(8, rpg.waterCups + cups);
-      receipt('rpg_status', `今日饮水 ${rpg.waterCups}/8 杯`);
+      const energyGain = cups * 4;
+      rpg.energy = Math.min(100, rpg.energy + energyGain);
+      rpg.moodBuff = '补充水分，状态充沛';
+      receipt('rpg_status', `今日饮水 ${rpg.waterCups}/8 杯，精力 +${energyGain}`);
     }
 
     // 疲惫与精力下降

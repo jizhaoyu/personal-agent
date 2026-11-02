@@ -16,10 +16,13 @@ import {
   Trash2,
   ArrowRight,
   Lock,
+  Pencil,
+  Star,
 } from 'lucide-react';
 import {
   WorkspaceMode,
   WalletCardState,
+  WishItem,
   RpgStatusCardState,
   PersonProfile,
   CrmDealItem,
@@ -48,6 +51,30 @@ function statusForToday(value: RpgStatusCardState): RpgStatusCardState {
   return { ...value, waterCups: value.dateKey === today ? value.waterCups : 0, dateKey: today };
 }
 
+
+export function normalizeWallet(w: WalletCardState): WalletCardState {
+  const wishes: WishItem[] = (w.wishes && w.wishes.length > 0) ? w.wishes : [
+    {
+      id: 'wish-default',
+      title: w.wishTitle || '我的心愿',
+      targetAmount: w.wishTarget || 10000,
+      savedAmount: w.wishSaved || 0,
+      group: '品质生活',
+      isPrimary: true,
+      createdAt: Date.now(),
+    }
+  ];
+  const activeWishId = w.activeWishId || wishes.find(item => item.isPrimary)?.id || wishes[0].id;
+  const activeWish = wishes.find(item => item.id === activeWishId) || wishes[0];
+  return {
+    ...w,
+    wishTitle: activeWish.title,
+    wishTarget: activeWish.targetAmount,
+    wishes,
+    activeWishId,
+  };
+}
+
 export function monthlyExpenseTotal(entries: WalletCardState['entries'], now = Date.now()): number {
   const month = monthFormatter.format(now);
   return entries.filter(entry => entry.type === 'expense' && Number.isFinite(entry.timestamp) &&
@@ -67,7 +94,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   const cachedPartition = Repository.getCurrent().partitions[mode];
   const cachedLife = mode === 'life' ? Repository.getCurrent().partitions.life : null;
   // Only the current space is read. The repository cache contains a bounded, already migrated window.
-  const [wallet, setWallet] = useState<WalletCardState>(() => cachedLife?.wallet || { monthlyBudget: 0, wishTitle: '我的心愿', wishTarget: 0, wishSaved: 0, entries: [] });
+  const [wallet, setWallet] = useState<WalletCardState>(() => normalizeWallet(cachedLife?.wallet || { monthlyBudget: 5000, wishTitle: '我的心愿', wishTarget: 10000, wishSaved: 0, entries: [] }));
   const [rpg, setRpg] = useState<RpgStatusCardState>(() => cachedLife ? statusForToday(cachedLife.rpg) : { energy: 0, waterCups: 0, weightKg: 0, targetWeightKg: 0, moodBuff: '未记录', streakDays: 0 });
   const [persons, setPersons] = useState<PersonProfile[]>(() => cachedLife?.persons || []);
 
@@ -102,7 +129,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       setCustomCards(partition.customCards);
       if (mode === 'life') {
         const life = Repository.getCurrent().partitions.life;
-        setWallet(life.wallet);
+        setWallet(normalizeWallet(life.wallet));
         setRpg(statusForToday(life.rpg));
         setPersons(life.persons);
       }
@@ -233,7 +260,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
 
   return (
     <div
-      className={`flex flex-col h-[460px] rounded-2xl shadow-float overflow-hidden border transition-all duration-300 ${
+      className={`flex flex-col h-full min-h-[420px] md:h-[460px] rounded-2xl shadow-float overflow-hidden border transition-all duration-300 ${
         isWork
           ? 'bg-[#0f172a]/95 text-slate-100 border-slate-700'
           : 'bg-[#fcfaf5]/95 text-[#23293a] border-[#e5dec9]'
