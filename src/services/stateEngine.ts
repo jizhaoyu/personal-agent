@@ -57,11 +57,17 @@ function budget(text: string, warnings: string[]): number | undefined {
   if (budgetIsUncertain(text)) { warnings.push('预算金额尚未确认，未填写确定金额，请在预览中核对。'); return undefined; }
   const main = text.match(/(?:预算|金额|报价|合同额|合同金额|总价)\s*(?:从|是|为|在|约|大概|改为|调整为|定在|定为)?\s*([¥￥])?\s*(\d+(?:\.\d+)?)\s*(万元|万块|万|w元|w|千元|千块|千|k|块钱|块|元|rmb)?/i);
   const corrections = Array.from(text.matchAll(/(?:改为|改到|调整为|调整到|变为|增加到|加到|降到|批到了|批到|定在|定为|谈到)\s*([¥￥])?\s*(\d+(?:\.\d+)?)\s*(万元|万块|万|w元|w|千元|千块|千|k|块钱|块|元|rmb)?/gi));
-  const match = corrections.at(-1) || main;
+  const validCorrections = corrections.filter(candidate => {
+    // A scheduling change must not override an explicitly stated budget.
+    const hasCurrency = !!candidate[1] || !!candidate[3];
+    const suffix = text.slice(candidate.index! + candidate[0].length);
+    return hasCurrency && !/^\s*(?:点|号|日)/.test(suffix);
+  });
+  const match = validCorrections.at(-1) || main;
   if (!match) return undefined;
   const multiplier = parseUnitMultiplier(match[3] || '', !!match[1]);
   if (multiplier === undefined) { warnings.push('金额缺少单位，请补充元、万或 k 后重新整理，或在预览中手动核对。'); return undefined; }
-  if (/约|大概|左右|区间|到\s*\d+\s*(?:万|元|k|w)/i.test(text) && !corrections.length) warnings.push('原文金额含近似表达，请确认该预算后再保存。');
+  if (/约|大概|左右|区间|到\s*\d+\s*(?:万|元|k|w)/i.test(text) && !validCorrections.length) warnings.push('原文金额含近似表达，请确认该预算后再保存。');
   return +match[2] * multiplier;
 }
 

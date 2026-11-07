@@ -19,6 +19,29 @@ test('trial language matrix preserves units and corrections across new synthetic
     assert.equal(amount, expected, text);
   }
 });
+test('budget corrections ignore scheduling numbers and retain the last valid amount', () => {
+  const cases: [string, number | undefined][] = [
+    ['李总预算5万，会议改到3点', 50000],
+    ['李总预算5万，会议定在3点', 50000],
+    ['李总预算5万，会议加到3点', 50000],
+    ['李总预算5万，交付改到15号', 50000],
+    ['李总预算5万，交付调整到15日', 50000],
+    ['李总预算5万，会议改到￥3点', 50000],
+    ['李总预算5万，交付改到3元号', 50000],
+    ['李总预算5万，改为6万，会议改到3点', 60000],
+    ['李总预算5万，改为￥60000', 60000],
+    ['李总预算5万，改为6万，改为7万', 70000],
+    ['李总预算5万，改到3', 50000],
+    ['李总会议改到3点', undefined],
+    ['李总预算300', undefined],
+  ];
+  for (const [text, expected] of cases) {
+    const proposal = parse(text);
+    assert.equal(proposal.operations.find(item => item.target === 'engagement')?.after?.budgetAmount, expected, text);
+    assert.equal(proposal.warnings.some(warning => warning.includes('金额缺少单位')), text === '李总预算300', text);
+  }
+});
+
 test('trial language matrix never turns negative, hypothetical or future plans into a won deal', () => {
   for (const text of ['李总目前还没成交', '李总没有签合同', '如果李总成交预算12万', '李总预计下周签约', '李总明天签合同']) {
     assert.equal(parse(text).operations.some(item => item.target === 'engagement' && item.after?.stage === '赢单成交'), false, text);
