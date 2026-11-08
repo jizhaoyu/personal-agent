@@ -100,7 +100,7 @@ async function createPersistence({ filePath }) {
     target.prepare('INSERT INTO record_fts(rowid,text) VALUES (?,?)').run(rid, text);
     const termStatement = target.prepare('INSERT OR IGNORE INTO search_terms(space,kind,id,term) VALUES (?,?,?,?)');
     for (const term of searchTerms(text)) termStatement.run(row.space, row.kind, row.id, term);
-    const refs = [row.data.engagementId, row.data.sourceMessageId, row.data.eventId, ...(row.data.sourceIds || []), ...(row.data.engagementIds || []), ...(row.data.taskIds || []), ...(row.data.followUpIds || [])].filter(v => typeof v === 'string' && v);
+    const refs = [row.data.engagementId, row.data.followUpId, row.data.projectId, row.data.conditionId, row.data.sourceMessageId, row.data.eventId, ...(row.data.sourceIds || []), ...(row.data.engagementIds || []), ...(row.data.taskIds || []), ...(row.data.followUpIds || []), ...(row.data.conditionIds || [])].filter(v => typeof v === 'string' && v);
     const referenceStatement = target.prepare('INSERT OR IGNORE INTO relations(space,kind,id,related_id) VALUES (?,?,?,?)');
     for (const ref of new Set(refs)) referenceStatement.run(row.space, row.kind, row.id, ref);
     target.prepare('DELETE FROM work_index WHERE space=? AND kind=? AND id=?').run(row.space, row.kind, row.id);
@@ -123,16 +123,20 @@ async function createPersistence({ filePath }) {
     writeMeta(db, 'ready', true);
   }
   function validateLinks(target) {
-    const invalid = target.prepare(`SELECT t.id FROM records t WHERE t.kind IN ('task','followup') AND
+    const invalid = target.prepare(`SELECT t.id FROM records t WHERE t.kind IN ('task','followup','condition') AND
       json_extract(t.data,'$.engagementId') IS NOT NULL AND json_extract(t.data,'$.engagementId') != '' AND NOT EXISTS
       (SELECT 1 FROM records e WHERE e.space=t.space AND e.kind='engagement' AND e.id=json_extract(t.data,'$.engagementId')) LIMIT 1`).get();
     if (invalid) throw new Error('待办关联项目不存在，未保存任何更改。');
+    const invalidArtifact = target.prepare(`SELECT a.id FROM records a WHERE a.kind='artifact' AND json_extract(a.data,'$.projectId') IS NOT NULL AND json_extract(a.data,'$.projectId') != '' AND NOT EXISTS (SELECT 1 FROM records e WHERE e.space=a.space AND e.kind='engagement' AND e.id=json_extract(a.data,'$.projectId')) LIMIT 1`).get();
+    if (invalidArtifact) throw new Error('产物关联的项目不存在，未保存任何更改。');
+    const invalidFollowUp = target.prepare(`SELECT c.id FROM records c WHERE c.kind='condition' AND json_extract(c.data,'$.followUpId') IS NOT NULL AND json_extract(c.data,'$.followUpId') != '' AND NOT EXISTS (SELECT 1 FROM records f WHERE f.space=c.space AND f.kind='followup' AND f.id=json_extract(c.data,'$.followUpId')) LIMIT 1`).get();
+    if (invalidFollowUp) throw new Error('条件关联的等待事项不存在，未保存任何更改。');
   }
   // The metadata switch and derived-index upgrade are atomic. Existing business JSON is unchanged.
   if (readMeta(db, 'schemaVersion', 0) < 5) db.transaction(() => {
     let cursor = 0;
     while (true) {
-      const rows = db.prepare("SELECT * FROM records WHERE rid>? AND kind IN ('task','followup','closure') ORDER BY rid LIMIT 200").all(cursor);
+      const rows = db.prepare("SELECT * FROM records WHERE rid>? AND kind IN ('task','followup','condition','closure') ORDER BY rid LIMIT 200").all(cursor);
       if (!rows.length) break;
       for (const row of rows) {
         const data = JSON.parse(row.data), entry = row.space === 'work' ? workIndex(row.kind, data) : null;
@@ -197,13 +201,13 @@ async function createPersistence({ filePath }) {
     const group = (bucket, condition = '', params = [], reverse = false) => {
       const where = `i.space='work' AND i.bucket=?${condition}`;
       const count = db.prepare(`SELECT count(*) AS count FROM work_index i WHERE ${where}`).get(bucket, ...params).count;
-      const rows = db.prepare(`SELECT r.data FROM work_index i JOIN records r ON r.space=i.space AND r.kind=i.kind AND r.id=i.id WHERE ${where} ORDER BY i.${bucket === 'waiting' || bucket === 'question' ? 'sort' : 'time'} ${reverse ? 'DESC' : 'ASC'},i.id LIMIT ?`).all(bucket, ...params, limit);
+      const rows = db.prepare(`SELECT r.data FROM work_index i JOIN records r ON r.space=i.space AND r.kind=i.kind AND r.id=i.id WHERE ${where} ORDER BY i.${bucket === 'waiting' || bucket === 'question' || bucket === 'condition' ? 'sort' : 'time'} ${reverse ? 'DESC' : 'ASC'},i.id LIMIT ?`).all(bucket, ...params, limit);
       return { items: rows.map(row => JSON.parse(row.data)), count };
     };
     const today = group('task', ' AND i.time>=? AND i.time<?', [start, end]);
-    const overdue = group('task', ' AND i.time<?', [start]); const waiting = group('waiting'), questions = group('question'), recent = group('closure', '', [], true);
-    return { draft: get('work', 'capture_draft', 'active-work'), today: today.items, overdue: overdue.items, waiting: waiting.items, questions: questions.items, recent: recent.items,
-      counts: { today: today.count, overdue: overdue.count, waiting: waiting.count, questions: questions.count } };
+    const overdue = group('task', ' AND i.time<?', [start]); const waiting = group('waiting'), questions = group('question'), conditions = group('condition'), recent = group('closure', '', [], true);
+    return { draft: get('work', 'capture_draft', 'active-work'), today: today.items, overdue: overdue.items, waiting: waiting.items, questions: questions.items, conditions: conditions.items, recent: recent.items,
+      counts: { today: today.count, overdue: overdue.count, waiting: waiting.count, questions: questions.count, conditions: conditions.count } };
   }
   function stats(space) {
     const counts = Object.fromEntries(RECORD_KINDS.map(kind => [kind, 0]));
@@ -236,8 +240,8 @@ async function createPersistence({ filePath }) {
       const placeholders = command[field].map(() => '?').join(',');
       if (field === 'ids') { where.push(`r.id IN (${placeholders})`); args.push(...command[field]); }
       else {
-        where.push(`(json_extract(r.data,'$.clientName') IN (${placeholders}) OR json_extract(r.data,'$.title') IN (${placeholders}) OR json_extract(r.data,'$.name') IN (${placeholders}) OR json_extract(r.data,'$.subject') IN (${placeholders}))`);
-        for (let i = 0; i < 4; i++) args.push(...command[field]);
+        where.push(`(json_extract(r.data,'$.clientName') IN (${placeholders}) OR json_extract(r.data,'$.title') IN (${placeholders}) OR json_extract(r.data,'$.name') IN (${placeholders}) OR json_extract(r.data,'$.subject') IN (${placeholders}) OR json_extract(r.data,'$.actionTitle') IN (${placeholders}))`);
+        for (let i = 0; i < 5; i++) args.push(...command[field]);
       }
     }
     if (command.relatedId !== undefined) {
@@ -307,7 +311,7 @@ async function createPersistence({ filePath }) {
       const business = command.mutations.some(m => isBusinessKind(m.kind));
       bump(command.space, business);
       const receipts = command.event ? command.mutations.map((m, i) => ({ id: `receipt-${command.id}-${i}`, mode: command.space,
-        targetCardType: ({ engagement: 'crm', task: 'projects', memory: 'custom', wallet: 'wallet', expense: 'wallet', rpg: 'rpg_status', person: 'relationships', custom: 'custom' })[m.kind] || 'custom',
+        targetCardType: ({ engagement: 'crm', task: 'projects', memory: 'custom', wallet: 'wallet', expense: 'wallet', rpg: 'rpg_status', person: 'relationships', custom: 'custom', artifact: 'projects' })[m.kind] || 'custom',
         targetCardTitle: m.after?.title || m.after?.clientName || m.after?.name || '已确认记录', summaryText: m.after === null ? '已删除' : m.before === null ? '已添加' : '已更新', deltaBadge: '已保存', timestamp: now })) : [];
       const result = { ok: true, receipts };
       db.prepare('INSERT INTO applied(space,id,signature,result,at) VALUES (?,?,?,?,?)').run(command.space, command.id, signature, JSON.stringify(result), now);

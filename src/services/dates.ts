@@ -48,7 +48,7 @@ export function resolveDeadline(text: string, now: number = Date.now()): { dueAt
   if (clock) {
     hour = +clock[1];
     minute = clock[3] === '半' ? 30 : +(clock[2] || clock[4] || 0);
-    if (/下午|晚上|今晚|明晚/.test(clean) && hour < 12) hour += 12;
+    if (/下午|晚上|傍晚|今晚|明晚/.test(clean) && hour < 12) hour += 12;
     if (/上午|明早/.test(clean) && hour === 12) hour = 0;
   }
   if (hour > 23 || minute > 59 || (calendarDate && (month < 0 || month > 11 || day < 1 || day > new Date(Date.UTC(year, month + 1, 0)).getUTCDate()))) {

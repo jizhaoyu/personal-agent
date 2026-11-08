@@ -1,5 +1,15 @@
 export type WorkspaceMode = 'life' | 'work';
 
+export interface TodoRecord {
+  id: string; space: WorkspaceMode; title: string;
+  status: 'suggested' | 'pending' | 'completed' | 'cancelled';
+  createdAt: number; updatedAt: number; revision: number;
+  dueAt?: string; dueDate?: string; needsTime?: boolean; completedAt?: number;
+  notifiedRevision?: number; lastNotifiedAt?: number; sourceText?: string;
+  sourceKind?: 'task' | 'followup'; sourceTaskId?: string;
+  sourceFingerprint?: string; sourceDone?: boolean;
+}
+
 export interface StateMutationReceipt {
   id: string;
   mode: WorkspaceMode;
@@ -182,11 +192,55 @@ export interface Engagement {
   updatedAt: number;
 }
 
+export interface ConditionIntent {
+  id: string;
+  space: 'work';
+  engagementId?: string;
+  followUpId?: string;
+  conditionKind: 'followup_resolved' | 'manual_confirm';
+  conditionText: string;
+  actionTitle: string;
+  sourceMessageId: string;
+  status: 'draft' | 'watching' | 'ready' | 'paused' | 'completed' | 'cancelled';
+  revision: number;
+  triggeredAt?: number;
+  triggeredByEventId?: string;
+  dismissedRevision?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ArtifactType = 'proposal_brief' | 'material_checklist' | 'meeting_brief';
+export type ArtifactStatus = 'draft' | 'needs_review' | 'ready';
+
+export interface ArtifactDraft {
+  id: string;
+  space: 'work';
+  projectId: string;
+  conditionId?: string;
+  type: ArtifactType;
+  title: string;
+  content: string;
+  sourceSnapshot: {
+    projectUpdatedAt: number;
+    tasksCount: number;
+    followUpsCount: number;
+    conditionsCount: number;
+  };
+  version: number;
+  status: ArtifactStatus;
+  reviewReason?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export type WorkOperation =
   | { target: 'engagement'; entityId: string; before: Engagement | null; after: Engagement | null }
   | { target: 'task'; entityId: string; before: ProjectTaskItem | null; after: ProjectTaskItem | null }
   | { target: 'memory'; entityId: string; before: MemoryItem | null; after: MemoryItem | null }
-  | { target: 'followup'; entityId: string; before: FollowUpItem | null; after: FollowUpItem | null };
+  | { target: 'followup'; entityId: string; before: FollowUpItem | null; after: FollowUpItem | null }
+  | { target: 'condition'; entityId: string; before: ConditionIntent | null; after: ConditionIntent | null }
+  | { target: 'artifact'; entityId: string; before: ArtifactDraft | null; after: ArtifactDraft | null };
 
 export interface ProposedChangeSet {
   id: string;
@@ -225,6 +279,8 @@ export interface WorkPartition extends PartitionBase {
   engagements: Engagement[];
   tasks: ProjectTaskItem[];
   followUps?: FollowUpItem[];
+  conditions?: ConditionIntent[];
+  artifacts?: ArtifactDraft[];
   closures?: ClosureRecord[];
 }
 
@@ -275,6 +331,7 @@ export interface ClosureRecord {
   engagementIds: string[];
   taskIds: string[];
   followUpIds: string[];
+  conditionIds?: string[];
   confirmedAt: number;
   revertedAt?: number;
   originalOnly?: boolean;
@@ -285,8 +342,9 @@ export interface WorkHome {
   overdue: ProjectTaskItem[];
   waiting: FollowUpItem[];
   questions: FollowUpItem[];
+  conditions?: ConditionIntent[];
   recent: ClosureRecord[];
-  counts: { today: number; overdue: number; waiting: number; questions: number };
+  counts: { today: number; overdue: number; waiting: number; questions: number; conditions?: number };
 }
 export interface CaptureCommitResult {
   outcome: 'committed' | 'rejected' | 'unknown';

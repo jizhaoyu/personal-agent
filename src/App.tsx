@@ -3,14 +3,19 @@ import { Settings, Briefcase, Moon, Minus, X, ArrowUpRight, RotateCcw, BookOpen 
 import { Repository } from './persistence/repository';
 import type { AppSnapshotV5 } from './persistence/repository';
 import type { RecallEvidence } from './persistence/memory';
-import { StateEngine } from './services/stateEngine';
+import { StateEngine, extractClientNames } from './services/stateEngine';
 import { parseModelProposal } from './services/aiService';
 import { migrateLegacyCredential } from './services/legacyConnection';
 import { deriveCompanionState } from './services/companionState';
 import { createCaptureDraft, reviseCaptureDraft, rebaseProposal, resolveProposalConflict } from './services/capture';
 import { createDraftController } from './services/draftController';
+import { TodoService } from './services/todos';
+import { capturePersonalText, clearLifeCaptureFocus, invalidateAgentCaptures } from './services/agentCapture';
+import { lifeActionText, routeLifeInput } from './services/lifeRouting';
 import type { DraftController, DraftState } from './services/draftController';
-import type { Engagement, ProjectTaskItem, ProposedChangeSet, WorkOperation, WorkspaceMode, CaptureDraft, ClosureRecord, WorkHome, WorkPartition, FollowUpItem } from './types';
+import type { Engagement, ProjectTaskItem, ProposedChangeSet, WorkOperation, WorkspaceMode, CaptureDraft, ClosureRecord, WorkHome, WorkPartition, FollowUpItem, ConditionIntent, TodoRecord } from './types';
+import type { ConditionLifecycleAction } from './services/conditionIntents';
+import { TodoPanel } from './components/TodoPanel';
 import { WorkBench } from './components/WorkBench';
 import { Companion } from './components/Companion';
 import { SettingsModal } from './components/SettingsModal';
@@ -47,10 +52,15 @@ export function App() {
   const [exportProject, setExportProject] = useState<Engagement | null>(null);
   const [exportTasks, setExportTasks] = useState<ProjectTaskItem[]>([]);
   const [lifeTab, setLifeTab] = useState('chat');
+  const [lifeDraft, setLifeDraft] = useState('');
+  const [pendingTodoFloat, setPendingTodoFloat] = useState<TodoRecord | null>(null);
+  const [todoFocus, setTodoFocus] = useState<{ space: WorkspaceMode; id: string; requestId: string }>();
+  const [todoChoices, setTodoChoices] = useState<TodoRecord[]>([]);
+  const [agentRetry,setAgentRetry]=useState<{text:string;space:WorkspaceMode;sourceId:string;epoch:string;stage?:'agent'|'life-mutation'}|null>(null);
+  const [todoChoiceAction, setTodoChoiceAction] = useState<'complete' | 'cancel' | 'time'>('complete');
   const modeRef = useRef<WorkspaceMode>('life');
   const operation = useRef(0);
   const requestRef = useRef<string | null>(null);
-  const notified = useRef(new Set<string>());
   const controller = useRef<DraftController | null>(null);
   const unknownOriginalOnly = useRef(false);
   const controllerSubscription = useRef<(() => void) | null>(null);
@@ -72,7 +82,13 @@ export function App() {
     controller.current.update(reviseCaptureDraft(controller.current.getState().draft, patch));
   }
   function setPending(value: ProposedChangeSet | null) { changeDraft({ proposal: value || undefined, conflicts: [], status: value ? 'review' : 'editing' }); }
-  function setSelectedId(value: string) { stopModelRequest(); changeDraft({ selectedEngagementId: value || undefined, ...(value ? { newClientName: undefined, newProjectTitle: undefined } : {}) }); }
+  function setSelectedId(value: string) {
+    stopModelRequest();
+    const hadClarification = !!controller.current?.getState().draft.proposal?.clarification;
+    const currentText = controller.current?.getState().draft.text || '';
+    changeDraft({ selectedEngagementId: value || undefined, ...(value ? { newClientName: undefined, newProjectTitle: undefined } : {}) });
+    if (hadClarification && value && currentText.trim()) void propose(currentText);
+  }
   async function refreshHome() {
     if (modeRef.current !== 'work') return; const sequence = ++homeSequence.current;
     try { const value = await Repository.getWorkHome(); if (modeRef.current === 'work' && sequence === homeSequence.current) setHome(value); }
@@ -88,6 +104,8 @@ export function App() {
       await Repository.saveWorkspaceMode('life');
       if (boot.snapshot.activeMode === 'work') { const stored = await Repository.getCaptureDraft(); if (active) installDraft(stored || createCaptureDraft()); }
       if (active) { ready = true; setSnapshot(Repository.getCurrent()); }
+      try { await TodoService.configure(Repository.getCurrent().settings.remindersEnabled); await TodoService.syncLegacy(); }
+      catch { if (active) setIssue('待办提醒暂未同步，请重新读取；已有记录仍保留。'); }
     } catch { if (active) setStartupError('本地数据库读取或迁移失败，旧资料已保留。'); } })();
     return () => { active = false; unsubscribe(); controllerSubscription.current?.(); controller.current?.dispose(); controller.current = null; };
   }, []);
@@ -134,26 +152,27 @@ export function App() {
   }, [!!snapshot]);
   useEffect(() => {
     if (!snapshot) return;
-    async function check() {
-      try {
-        const result = await Repository.request({ op: 'stats', space: mode });
-        if (modeRef.current !== mode) return;
-        if (mode === 'work' && snapshot!.settings.remindersEnabled && (result.dueTasks || result.dueFollowUps)) {
-          const [due, followUps] = await Promise.all([
-            Repository.query<ProjectTaskItem>('work', 'task', { dueOnly: true, limit: 200 }),
-            Repository.query<FollowUpItem>('work', 'followup', { dueOnly: true, limit: 200 }),
-          ]);
-          if (modeRef.current !== mode) return;
-          const keys = [...due.items.map(item => `${item.id}:${item.dueAt}`), ...followUps.items.map(item => `${item.id}:${item.reviewAt}`)];
-          const fresh = keys.filter(key => !notified.current.has(key));
-          if (fresh.length) { await window.electronAPI?.notifyDue({ count: Math.min(9999, (result.dueTasks || 0) + (result.dueFollowUps || 0)) }); fresh.forEach(key => notified.current.add(key)); }
-        }
-        await Repository.refresh(mode);
-      } catch { /* In-app records remain available if notifications fail. */ }
-    }
-    void check(); const timer = setInterval(check, 30000); return () => clearInterval(timer);
-  }, [mode, !!snapshot, snapshot?.settings.remindersEnabled]);
+    const unsubscribe = Repository.subscribe(() => { void TodoService.syncLegacy().catch(() => setIssue('工作行动的待办同步未完成，请重新读取。')); });
+    return unsubscribe;
+  }, [!!snapshot]);
+  useEffect(() => {
+    if (!snapshot) return;
+    const focus = (target: {space: WorkspaceMode; id: string}) => {
+      if (!target || !['work', 'life'].includes(target.space) || typeof target.id !== 'string') return;
+      void (async () => {
+        if (!await switchMode(target.space)) return;
+        if (target.space === 'life') setLifeTab('todos');
+        setTodoFocus({ space: target.space, id: target.id, requestId: id() });
+        await toggleCompact(false);
+      })();
+    };
+    const unsubscribe = window.electronAPI?.onTodoFocus?.(focus);
+    const foregroundFocus = (event: Event) => focus((event as CustomEvent).detail);
+    window.addEventListener('looma:todo-focus',foregroundFocus);
+    return () => { unsubscribe?.(); window.removeEventListener('looma:todo-focus',foregroundFocus); };
+  }, [!!snapshot, committing, unknownCapture]);
   function stopModelRequest() {
+    invalidateAgentCaptures();
     operation.current++; const requestId = requestRef.current; requestRef.current = null; setBusy(false);
     if (requestId) void window.electronAPI?.cancelModel(requestId).catch(() => {});
   }
@@ -189,13 +208,14 @@ export function App() {
     catch { setIssue('真实草稿尚未保存，请先重试保存，再进入演练。'); }
   }
   async function switchMode(next: WorkspaceMode) {
-    if (committing || unknownCapture) return;
+    if (committing || unknownCapture) return false;
     stopModelRequest(); setExportProject(null); setMemoryOpen(false); setIssue(''); setToast(''); setSaved(false);
     try {
       await flushDraft();
       if (next === 'work' && !controller.current) installDraft(await Repository.getCaptureDraft() || createCaptureDraft());
       await Repository.saveWorkspaceMode(next); modeRef.current = next;
-    } catch { setIssue('草稿或空间切换尚未保存，当前输入仍保留。'); }
+      return true;
+    } catch { setIssue('草稿或空间切换尚未保存，当前输入仍保留。'); return false; }
   }
   async function propose(text: string) {
     if ((busy && !requestRef.current) || committing || unknownCapture || !controller.current) return;
@@ -207,10 +227,47 @@ export function App() {
     try {
       await flushDraft();
       await Repository.saveMessages([{ id: sourceId, role: 'user', content: text, timestamp: draft.updatedAt }], 'work');
+      setSaved(true);
+      const hasProjectContext = Boolean(draft.selectedEngagementId || draft.newClientName?.trim() || draft.newProjectTitle?.trim());
+      const captureEpoch=Repository.getReadIdentity().split(':')[0];
+      if(!hasProjectContext&&connection?.enabled&&connection.configured)requestRef.current=sourceId;
+      const todo = hasProjectContext
+        ? { handled: false, needsReview: true, created: undefined, needsTime: undefined, needsChoice: undefined, choiceAction: undefined, silent: false, message: undefined, warning: undefined }
+        : await capturePersonalText({text,space:'work',sourceId,turns:Repository.getCurrent().partitions.work.messages,contextTaskId:todoFocus?.space==='work'?todoFocus.id:undefined},!!connection?.enabled&&!!connection?.configured);
+      if(requestRef.current===sourceId)requestRef.current=null;
+      if(captureEpoch!==Repository.getReadIdentity().split(':')[0])return;
+      if(operation.current!==generation||modeRef.current!=='work')return;
+      if (todo.handled && !todo.needsReview) {
+        if(todo.warning){setIssue(todo.warning);setAgentRetry({text,space:'work',sourceId,epoch:captureEpoch});}
+        const closed=await Repository.commitCapture(draft,true);
+        if(closed.outcome!=='committed'){
+          setUnknownCapture(closed.outcome==='unknown');unknownOriginalOnly.current=true;
+          throw new Error(closed.error||'原文已保存，记录收尾尚未确认，请重试收尾。');
+        }
+        if (!todo.silent && todo.message) await Repository.saveMessages([{ id: id(), role: 'assistant', content: todo.message, timestamp: Date.now() }], 'work');
+        if (operation.current !== generation || modeRef.current !== 'work') return;
+        setTodoChoices(todo.needsChoice || []);
+        setTodoChoiceAction(todo.choiceAction || 'complete');
+        const target = todo.needsTime || todo.created;
+        if (target) setTodoFocus({ space: 'work', id: target.id, requestId: id() });
+        if (todo.silent) setToast('');
+        installDraft(createCaptureDraft());
+        return;
+      }
       const partition = await Repository.getParseContext(text, draft.selectedEngagementId);
       if (operation.current !== generation || modeRef.current !== 'work') return;
       const local = StateEngine.propose(text, { mode: 'work', sourceMessageId: sourceId, partition, now: Date.now(),
         selectedEngagementId: draft.selectedEngagementId, newClientName: draft.newClientName, newProjectTitle: draft.newProjectTitle });
+      if(!local.operations.length&&!todo.needsReview&&!hasProjectContext&&!extractClientNames(text).length&&!/预算|成交|签约|需求确认|阶段|万元|客户.*项目/.test(text)){
+        if(todo.warning){setIssue(todo.warning);setAgentRetry({text,space:'work',sourceId,epoch:captureEpoch});}
+        const closed=await Repository.commitCapture(draft,true);
+        if(closed.outcome!=='committed'){
+          setUnknownCapture(closed.outcome==='unknown');unknownOriginalOnly.current=true;
+          throw new Error(closed.error||'原文已保存，记录收尾尚未确认。');
+        }
+        if(operation.current===generation&&modeRef.current==='work'){installDraft(createCaptureDraft());recorded('已记下，原文已保存。');}
+        return;
+      }
       setPending(local);
       if (!local.clarification && connection?.enabled && connection.configured && window.electronAPI) {
         const requestId = id(); requestRef.current = requestId;
@@ -234,7 +291,7 @@ export function App() {
     try {
       const generation = ++operation.current;
       const targetId = operations.find(item => item.target === 'engagement')?.entityId ||
-        operations.find(item => item.target === 'task' || item.target === 'followup')?.after?.engagementId;
+        operations.find(item => item.target === 'task' || item.target === 'followup' || item.target === 'condition')?.after?.engagementId;
       changeDraft({ text: sourceText, selectedEngagementId: targetId }); const draft = controller.current.getState().draft;
       const proposal = await Repository.createProposal('work', operations, sourceText, draft.sourceMessageId);
       if (operation.current !== generation || modeRef.current !== 'work' || controller.current?.getState().draft.draftVersion !== draft.draftVersion) return;
@@ -281,18 +338,29 @@ export function App() {
     if (modeRef.current !== 'work') return;
     if (result.outcome !== 'committed') { setIssue(result.error || '状态未确认保存，原状态保留。'); throw new Error(result.error); }
     setIssue(result.refreshWarning || ''); setUndoEventId(result.eventId || '');
-    recorded(done ? '已标记完成，可撤销这次操作。' : '已重新打开，可撤销这次操作。', result.eventId); await refreshHome();
+    if (done) setToast(''); else recorded('已重新打开，可撤销这次操作。', result.eventId);
+    try { await TodoService.syncLegacy(); } catch { setIssue('工作状态已保存，待办提醒同步失败，请重新读取。'); }
+    await refreshHome();
+  }
+  async function setConditionState(item: ConditionIntent, action: ConditionLifecycleAction | 'convert_to_task') {
+    if (committing || unknownCapture) return;
+    const result = await Repository.setConditionState(item, action);
+    if (modeRef.current !== 'work') return;
+    if (result.outcome !== 'committed') { setIssue(result.error || '条件状态未确认保存，原状态保留。'); throw new Error(result.error); }
+    setIssue(result.refreshWarning || ''); setUndoEventId(result.eventId || '');
+    recorded(action === 'convert_to_task' ? '已转为项目行动，可撤销这次操作。' : '条件状态已更新，可撤销这次操作。', result.eventId);
+    await refreshHome();
   }
   async function reparse() {
     const draft = controller.current?.getState().draft; if (!draft?.proposal || committing || unknownCapture) return;
     stopModelRequest();
     const generation = ++operation.current;
     try {
-      await Repository.refresh('work'); const partition: WorkPartition = { ...Repository.getCurrent().partitions.work, engagements: [], tasks: [], followUps: [], memories: [] };
-      for (const target of ['engagement', 'task', 'followup', 'memory'] as const) {
+      await Repository.refresh('work'); const partition: WorkPartition = { ...Repository.getCurrent().partitions.work, engagements: [], tasks: [], followUps: [], conditions: [], memories: [] };
+      for (const target of ['engagement', 'task', 'followup', 'condition', 'memory'] as const) {
         const ids = draft.proposal.operations.filter(item => item.target === target).map(item => item.entityId); const rows: any[] = [];
         for (let index = 0; index < ids.length; index += 200) rows.push(...(await Repository.query('work', target, { ids: ids.slice(index, index + 200), limit: 200 })).items);
-        if (target === 'engagement') partition.engagements = rows; else if (target === 'task') partition.tasks = rows; else if (target === 'followup') partition.followUps = rows; else partition.memories = rows;
+        if (target === 'engagement') partition.engagements = rows; else if (target === 'task') partition.tasks = rows; else if (target === 'followup') partition.followUps = rows; else if (target === 'condition') partition.conditions = rows; else partition.memories = rows;
       }
       const current = controller.current?.getState().draft;
       if (operation.current !== generation || modeRef.current !== 'work' || current?.sessionId !== draft.sessionId || current.draftVersion !== draft.draftVersion) return;
@@ -307,27 +375,103 @@ export function App() {
   function continueCapture() { if (!committing && !unknownCapture) { setClosure(null); setIssue(''); } }
   function editBusiness(query: string) { setClosure(null); setMemoryOpen(false); setProjectLookup({ query, requestId: id() }); }
   async function dataImported() {
+    setAgentRetry(null);
     stopModelRequest(); setUnknownCapture(false); setClosure(null); setHome(null); setExportProject(null);
     controllerSubscription.current?.(); controller.current?.dispose(); controller.current = null; setDraftState(null);
     try {
       installDraft(await Repository.getCaptureDraft() || createCaptureDraft());
-      setSnapshot(Repository.getCurrent()); setRestoreNeedsRead(false); setIssue(Repository.getRestoreWarning() || ''); await refreshHome();
+      await TodoService.configure(Repository.getCurrent().settings.remindersEnabled);
+      setSnapshot(Repository.getCurrent()); setRestoreNeedsRead(false); setIssue(Repository.getRestoreWarning() || ''); TodoService.refresh(); await refreshHome();
     } catch {
       setRestoreNeedsRead(true); setSnapshot(Repository.getCurrent());
       setIssue('业务数据已恢复，但视图暂未读取，请重新读取。恢复前的输入不会覆盖已恢复资料。');
     }
   }
   async function sendLife(text: string) {
-    if (busy) return; const sourceId = id(), generation = ++operation.current; setBusy(true); setIssue('');
+    if (busy) throw new Error('上一条记录仍在保存，当前输入已保留。'); const sourceId = id(), generation = ++operation.current; setBusy(true); setIssue('');
+    let originalSaved=false;
+    let failureStage:'agent'|'life-mutation'='agent';
+    const originalEpoch=Repository.getReadIdentity().split(':')[0];
+    const routes=routeLifeInput(text);
+    const hasFacts=routes.some(part=>part.route==='fact');
+    const actionText=lifeActionText(text);
     try {
       await Repository.saveMessages([{ id: sourceId, role: 'user', content: text, timestamp: Date.now() }], 'life');
+      originalSaved=true;
+      setSaved(true);
+      if(!actionText)clearLifeCaptureFocus();
+      if(!actionText&&!hasFacts)return;
+      const captureEpoch=Repository.getReadIdentity().split(':')[0];
+      if(actionText&&connection?.enabled&&connection.configured)requestRef.current=sourceId;
+      const todo = actionText?await capturePersonalText({text:actionText,space:'life',sourceId,turns:Repository.getCurrent().partitions.life.messages,contextTaskId:todoFocus?.space==='life'?todoFocus.id:undefined},!!connection?.enabled&&!!connection?.configured):undefined;
+      if(requestRef.current===sourceId)requestRef.current=null;
+      if(captureEpoch!==Repository.getReadIdentity().split(':')[0])return;
+      if(operation.current!==generation||modeRef.current!=='life')return;
+      if(todo?.warning){setAgentRetry({text,space:'life',sourceId,epoch:captureEpoch});if(modeRef.current==='life')setIssue(todo.warning);}
+      if (todo?.handled && !todo.needsChoice) {
+        if (!todo.silent && todo.message) await Repository.saveMessages([{ id: id(), role: 'assistant', content: todo.message, timestamp: Date.now() }], 'life');
+        if (modeRef.current === 'life') {
+          setTodoChoices(todo.needsChoice || []);
+          setTodoChoiceAction(todo.choiceAction || 'complete');
+          const target = todo.needsTime || todo.created;
+          if (target) {
+            setTodoFocus({ space: 'life', id: target.id, requestId: id() });
+            setPendingTodoFloat(target);
+          }
+          if (todo.silent) setToast('');
+        }
+      }
+      if(!hasFacts)return;
+      failureStage='life-mutation';
       const mutations = await Repository.updateLifeAtomically(life => StateEngine.mutateLifeDraft(text, life), sourceId, text);
-      const reply = mutations.length ? mutations.map(m => m.summaryText).join('\n') : '已归档。';
+      if(!mutations.length)return;
+      const reply = mutations.map(m => m.summaryText).join('\n');
       try { await Repository.saveMessages([{ id: id(), role: 'assistant', content: reply, timestamp: Date.now(), mutations }], 'life'); }
       catch { if (modeRef.current === 'life') setIssue('生活记录已保存，但回复未保存，请查看生活卡片，勿重复提交。'); }
-      if (modeRef.current === 'life') recorded(mutations.length ? '生活记录已保存。' : '生活原文已本地归档。');
-    } catch { if (modeRef.current === 'life') setIssue('本次生活变更未能完整保存，原文可能已保留。请检查后重试。'); }
+      if (modeRef.current === 'life') recorded('生活记录已保存。');
+    } catch (error) {
+      if(originalSaved){
+        if(originalEpoch===Repository.getReadIdentity().split(':')[0]){
+          setAgentRetry({text,space:'life',sourceId,epoch:originalEpoch,stage:failureStage});
+          if(modeRef.current==='life')setIssue('原文已保存，后续整理尚未完成，不用重新输入。');
+        }
+        return;
+      }
+      const message='原文尚未保存，输入仍在，请重试。';if(modeRef.current==='life')setIssue(message);throw new Error(error instanceof Error?`${message} ${error.message}`:message);
+    }
     finally { if (generation === operation.current) setBusy(false); }
+  }
+  async function retryAgentCapture(){
+    const input=agentRetry;if(!input||busy)return;
+    if(input.epoch!==Repository.getReadIdentity().split(':')[0]){setAgentRetry(null);return;}
+    const generation=++operation.current;
+    if(input.stage!=='life-mutation'&&connection?.enabled&&connection.configured)requestRef.current=input.sourceId;
+    setBusy(true);
+    try{
+      if(input.stage==='life-mutation'){
+        const prior=await Repository.get('life','event',`event-life:${input.sourceId}`);
+        if(input.epoch!==Repository.getReadIdentity().split(':')[0]||operation.current!==generation||modeRef.current!=='life')return;
+        if(!prior)await Repository.updateLifeAtomically(life=>StateEngine.mutateLifeDraft(input.text,life),input.sourceId,input.text);
+        if(operation.current===generation&&modeRef.current==='life'){setAgentRetry(null);setIssue('');}
+        return;
+      }
+      const retryText=input.space==='life'?lifeActionText(input.text):input.text;
+      if(!retryText){setAgentRetry(null);return;}
+      const result=await capturePersonalText({...input,text:retryText,turns:Repository.getCurrent().partitions[input.space].messages},!!connection?.enabled&&!!connection?.configured);
+      if(input.epoch!==Repository.getReadIdentity().split(':')[0]||operation.current!==generation||modeRef.current!==input.space)return;
+      if(result.warning)setIssue(result.warning);
+      else{setAgentRetry(null);setIssue(result.needsReview?'原文已保留，涉及重要业务变更，请从随心记下中核对。':'');if(result.silent)setToast('');}
+      TodoService.refresh();
+    }catch{if(operation.current===generation)setIssue('原文已保留，后续整理尚未完成，可以稍后继续。');}
+    finally{if(requestRef.current===input.sourceId)requestRef.current=null;if(operation.current===generation)setBusy(false);}
+  }
+  async function approveLifeTodo(todo: TodoRecord) {
+    try {
+      await TodoService.approve(todo);
+      recorded('已确认待办。');
+    } catch (e) {
+      setIssue(e instanceof Error ? e.message : '待办确认失败');
+    }
   }
   async function modelRecall(query: string, evidence: RecallEvidence) {
     if (!snapshot?.settings.memoryModelEnabled || !window.electronAPI?.recallModel) throw new Error('请先在设置中单独开启模型回忆增强。');
@@ -343,20 +487,23 @@ export function App() {
   const companion = <Companion state={state} mode={mode} name={settings.personaName} reminderCount={reminderCount} onOpenMemory={mode === 'life' ? () => void openMemory() : undefined}/>;
   const isMobileOrAndroid = typeof navigator !== 'undefined' && (/android|iphone|ipad|ipod/i.test(navigator.userAgent) || (typeof window !== 'undefined' && 'LoomaNative' in window) || (typeof window !== 'undefined' && window.innerWidth < 768));
   if (compact && !isMobileOrAndroid) return <div className="capsule-shell drag-region"><Companion compact state={state} mode={mode} name={settings.personaName} reminderCount={reminderCount} onToggle={() => void toggleCompact(false)} onOpenMemory={() => void openMemory()}/></div>;
-  return <div className={`app-shell ${mode === 'life' ? 'life-shell' : ''}`}>
+  return <div className={`app-shell ${mode === 'life' ? 'life-shell' : 'work-shell'}`}>
     <div className="workspace-content" inert={practiceOpen || trialInfoOpen}>
     <header className="app-header drag-region"><div className="app-header-left no-drag"><a className="wordmark" href="#" onClick={e => e.preventDefault()}>looma</a><div className={`space-switch ${mode === 'work' ? 'space-switch--work' : ''}`} aria-label="工作空间"><button className={mode === 'work' ? 'active' : ''} onClick={() => void switchMode('work')}><Briefcase size={11}/>工作态</button><button className={mode === 'life' ? 'active' : ''} onClick={() => void switchMode('life')}><Moon size={11}/>生活态</button></div></div><div className="header-tools no-drag"><button className="icon-btn" onClick={() => void openMemory()} aria-label="打开记忆中心"><BookOpen size={16}/></button><button className="icon-btn" onClick={() => void openSettings()} aria-label="打开设置"><Settings size={16}/></button>{window.electronAPI && !isMobileOrAndroid && <button className="icon-btn" onClick={() => void window.electronAPI!.minimizeWindow()} aria-label="最小化"><Minus size={16}/></button>}{window.electronAPI && <button className="icon-btn" onClick={() => void window.electronAPI!.closeWindow()} aria-label="退出应用"><X size={16}/></button>}</div></header>
     <main>{issue && <div className="app-alert" role="alert">{issue}{unknownCapture ? <button className="text-btn" disabled={committing} onClick={() => void saveCapture(unknownOriginalOnly.current)}>核查本次保存结果</button> : <button className="text-btn" onClick={async () => { try { if (restoreNeedsRead) { await dataImported(); } else { await Repository.refresh(mode); await refreshHome(); setIssue(''); } } catch { setIssue('暂未读取成功，资料仍保留。'); } }}>重新读取</button>}<button className="text-btn" disabled={unknownCapture} onClick={() => setIssue('')}>收起</button></div>}
-      {memoryOpen ? <><button className="text-btn" onClick={() => void closeMemory()}>← 返回当前空间</button><Suspense fallback={<p>正在打开记忆中心…</p>}><MemoryCenter key={mode} mode={mode} onNotice={setToast} modelEnabled={!!settings.memoryModelEnabled && !!connection?.enabled} onModelRecall={modelRecall} onEditBusiness={mode === 'work' ? editBusiness : undefined}/></Suspense></> : mode === 'work' ? <WorkBench onPractice={() => void openPractice()} onRetryDraft={() => { void flushDraft().then(() => setIssue('')).catch(() => setIssue('草稿暂未保存，原文仍在输入框中。')); }} projectLookup={projectLookup} draft={draftState?.draft || null} draftSaveState={draftState?.status || 'idle'} home={home} closure={closure} onDraftChange={patch => { stopModelRequest(); changeDraft(patch); }} onContinue={continueCapture} onResume={() => setClosure(null)} onOriginalOnly={() => void saveCapture(true)} onRebase={() => void reparse()} onResolveConflict={resolveConflict} onSetItemState={setItemState} onUndoEvent={eventId => void undo(eventId)} onOpenMemory={() => void openMemory()} onOpenClosure={setClosure} modelBusy={busy && !!requestRef.current} work={work} stats={stats} companion={companion} pending={pending} busy={committing || unknownCapture || restoreNeedsRead || (busy && !pending)} selectedId={selectedId} onSelect={setSelectedId} onPropose={propose} onChange={p => { stopModelRequest(); setPending(p); }} onConfirm={() => void saveCapture()} onDiscard={() => { stopModelRequest(); setPending(null); setIssue(''); }} onReparse={() => void reparse()} onManual={(ops, text) => void manual(ops, text)} onUndo={() => void undo()} onExport={async project => { try { const tasks: ProjectTaskItem[] = []; let cursor: string | undefined; do { const page = await Repository.query<ProjectTaskItem>('work', 'task', { relatedId: project.id, limit: 200, cursor }); tasks.push(...page.items); cursor = page.nextCursor || undefined; } while (cursor); if (modeRef.current === 'work') { setExportProject(project); setExportTasks(tasks); } } catch { setIssue('关联行动读取失败，请重试。'); } }} modelEnabled={!!connection?.enabled && !!connection?.configured} onCancel={() => { stopModelRequest(); setIssue('模型请求已取消，本地候选与原文已保留。'); }}/>
-        : <section className="life-workspace"><div className="life-tabs-wrapper"><nav className="life-tabs" aria-label="生活导航">{[['chat', '随口说'], ['cards', '生活卡片'], ['memory', '记忆']].map(([tab, label]) => <button key={tab} className={lifeTab === tab ? 'active' : ''} onClick={() => setLifeTab(tab)}>{label}</button>)}</nav></div><div className="life-panel" key={lifeTab}><Suspense fallback={<p className="muted small">正在打开生活空间…</p>}>
-          {lifeTab === 'chat' && <ChatPill messages={life.messages} settings={settings} mode="life" isLoading={busy} onSendMessage={sendLife} onInspectMutation={() => setLifeTab('cards')} onOpenCards={() => setLifeTab('cards')}/>}
+      {memoryOpen ? <><button className="text-btn" onClick={() => void closeMemory()}>← 返回当前空间</button><Suspense fallback={<p>正在打开记忆中心…</p>}><MemoryCenter key={mode} mode={mode} onNotice={setToast} modelEnabled={!!settings.memoryModelEnabled && !!connection?.enabled} onModelRecall={modelRecall} onEditBusiness={mode === 'work' ? editBusiness : undefined}/></Suspense></> : mode === 'work' ? <WorkBench onPractice={() => void openPractice()} onRetryDraft={() => { void flushDraft().then(() => setIssue('')).catch(() => setIssue('草稿暂未保存，原文仍在输入框中。')); }} projectLookup={projectLookup} draft={draftState?.draft || null} draftSaveState={draftState?.status || 'idle'} home={home} closure={closure} onDraftChange={patch => { stopModelRequest(); changeDraft(patch); }} onContinue={continueCapture} onResume={() => setClosure(null)} onOriginalOnly={() => saveCapture(true)} onRebase={() => void reparse()} onResolveConflict={resolveConflict} onSetItemState={setItemState} onSetConditionState={setConditionState} onUndoEvent={eventId => void undo(eventId)} onOpenMemory={() => void openMemory()} onOpenClosure={setClosure} modelBusy={busy && !!requestRef.current} work={work} stats={stats} companion={companion} pending={pending} busy={committing || unknownCapture || restoreNeedsRead || (busy && !pending)} selectedId={selectedId} onSelect={setSelectedId} onPropose={propose} onChange={p => { stopModelRequest(); setPending(p); }} onConfirm={() => void saveCapture()} onDiscard={() => { stopModelRequest(); setPending(null); setIssue(''); }} onReparse={() => void reparse()} onManual={(ops, text) => void manual(ops, text)} onUndo={() => void undo()} onExport={async project => { try { const tasks: ProjectTaskItem[] = []; let cursor: string | undefined; do { const page = await Repository.query<ProjectTaskItem>('work', 'task', { relatedId: project.id, limit: 200, cursor }); tasks.push(...page.items); cursor = page.nextCursor || undefined; } while (cursor); if (modeRef.current === 'work') { setExportProject(project); setExportTasks(tasks); } } catch { setIssue('关联行动读取失败，请重试。'); } }} modelEnabled={!!connection?.enabled && !!connection?.configured} onCancel={() => { stopModelRequest(); setIssue('模型请求已取消，本地候选与原文已保留。'); }}/>
+        : <section className="life-workspace"><div className="life-tabs-wrapper"><nav className="life-tabs" aria-label="生活导航">{[['chat', '随口说'], ['todos', '待办'], ['cards', '生活卡片'], ['memory', '记忆']].map(([tab, label]) => <button key={tab} className={lifeTab === tab ? 'active' : ''} onClick={() => setLifeTab(tab)}>{label}</button>)}</nav></div><div className="life-panel" key={lifeTab}><Suspense fallback={<p className="muted small">正在打开生活空间…</p>}>
+          {lifeTab === 'chat' && <ChatPill messages={life.messages} settings={settings} mode="life" isLoading={busy} onSendMessage={sendLife} draftText={lifeDraft} onDraftTextChange={(text, expected) => setLifeDraft(current => expected === undefined || current === expected ? text : current)} onInspectMutation={() => setLifeTab('cards')} onOpenCards={() => setLifeTab('cards')} pendingTodo={pendingTodoFloat} onApproveTodo={approveLifeTodo} onDismissPendingTodo={() => setPendingTodoFloat(null)} onOpenTodos={() => setLifeTab('todos')}/>}
+          {lifeTab === 'todos' && <TodoPanel key="life" space="life" focusId={todoFocus?.space === 'life' ? todoFocus.id : undefined} focusRequestId={todoFocus?.requestId} choices={todoChoices.filter(todo => todo.space === 'life')} choiceAction={todoChoiceAction} onChoiceDone={() => setTodoChoices([])} onError={setIssue}/>}
           {lifeTab === 'cards' && <LivingCardsBoard mode="life" onCompanionToast={recorded}/>}
           {lifeTab === 'memory' && <MemoryCenter mode="life" onNotice={setToast} modelEnabled={!!settings.memoryModelEnabled && !!connection?.enabled} onModelRecall={modelRecall}/>}
         </Suspense></div></section>}
+      {agentRetry?.space===mode&&<div className="notice"><span>原文已记下，自动整理尚未完成，不用重新输入。</span><button className="text-btn" disabled={busy} onClick={()=>void retryAgentCapture()}>重新整理这条</button><button className="text-btn" onClick={()=>setAgentRetry(null)}>先放着</button></div>}
+      {mode === 'work' && <TodoPanel key="work" space="work" focusId={todoFocus?.space === 'work' ? todoFocus.id : undefined} focusRequestId={todoFocus?.requestId} choices={todoChoices.filter(todo => todo.space === 'work')} choiceAction={todoChoiceAction} onChoiceDone={() => setTodoChoices([])} onError={setIssue}/>}
     </main>
     <footer className="app-footer"><span title={buildInfo.buildId}>LOOMA · {buildInfo.productVersion}</span><button className="text-btn" onClick={() => setTrialInfoOpen(true)}>版本与问题记录</button><button className="text-btn" onClick={() => void openSettings()}>设置与备份 <ArrowUpRight size={12}/></button></footer>
     {toast && <div className="app-toast" role="status">{toast}{mode === 'work' && undoEventId && <button className="text-btn" onClick={() => void undo(undoEventId)}>撤销这次操作</button>}</div>}
-    <SettingsModal isOpen={isSettingsOpen} settings={settings} onClose={() => setSettingsOpen(false)} onSaveSettings={s => Repository.saveSettings(s)} onConnectionChange={s => { stopModelRequest(); setConnection(s); }} onDataImported={dataImported}/>
+    <SettingsModal isOpen={isSettingsOpen} settings={settings} onClose={() => setSettingsOpen(false)} onSaveSettings={async s => { await TodoService.configure(!!s.remindersEnabled); await Repository.saveSettings(s); }} onConnectionChange={s => { stopModelRequest(); setConnection(s); }} onDataImported={dataImported}/>
     {exportProject && mode === 'work' && <AlignmentModal engagement={exportProject} tasks={exportTasks} onClose={() => setExportProject(null)} onNotice={setToast}/>}
     </div>
     <TrialInfoModal isOpen={trialInfoOpen} onClose={() => setTrialInfoOpen(false)} buildInfo={buildInfo} context={{ mode, phase: memoryOpen || (mode === 'life' && lifeTab === 'memory') ? 'memory' : mode === 'life' ? busy ? 'saving' : 'idle' : committing ? 'saving' : unknownCapture ? 'uncertain' : closure ? 'receipt' : pending ? 'review' : draftState?.draft.text.trim() ? 'draft' : 'idle', hasError: !!issue }}/>

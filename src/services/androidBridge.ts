@@ -1,3 +1,5 @@
+import type { AgentModelInput } from '../desktop';
+
 export interface LoomaAndroidNative {
   readClipboard(): string;
   setContentProtection(enabled: boolean): boolean;
@@ -6,8 +8,10 @@ export interface LoomaAndroidNative {
   saveModelConnection(payloadJson: string): string;
   clearModelConnection(): string;
   proposeModel(payloadJson: string): string;
+  captureAgentModel?(payloadJson: string): string;
   recallModel(payloadJson: string): string;
   notifyDue(count: number): boolean;
+  todoRequest?(payloadJson: string): string;
   minimizeApp(): void;
   closeApp(): void;
 }
@@ -30,8 +34,24 @@ export function sanitizeAndroidClipboard(text: unknown): string {
 
 export function createAndroidElectronAdapter(native: LoomaAndroidNative) {
   const quickCaptureListeners = new Set<(text: string) => void>();
+  const todoFocusListeners = new Set<(focus: {space: 'life'|'work'; id: string}) => void>();
+  let pendingFocus: {space: 'life'|'work'; id: string} | undefined;
 
   return {
+    todoRequest: async (command: any) => {
+      if (!native.todoRequest) throw new Error('当前 Android 安装包尚不支持后台待办，请更新安装包。');
+      return JSON.parse(native.todoRequest(JSON.stringify(command)) || '{"ok":false,"error":"待办响应为空"}');
+    },
+    onTodoFocus: (handler: (focus: {space: 'life'|'work'; id: string}) => void) => {
+      todoFocusListeners.add(handler);
+      if (pendingFocus) { const focus = pendingFocus; pendingFocus = undefined; queueMicrotask(() => { if (todoFocusListeners.has(handler)) handler(focus); else pendingFocus = focus; }); }
+      return () => { todoFocusListeners.delete(handler); };
+    },
+    emitTodoFocus: (focus: {space: 'life'|'work'; id: string}) => {
+      if (!focus || !['life','work'].includes(focus.space) || typeof focus.id !== 'string') return;
+      if (!todoFocusListeners.size) { pendingFocus = focus; return; }
+      for (const listener of todoFocusListeners) listener(focus);
+    },
     minimizeWindow: async () => { native.minimizeApp(); },
     closeWindow: async () => { native.closeApp(); },
     setCompact: async (compact: boolean) => ({ compact: !!compact }),
@@ -71,6 +91,13 @@ export function createAndroidElectronAdapter(native: LoomaAndroidNative) {
       if (raw.error) throw new Error(raw.error);
       return { content: typeof raw.content === 'string' ? raw.content : '' };
     },
+    captureAgentModel: async (input: AgentModelInput): Promise<{content: string}> => {
+      if (!native.captureAgentModel) throw new Error('当前 Android 安装包尚不支持随心记下增强，请更新安装包');
+      const raw = JSON.parse(native.captureAgentModel(JSON.stringify(input)) || '{}');
+      if (raw.error) throw new Error(raw.error);
+      if (typeof raw.content !== 'string' || !raw.content.trim() || raw.content.length > 100000) throw new Error('模型返回格式无效');
+      return {content: raw.content};
+    },
     recallModel: async (input: { requestId?: string; query: string; space: 'life' | 'work'; evidence: Array<{ id: string; kind: string; title: string; detail: string }> }) => {
       const raw = JSON.parse(native.recallModel(JSON.stringify(input)) || '{}');
       if (raw.error) throw new Error(raw.error);
@@ -100,5 +127,10 @@ export function installAndroidBridge(targetWindow: any = typeof window !== 'unde
   const adapter = createAndroidElectronAdapter(targetWindow.LoomaAndroid);
   targetWindow.electronAPI = adapter;
   targetWindow.__loomaDispatchClipboard = (text: string) => adapter.emitQuickCapture(text);
+  targetWindow.__loomaTodoFocus = (focus: {space: 'life'|'work'; id: string}) => adapter.emitTodoFocus(focus);
+  if (targetWindow.__loomaPendingTodoFocus) {
+    const focus = targetWindow.__loomaPendingTodoFocus; delete targetWindow.__loomaPendingTodoFocus;
+    adapter.emitTodoFocus(focus);
+  }
   return true;
 }

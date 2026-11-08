@@ -23,6 +23,28 @@ function load(name, react = React, repository = { query: async () => ({ items: [
       if (dependency === '../persistence/repository') return { Repository: repository };
       if (dependency === './ProposalReview') return { ProposalReview: load('ProposalReview', react, repository) };
       if (dependency === './ClosureReceipt') return { ClosureReceipt: load('ClosureReceipt', react, repository) };
+      if (dependency === './ProjectContinuation') return { ProjectContinuation: load('ProjectContinuation', react, repository) };
+      if (dependency === '../services/projectContinuation') {
+        const file = path.join(process.cwd(), 'src/services/projectContinuation.ts');
+        const compiledService = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: file }).outputText;
+        const m = { exports: {} };
+        vm.runInNewContext(compiledService, { module: m, exports: m.exports, console, require(dep) {
+          if (dep.includes('persistence-core.mjs')) return require('../shared/persistence-core.mjs');
+          return require(dep);
+        } });
+        return m.exports;
+      }
+      if (dependency === '../services/conditionIntents') {
+        const file = path.join(process.cwd(), 'src/services/conditionIntents.ts');
+        const compiledService = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: file }).outputText;
+        const m = { exports: {} };
+        vm.runInNewContext(compiledService, { module: m, exports: m.exports, Date, console, crypto, require(dep) {
+          if (dep === './storage') return { newId: prefix => `${prefix}-${crypto.randomUUID()}` };
+          if (dep.includes('persistence-core.mjs')) return require('../shared/persistence-core.mjs');
+          return require(dep);
+        } });
+        return m.exports;
+      }
       if (dependency === '../services/aiService') return { chinaTime: value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }), getDueTasks: tasks => tasks.filter(t => !t.done && Date.parse(t.dueAt) <= Date.now()) };
       if (dependency.endsWith('persistence-core.mjs')) return { eventMutations: event => event.mutations || (event.operations || []).map(op => ({ kind: op.target, id: op.entityId, before: op.before, after: op.after })) };
       return require(dependency);
@@ -74,6 +96,24 @@ test('continuation home keeps each group bounded and separates waiting from own 
   const markup = renderToStaticMarkup(React.createElement(component, props({ home })));
   assert.match(markup, /今日事项0/); assert.match(markup, /今日事项2/); assert.doesNotMatch(markup, /今日事项3/);
   assert.match(markup, /补充品牌素材/); assert.match(markup, /新增页面费用尚未谈定/);
+  assert.doesNotMatch(markup, /最近沟通|暂无/);
+});
+test('work home uses one empty summary and keeps draft and overdue entry points', () => {
+  const component = load('WorkBench');
+  const emptyHome = { today: [], overdue: [], waiting: [], questions: [], recent: [], counts: { today: 0, overdue: 0, waiting: 0, questions: 0 } };
+  const emptyWork = { ...work, engagements: [], tasks: [], followUps: [] };
+  const render = overrides => renderToStaticMarkup(React.createElement(component, props({ work: emptyWork, home: emptyHome, draft: null, ...overrides })));
+  const empty = render();
+  assert.match(empty, /第一条记录保存后/);
+  assert.equal((empty.match(/class="home-summary-empty"/g) || []).length, 1);
+  assert.doesNotMatch(empty, /今日暂无待办行动|暂无等待客户事项|暂无未定事项|暂无最近沟通记录/);
+  assert.match(render({ draft }), /继续整理.*第一条记录保存后/);
+  assert.match(render({ work }), /目前没有需要跟进的工作/);
+  const loading = render({ home: null });
+  assert.match(loading, /读取中/); assert.doesNotMatch(loading, /class="home-summary-empty"/);
+  const overdue = render({ draft, home: { ...emptyHome, overdue: [task], counts: { ...emptyHome.counts, overdue: 1 } } });
+  assert.match(overdue, /继续整理/); assert.match(overdue, /逾期未完/);
+  assert.doesNotMatch(overdue, /class="home-summary-empty"|今天要处理|最近沟通/);
 });
 test('capture input is controlled by the persistent draft and edits are handed to the draft owner', () => {
   const updates = []; const ui = harness('WorkBench'); let tree = ui.render(props({ onDraftChange: patch => updates.push(patch) }));
@@ -92,7 +132,7 @@ test('capture input is controlled by the persistent draft and edits are handed t
 test('starting a practice uses its own entry without replacing the real draft', () => {
   let practices = 0; const patches = [];
   const ui = harness('WorkBench'); const input = props({ onPractice: () => practices++, onDraftChange: patch => patches.push(patch) });
-  let tree = ui.render(input); find(tree, node => node.type === 'button' && text(node) === '随口记录').props.onClick();
+  let tree = ui.render(input); find(tree, node => node.type === 'button' && text(node) === '随心记下').props.onClick();
   tree = ui.render(input);
   const entry = find(tree, node => node.type === 'button' && /放心练习一次/.test(text(node)));
   assert.ok(entry); entry.props.onClick();
@@ -102,12 +142,20 @@ test('a definite task completion saves directly and leaves the user in the actio
   const calls = []; let manualCalls = 0;
   const ui = harness('WorkBench', { query: async (_space, kind) => ({ items: kind === 'task' ? [task] : [project], nextCursor: null }), get: async () => null });
   const input = props({ onSetItemState: async (...args) => calls.push(args), onManual: () => manualCalls++ });
-  let tree = ui.render(input); find(tree, node => node.type === 'button' && text(node) === '跟进行动').props.onClick();
+  let tree = ui.render(input); find(tree, node => node.type === 'button' && text(node) === '项目').props.onClick();
+  tree = ui.render(input);
+  const projectNav = find(tree, node => node.props?.className === 'work-sub-nav');
+  const actions = find(projectNav, node => node.type === 'button' && text(node) === '项目行动');
+  assert.ok(actions);
+  actions.props.onClick();
   tree = ui.render(input); await ui.effects(); tree = ui.render(input);
   const complete = find(tree, node => node.type === 'button' && node.props['aria-label'] === '完成发送首页原型'); assert.ok(complete);
   await complete.props.onClick(); tree = ui.render(input);
   assert.equal(calls.length, 1); assert.equal(calls[0][0], 'task'); assert.equal(calls[0][1].id, task.id); assert.equal(calls[0][2], true);
-  assert.equal(manualCalls, 0); assert.match(text(tree), /跟进行动/); assert.ok(find(tree, node => node.type === 'button' && node.props['aria-label'] === '完成发送首页原型'));
+  assert.equal(manualCalls, 0);
+  const activeTab = find(tree, node => node.type === 'button' && node.props.className === 'sub-tab active');
+  assert.equal(text(activeTab), '项目行动');
+  assert.ok(find(tree, node => node.type === 'button' && node.props['aria-label'] === '完成发送首页原型'));
 });
 test('review groups known changes, own actions, waiting and questions without inventing a client time', () => {
   const component = load('ProposalReview'); assert.equal(typeof component, 'function');
@@ -121,6 +169,22 @@ test('unresolved rebase conflicts block confirmation and expose the actual field
   const confirm = find(tree, node => node.type === 'button' && /确认并保存|确认收尾/.test(text(node))); assert.equal(confirm.props.disabled, true);
   const keep = find(tree, node => node.type === 'button' && /保留当前/.test(text(node))); assert.ok(keep); keep.props.onClick();
   assert.deepEqual(changes[0], ['budget-conflict', 'current']); assert.match(text(tree), /100000/);
+  assert.match(text(tree), /先解决.*冲突.*再保存/);
+});
+test('review summarizes operations and hides empty categories and routine editors', () => {
+  const component = load('ProposalReview');
+  const tree = component({ proposal: { ...proposal, operations: proposal.operations.filter(op => op.target === 'task') }, engagements: [project], onChange: noop, onConfirm: noop, onDiscard: noop, onReparse: noop });
+  assert.match(text(find(tree, node => node.props?.className === 'review-overview')), /新增 1 条行动/);
+  assert.equal(find(tree, node => node.props?.['aria-label'] === '等待客户'), undefined);
+  const editor = find(tree, node => node.type === 'details' && node.props.className === 'review-item-editor');
+  assert.ok(editor);
+  assert.equal(editor.props.open, undefined);
+});
+test('review surfaces project clarification and keeps confirm disabled', () => {
+  const component = load('ProposalReview');
+  const tree = component({ proposal: { ...proposal, clarification: { kind: 'project', message: '同客户有两个项目，请选择归属。' } }, engagements: [project], onChange: noop, onConfirm: noop, onDiscard: noop, onReparse: noop });
+  assert.match(text(find(tree, node => node.props?.className === 'review-blockers')), /同客户有两个项目/);
+  assert.equal(find(tree, node => node.type === 'button' && /确认并保存/.test(text(node))).props.disabled, true);
 });
 test('a persisted closure remains an internal receipt with open work and an explicit reminder boundary', () => {
   const component = load('ClosureReceipt'); assert.equal(typeof component, 'function');
@@ -167,4 +231,128 @@ test('a large receipt loads every explicitly referenced row in bounded batches',
   const receipt = find(tree, node => node.type?.name === 'ClosureReceipt');
   assert.ok(receipt); assert.equal(receipt.props.tasks.length, 205);
   assert.ok(calls.filter(call => call.kind === 'task').every(call => call.ids.length <= 200));
+});
+
+test('equal-revision restore invalidates project cards before old rows can be exported', async () => {
+  let identity = 'before', notify;
+  const ui = harness('WorkBench', {
+    getReadIdentity: () => identity, subscribe: listener => { notify = listener; return () => {}; },
+    get: async () => null,
+    query: async () => ({ items: [{ ...project, title: identity === 'before' ? '恢复前项目' : '恢复后项目' }], nextCursor: null }),
+  });
+  const input = props(); let tree = ui.render(input);
+  find(tree, node => node.type === 'button' && text(node) === '项目').props.onClick();
+  ui.render(input); await ui.effects(); tree = ui.render(input); assert.match(text(tree), /恢复前项目/);
+  assert.equal(typeof notify, 'function'); identity = 'after'; notify(); tree = ui.render(input);
+  assert.doesNotMatch(text(tree), /恢复前项目/);
+  await ui.effects(); tree = ui.render(input); assert.match(text(tree), /恢复后项目/);
+});
+test('freshly read project metadata replaces the opened copy in capture options', async () => {
+  const ui = harness('WorkBench', { get: async () => project, query: async () => ({ items: [project], nextCursor: null }) });
+  const input = props({ draft: { ...draft, text: '', selectedEngagementId: project.id } });
+  let tree = ui.render(input); find(tree, node => node.type === 'button' && text(node) === '项目').props.onClick();
+  ui.render(input); await ui.effects(); tree = ui.render(input);
+  find(tree, node => node.type === 'button' && text(node) === '详情').props.onClick(); tree = ui.render(input);
+  const continuation = find(tree, node => node.type?.name === 'ProjectContinuation'); assert.ok(continuation);
+  assert.equal(typeof continuation.props.onProjectLoaded, 'function');
+  continuation.props.onProjectLoaded({ ...project, clientName: '更新后的客户' });
+  continuation.props.onContinueProject(project.id); tree = ui.render(input);
+  const select = find(tree, node => node.type === 'select' && node.props['aria-label'] === '目标项目');
+  assert.match(text(select), /更新后的客户/); assert.doesNotMatch(text(select), /张三/);
+});
+test('work summary items display linked project and open project continuation in one click', () => {
+  const ui = harness('WorkBench', { get: async () => project, query: async () => ({ items: [project], nextCursor: null }) });
+  const home = { draft: null, today: [task], overdue: [], waiting: [waiting], questions: [question], recent: [], counts: { today: 1, overdue: 0, waiting: 1, questions: 1 } };
+  let tree = ui.render(props({ home, draft: null }));
+  const waitingCard = find(tree, node => node.type === 'article' && String(node.props?.className || '').includes('followup-row'));
+  assert.ok(waitingCard);
+  assert.match(text(waitingCard), /张三 · 官网改版/);
+  const openBtn = find(waitingCard, node => node.type === 'button' && text(node) === '查看项目');
+  assert.ok(openBtn);
+  openBtn.props.onClick();
+  tree = ui.render(props({ home, draft: null }));
+  const continuation = find(tree, node => node.type?.name === 'ProjectContinuation');
+  assert.ok(continuation);
+  assert.equal(continuation.props.projectId, project.id);
+});
+
+test('ProposalReview does not treat artifact drafts as editable memory facts', () => {
+  const ProposalReview = load('ProposalReview');
+  const artifact = { id: 'artifact', projectId: project.id, title: '报价草稿', content: '待核对内容' };
+  const tree = ProposalReview({ proposal: { ...proposal, operations: [
+    { target: 'artifact', entityId: artifact.id, before: null, after: artifact },
+  ] }, engagements: [project], onChange: noop, onConfirm: noop, onDiscard: noop, onReparse: noop });
+  assert.doesNotMatch(text(tree), /待记住的工作事实/);
+});
+
+test('ProposalReview and WorkBench render and manage M2 ConditionIntent candidates and ready highlights', async () => {
+  const ProposalReview = load('ProposalReview');
+  const cond = {
+    id: 'cond-1',
+    space: 'work',
+    conditionText: '陈总把首页素材发过来',
+    actionTitle: '整理第二版报价',
+    conditionKind: 'followup_resolved',
+    status: 'watching',
+    engagementId: project.id,
+    followUpId: waiting.id,
+    sourceMessageId: 'msg-1',
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  let changed = null;
+  const reviewProposal = {
+    id: 'prop-cond',
+    mode: 'work',
+    sourceMessageId: 'msg-1',
+    sourceText: '等陈总把首页素材发过来后，再整理第二版报价',
+    summary: '整理条件意图',
+    warnings: [],
+    operations: [
+      { target: 'followup', entityId: waiting.id, before: null, after: waiting },
+      { target: 'condition', entityId: cond.id, before: null, after: cond },
+    ],
+  };
+  const reviewTree = ProposalReview({
+    proposal: reviewProposal,
+    engagements: [project],
+    onChange: next => { changed = next; },
+    onConfirm: noop,
+    onDiscard: noop,
+    onReparse: noop,
+  });
+  assert.match(text(reviewTree), /条件跟进/);
+  assert.match(text(reviewTree), /陈总把首页素材发过来/);
+  assert.match(text(reviewTree), /整理第二版报价/);
+  const actionInput = find(reviewTree, node => node.type === 'input' && node.props['aria-label'] === '满足后下一步 2');
+  assert.ok(actionInput);
+  actionInput.props.onChange({ target: { value: '整理第三版报价' } });
+  assert.equal(changed.operations[1].after.actionTitle, '整理第三版报价');
+
+  const readyCond = { ...cond, status: 'ready', revision: 2, triggeredAt: 2, updatedAt: 2 };
+  const actionsCalled = [];
+  const ui = harness('WorkBench', { get: async () => project, query: async () => ({ items: [project], nextCursor: null }) });
+  const home = {
+    draft: null,
+    today: [],
+    overdue: [],
+    waiting: [],
+    questions: [],
+    conditions: [readyCond],
+    recent: [],
+    counts: { today: 0, overdue: 0, waiting: 0, questions: 0 },
+  };
+  const tree = ui.render(props({
+    home,
+    draft: null,
+    onSetConditionState: async (item, action) => { actionsCalled.push({ id: item.id, action }); },
+  }));
+  const readySection = find(tree, node => node.type === 'section' && node.props['aria-label'] === '条件已就绪');
+  assert.ok(readySection);
+  assert.match(text(readySection), /条件已就绪，可推进/);
+  const convertBtn = find(readySection, node => node.type === 'button' && text(node) === '转为项目行动');
+  assert.ok(convertBtn);
+  await convertBtn.props.onClick();
+  assert.deepEqual(actionsCalled, [{ id: 'cond-1', action: 'convert_to_task' }]);
 });

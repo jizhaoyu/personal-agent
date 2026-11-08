@@ -248,8 +248,8 @@ test('native notifications contain only a count and fail safely when unsupported
   }
   const { service } = fixture(t, { Notification: FakeNotification });
   assert.deepEqual(await service.notifyDue({ count: 3 }), { shown: true });
-  assert.equal(shown.body, '有 3 项待跟进事项，请打开工作台查看。');
-  assert.equal(shown.title, 'Looma 跟进提醒');
+  assert.equal(shown.body, '打开 Looma 查看待办');
+  assert.equal(shown.title, '有 3 条跟进事项等你查看');
   assert.deepEqual(await service.notifyDue({ count: 0 }), { shown: false });
   const unsupported = fixture(t, { Notification: { isSupported: () => false } });
   assert.deepEqual(await unsupported.service.notifyDue({ count: 3 }), { shown: false });

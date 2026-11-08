@@ -5,7 +5,7 @@ export const DEFAULT_PUBLIC_SETTINGS = Object.freeze({
   systemPrompt: '你是 Looma 客户跟进伴侣。整理用户提供的事实，不猜测预算、成交或承诺；变更必须由用户确认。',
   alwaysOnTop: false, modelEnabled: false, remindersEnabled: false, memoryModelEnabled: false,
 });
-export const RECORD_KINDS = Object.freeze(['message', 'event', 'engagement', 'task', 'memory', 'summary', 'expense', 'person', 'journal', 'custom', 'wallet', 'rpg', 'capture_draft', 'followup', 'closure']);
+export const RECORD_KINDS = Object.freeze(['message', 'event', 'engagement', 'task', 'memory', 'summary', 'expense', 'person', 'journal', 'custom', 'wallet', 'rpg', 'capture_draft', 'followup', 'condition', 'closure', 'todo', 'artifact']);
 const spaces = ['life', 'work'];
 const object = x => !!x && typeof x === 'object' && !Array.isArray(x);
 const str = x => typeof x === 'string';
@@ -17,7 +17,7 @@ const optional = (x, key, check) => x[key] === undefined || check(x[key]);
 const unique = xs => new Set(xs.map(x => x?.id)).size === xs.length;
 const status = x => ['active', 'superseded', 'retracted'].includes(x);
 const commonLife = ['expense', 'person', 'wallet', 'rpg'];
-const commonWork = ['engagement', 'task', 'capture_draft', 'followup', 'closure'];
+const commonWork = ['engagement', 'task', 'capture_draft', 'followup', 'condition', 'closure', 'artifact'];
 export const clone = x => JSON.parse(JSON.stringify(x));
 export function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -33,7 +33,7 @@ export function validateCaptureProposal(proposal) {
     proposal.mode === 'work' && str(proposal.sourceMessageId) && !!proposal.sourceMessageId && str(proposal.sourceText) && proposal.sourceText.length <= 12000 &&
     Number.isInteger(proposal.baseRevision) && proposal.baseRevision >= 0 && finite(proposal.createdAt) && strings(proposal.warnings) &&
     Array.isArray(proposal.operations) && proposal.operations.length <= 2000 && proposal.operations.every(op =>
-      only(op, ['target', 'entityId', 'before', 'after']) && ['engagement', 'task', 'memory', 'followup'].includes(op.target) &&
+      only(op, ['target', 'entityId', 'before', 'after']) && ['engagement', 'task', 'memory', 'followup', 'condition', 'artifact'].includes(op.target) &&
       validMutation('work', { kind: op.target, id: op.entityId, before: op.before, after: op.after })) &&
     optional(proposal, 'clarification', c => only(c, ['kind', 'message']) && c.kind === 'project' && str(c.message));
 }
@@ -43,7 +43,7 @@ function validateDraftProposal(proposal) {
   if (Array.isArray(candidate.operations)) candidate.operations = candidate.operations.map(op => {
     if (!object(op?.after)) return op;
     const after = { ...op.after };
-    const fields = op.target === 'engagement' ? ['clientName', 'title'] : ['task', 'followup'].includes(op.target) ? ['title'] : [];
+    const fields = op.target === 'engagement' ? ['clientName', 'title'] : ['task', 'followup'].includes(op.target) ? ['title'] : op.target === 'condition' ? ['conditionText', 'actionTitle'] : [];
     for (const field of fields) if (typeof after[field] === 'string' && !after[field].trim()) after[field] = '待核对';
     return { ...op, after };
   });
@@ -57,15 +57,18 @@ export function validateCaptureCommand(command) {
 export function captureRows(command) {
   const proposal = command.proposal;
   const mutations = proposal.operations.map(op => ({ kind: op.target, id: op.entityId, before: op.before, after: op.after }));
+  const conditionIds = mutations.filter(m => m.kind === 'condition').map(m => m.id);
   return { mutations, source: { id: proposal.sourceMessageId, role: 'user', content: proposal.sourceText, timestamp: proposal.createdAt },
     closure: { id: `closure-${proposal.id}`, mode: 'work', sourceMessageId: proposal.sourceMessageId, eventId: `event-${proposal.id}`,
       engagementIds: [...new Set(mutations.flatMap(m => [m.kind === 'engagement' ? m.id : undefined, m.after?.engagementId, m.before?.engagementId]).filter(Boolean))],
       taskIds: mutations.filter(m => m.kind === 'task').map(m => m.id), followUpIds: mutations.filter(m => m.kind === 'followup').map(m => m.id),
+      ...(conditionIds.length ? { conditionIds } : {}),
       confirmedAt: command.confirmedAt, ...(command.originalOnly ? { originalOnly: true } : {}) } };
 }
 export function workIndex(kind, data) {
   if (kind === 'task' && !data.done && data.dueAt) return { bucket: 'task', time: Date.parse(data.dueAt), sort: Date.parse(data.dueAt) };
   if (kind === 'followup' && data.status === 'open') return { bucket: data.kind, time: data.createdAt, sort: data.reviewAt ? Date.parse(data.reviewAt) : Number.MAX_VALUE };
+  if (kind === 'condition' && ['draft', 'watching', 'ready', 'paused'].includes(data.status)) return { bucket: 'condition', time: data.updatedAt, sort: data.status === 'ready' ? (data.triggeredAt || data.updatedAt) : data.updatedAt + 8640000000000 };
   if (kind === 'closure') return { bucket: 'closure', time: data.confirmedAt, sort: data.confirmedAt };
   return null;
 }
@@ -112,19 +115,43 @@ export function validateRecord(space, kind, x) {
   if (!spaces.includes(space) || !RECORD_KINDS.includes(kind) || !object(x) ||
       (space === 'work' && commonLife.includes(kind)) || (space === 'life' && commonWork.includes(kind))) return false;
   switch (kind) {
+    case 'todo': return base(x) && x.id.length <= 200 && only(x, ['id', 'space', 'title', 'status', 'createdAt', 'updatedAt', 'revision', 'dueAt', 'dueDate', 'needsTime', 'completedAt', 'notifiedRevision', 'lastNotifiedAt', 'sourceText', 'sourceKind', 'sourceTaskId', 'sourceFingerprint', 'sourceDone']) &&
+      x.space === space && str(x.title) && !!x.title.trim() && x.title.length <= 500 && ['suggested', 'pending', 'completed', 'cancelled'].includes(x.status) &&
+      finite(x.createdAt) && finite(x.updatedAt) && Number.isSafeInteger(x.revision) && x.revision > 0 &&
+      optional(x, 'dueAt', iso) && optional(x, 'dueDate', day) && optional(x, 'needsTime', v => typeof v === 'boolean') &&
+      optional(x, 'completedAt', finite) && optional(x, 'lastNotifiedAt', finite) && optional(x, 'notifiedRevision', v => Number.isSafeInteger(v) && v > 0 && v <= x.revision) &&
+      optional(x, 'sourceText', v => str(v) && v.length <= 12000) && optional(x, 'sourceKind', v => ['task', 'followup'].includes(v)) &&
+      optional(x, 'sourceTaskId', v => str(v) && !!v && v.length <= 200) && optional(x, 'sourceFingerprint', v => str(v) && v.length <= 2000) && optional(x, 'sourceDone', v => typeof v === 'boolean');
     case 'followup': return base(x) && only(x, ['id', 'kind', 'title', 'engagementId', 'status', 'sourceMessageId', 'createdAt', 'updatedAt', 'expectedDate', 'expectedAt', 'sourceDateText', 'reviewAt']) &&
       ['waiting', 'question'].includes(x.kind) && str(x.title) && !!x.title.trim() && ['open', 'resolved'].includes(x.status) && str(x.sourceMessageId) && !!x.sourceMessageId &&
       finite(x.createdAt) && finite(x.updatedAt) && optional(x, 'engagementId', str) && optional(x, 'expectedDate', day) && optional(x, 'expectedAt', iso) &&
       !(x.expectedDate && x.expectedAt) && optional(x, 'sourceDateText', str) && optional(x, 'reviewAt', iso);
+    case 'condition': return base(x) && only(x, ['id', 'space', 'engagementId', 'followUpId', 'conditionKind', 'conditionText', 'actionTitle', 'sourceMessageId', 'status', 'revision', 'triggeredAt', 'triggeredByEventId', 'dismissedRevision', 'createdAt', 'updatedAt']) &&
+      x.space === 'work' && ['followup_resolved', 'manual_confirm'].includes(x.conditionKind) &&
+      str(x.conditionText) && !!x.conditionText.trim() && str(x.actionTitle) && !!x.actionTitle.trim() && str(x.sourceMessageId) && !!x.sourceMessageId &&
+      ['draft', 'watching', 'ready', 'paused', 'completed', 'cancelled'].includes(x.status) &&
+      Number.isInteger(x.revision) && x.revision >= 1 && finite(x.createdAt) && finite(x.updatedAt) &&
+      optional(x, 'engagementId', str) && optional(x, 'followUpId', str) &&
+      optional(x, 'triggeredAt', finite) && optional(x, 'triggeredByEventId', str) &&
+      optional(x, 'dismissedRevision', value => Number.isInteger(value) && value >= 1) &&
+      (x.conditionKind !== 'followup_resolved' || (str(x.followUpId) && !!x.followUpId));
+    case 'artifact': return base(x) && only(x, ['id', 'space', 'projectId', 'conditionId', 'type', 'title', 'content', 'sourceSnapshot', 'version', 'status', 'reviewReason', 'createdAt', 'updatedAt']) &&
+      x.space === 'work' && str(x.projectId) && !!x.projectId && optional(x, 'conditionId', str) &&
+      ['proposal_brief', 'material_checklist', 'meeting_brief'].includes(x.type) && str(x.title) && !!x.title.trim() &&
+      str(x.content) && object(x.sourceSnapshot) && finite(x.sourceSnapshot.projectUpdatedAt) &&
+      ['tasksCount', 'followUpsCount', 'conditionsCount'].every(k => Number.isInteger(x.sourceSnapshot[k]) && x.sourceSnapshot[k] >= 0) &&
+      Number.isInteger(x.version) && x.version >= 1 && ['draft', 'needs_review', 'ready'].includes(x.status) &&
+      optional(x, 'reviewReason', str) && finite(x.createdAt) && finite(x.updatedAt);
     case 'capture_draft': return x.id === 'active-work' && only(x, ['id', 'sessionId', 'mode', 'text', 'selectedEngagementId', 'newClientName', 'newProjectTitle', 'sourceVersion', 'draftVersion', 'sourceMessageId', 'proposal', 'conflicts', 'status', 'updatedAt']) &&
       x.mode === 'work' && str(x.sessionId) && !!x.sessionId && str(x.text) && x.text.length <= 12000 && ['editing', 'review'].includes(x.status) && finite(x.updatedAt) &&
       Number.isInteger(x.sourceVersion) && x.sourceVersion >= 0 && Number.isInteger(x.draftVersion) && x.draftVersion >= 0 && str(x.sourceMessageId) && !!x.sourceMessageId &&
       ['selectedEngagementId', 'newClientName', 'newProjectTitle'].every(k => optional(x, k, str)) && optional(x, 'proposal', validateDraftProposal) &&
       (x.status !== 'review' || !!x.proposal) && (!x.proposal || (x.proposal.sourceMessageId === x.sourceMessageId && x.proposal.sourceText === x.text)) &&
       optional(x, 'conflicts', list => Array.isArray(list) && list.every(c => base(c) && only(c, ['id', 'target', 'entityId', 'field', 'original', 'current', 'proposed']) &&
-        ['engagement', 'task', 'memory', 'followup'].includes(c.target) && str(c.entityId) && str(c.field)));
-    case 'closure': return base(x) && only(x, ['id', 'mode', 'sourceMessageId', 'eventId', 'engagementIds', 'taskIds', 'followUpIds', 'confirmedAt', 'revertedAt', 'originalOnly']) && x.mode === 'work' &&
+        ['engagement', 'task', 'memory', 'followup', 'condition', 'artifact'].includes(c.target) && str(c.entityId) && str(c.field)));
+    case 'closure': return base(x) && only(x, ['id', 'mode', 'sourceMessageId', 'eventId', 'engagementIds', 'taskIds', 'followUpIds', 'conditionIds', 'confirmedAt', 'revertedAt', 'originalOnly']) && x.mode === 'work' &&
       str(x.sourceMessageId) && str(x.eventId) && ['engagementIds', 'taskIds', 'followUpIds'].every(k => strings(x[k]) && new Set(x[k]).size === x[k].length) &&
+      optional(x, 'conditionIds', list => strings(list) && new Set(list).size === list.length) &&
       finite(x.confirmedAt) && optional(x, 'revertedAt', finite) && optional(x, 'originalOnly', value => typeof value === 'boolean');
     case 'engagement': return base(x) && only(x, ['id', 'clientName', 'title', 'budgetAmount', 'stage', 'internalContext', 'shareableSummary', 'nextAction', 'updatedAt']) &&
       str(x.clientName) && !!x.clientName.trim() && str(x.title) && !!x.title.trim() && optional(x, 'budgetAmount', n => finite(n) && n >= 0) &&
@@ -192,9 +219,19 @@ export function validateTransaction(command, revision, getRecord) {
     staged.set(key, m.after);
   }
   for (const m of command.mutations) {
-    if (!['task', 'followup'].includes(m?.kind) || !m.after?.engagementId) continue;
+    if (!['task', 'followup', 'condition'].includes(m?.kind) || !m.after?.engagementId) continue;
     const key = `engagement:${m.after.engagementId}`;
     if (!(staged.has(key) ? staged.get(key) : getRecord('engagement', m.after.engagementId))) errors.push('待办关联的合作项目不存在。');
+  }
+  for (const m of command.mutations) {
+    if (m?.kind !== 'condition' || !m.after?.followUpId) continue;
+    const key = `followup:${m.after.followUpId}`;
+    if (!(staged.has(key) ? staged.get(key) : getRecord('followup', m.after.followUpId))) errors.push('条件关联的等待事项不存在。');
+  }
+  for (const m of command.mutations) {
+    if (m?.kind !== 'artifact' || !m.after?.projectId) continue;
+    const key = `engagement:${m.after.projectId}`;
+    if (!(staged.has(key) ? staged.get(key) : getRecord('engagement', m.after.projectId))) errors.push('产物关联的项目不存在。');
   }
   return [...new Set(errors)];
 }
@@ -216,6 +253,7 @@ export function recordAt(data) { return data.timestamp ?? data.confirmedAt ?? da
 export function recordText(kind, data) {
   if (kind === 'engagement') return [data.clientName, data.title, data.budgetAmount, data.stage, data.internalContext, data.shareableSummary, data.nextAction].filter(v => v !== undefined).join(' ');
   if (kind === 'event') return [data.sourceText, data.proposalId].join(' ');
+  if (kind === 'artifact') return [data.title, data.content, data.reviewReason].filter(v => v !== undefined).join(' ');
   const values = [];
   const collect = value => { if (typeof value === 'string' || typeof value === 'number') values.push(String(value)); else if (Array.isArray(value)) value.forEach(collect); };
   Object.values(data).forEach(collect);
@@ -267,11 +305,13 @@ export function makeBootstrap(meta, rows, stats) {
     } };
   const partition = snapshot.partitions[space];
   partition.revision = meta.revisions?.[space] || 0;
-  const mapping = { message: 'messages', event: 'events', memory: 'memories', summary: 'summaries', journal: 'journals', custom: 'customCards', engagement: 'engagements', task: 'tasks', person: 'persons', followup: 'followUps', closure: 'closures' };
+  const mapping = { message: 'messages', event: 'events', memory: 'memories', summary: 'summaries', journal: 'journals', custom: 'customCards', engagement: 'engagements', task: 'tasks', person: 'persons', followup: 'followUps', condition: 'conditions', artifact: 'artifacts', closure: 'closures' };
   for (const row of [...rows].filter(row => row.space === space).sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))) {
     if (row.kind === 'wallet') partition.wallet = { ...clone(row.data), entries: partition.wallet.entries };
     else if (row.kind === 'rpg') partition.rpg = clone(row.data);
     else if (row.kind === 'expense') partition.wallet.entries.push(clone(row.data));
+    else if (row.kind === 'condition' && space === 'work') (partition.conditions ||= []).push(clone(row.data));
+    else if (row.kind === 'artifact' && space === 'work') (partition.artifacts ||= []).push(clone(row.data));
     else if (mapping[row.kind] && Array.isArray(partition[mapping[row.kind]])) partition[mapping[row.kind]].push(clone(row.data));
   }
   return { snapshot, stats };

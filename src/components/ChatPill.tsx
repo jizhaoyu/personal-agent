@@ -4,8 +4,10 @@ import {
   RefreshCw,
   Zap,
   ArrowUpRight,
+  ListTodo,
+  CheckCircle2,
 } from 'lucide-react';
-import { Message, AppSettings, WorkspaceMode, StateMutationReceipt } from '../types';
+import { Message, AppSettings, WorkspaceMode, StateMutationReceipt, TodoRecord } from '../types';
 import { Character } from './Companion';
 
 interface ChatPillProps {
@@ -13,9 +15,15 @@ interface ChatPillProps {
   settings: AppSettings;
   mode: WorkspaceMode;
   isLoading: boolean;
-  onSendMessage: (text: string, attachments?: string[]) => void;
+  onSendMessage: (text: string, attachments?: string[]) => void | Promise<void>;
+  draftText?: string;
+  onDraftTextChange?: (text: string, expectedText?: string) => void;
   onInspectMutation: (mutation: StateMutationReceipt) => void;
   onOpenCards: () => void;
+  pendingTodo?: TodoRecord | null;
+  onApproveTodo?: (todo: TodoRecord) => Promise<void> | void;
+  onDismissPendingTodo?: () => void;
+  onOpenTodos?: () => void;
 }
 
 export const ChatPill: React.FC<ChatPillProps> = ({
@@ -24,13 +32,65 @@ export const ChatPill: React.FC<ChatPillProps> = ({
   mode,
   isLoading,
   onSendMessage,
+  draftText,
+  onDraftTextChange,
   onInspectMutation,
   onOpenCards,
+  pendingTodo,
+  onApproveTodo,
+  onDismissPendingTodo,
+  onOpenTodos,
 }) => {
-  const [inputText, setInputText] = useState('');
+  const [localInput, setLocalInput] = useState('');
+  const [todoConfirmed, setTodoConfirmed] = useState(false);
+  const [todoFading, setTodoFading] = useState(false);
+  const [todoBusy, setTodoBusy] = useState(false);
+  const inputText = draftText ?? localInput;
+  const latestInput = useRef(inputText);
+  latestInput.current = inputText;
+  const sending = useRef(false);
+  const composing = useRef(false);
+  const [sendPending, setSendPending] = useState(false);
+  const [sendError, setSendError] = useState('');
+  const setInputText = (value: string, expectedText?: string) => {
+    latestInput.current = value;
+    if (onDraftTextChange) onDraftTextChange(value, expectedText); else setLocalInput(value);
+  };
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const isWork = mode === 'work';
+
+  useEffect(() => {
+    if (pendingTodo) {
+      setTodoConfirmed(false);
+      setTodoFading(false);
+      setTodoBusy(false);
+    }
+  }, [pendingTodo?.id]);
+
+  const handleConfirmTodo = async () => {
+    if (!pendingTodo || todoBusy) return;
+    setTodoBusy(true);
+    try {
+      if (onApproveTodo) await onApproveTodo(pendingTodo);
+      setTodoConfirmed(true);
+      setTimeout(() => {
+        setTodoFading(true);
+      }, 400);
+      setTimeout(() => {
+        onDismissPendingTodo?.();
+      }, 1200);
+    } catch {
+      setTodoBusy(false);
+    }
+  };
+
+  const handleDismissTodo = () => {
+    setTodoFading(true);
+    setTimeout(() => {
+      onDismissPendingTodo?.();
+    }, 400);
+  };
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -38,16 +98,35 @@ export const ChatPill: React.FC<ChatPillProps> = ({
     }
   }, [messages, isLoading]);
 
-  const handleSend = () => {
-    if (!inputText.trim() || isLoading) return;
-    onSendMessage(inputText.trim());
-    setInputText('');
+  const handleSend = async () => {
+    if (!inputText.trim() || isLoading || sending.current || composing.current) return;
+    const original = inputText;
+    sending.current = true; setSendPending(true); setSendError('');
+    try {
+      await onSendMessage(original.trim());
+      if (latestInput.current === original) setInputText('', original);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : String(error) || '记录未保存，原文仍保留。');
+    } finally { sending.current = false; setSendPending(false); }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (composing.current || e.nativeEvent?.isComposing || e.nativeEvent?.keyCode === 229) return;
+    if (pendingTodo && !todoConfirmed) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        void handleConfirmTodo();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleDismissTodo();
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   };
 
@@ -106,7 +185,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             <div className="space-y-1">
               <h4 className="text-sm font-semibold text-[#3d2b1f]">随口说，无需刻意排版</h4>
               <p className="text-xs text-[#7c6248] max-w-xs leading-relaxed">
-                例如：“我今天攒了30块钱”、“喝了3杯水”、“今天花了25吃午饭”、“妈妈不吃香菜”…
+                例如：“我今天攒了30块钱”、“今天花了25吃午饭”、“妈妈不吃香菜”…
               </p>
             </div>
           </div>
@@ -188,6 +267,88 @@ export const ChatPill: React.FC<ChatPillProps> = ({
         )}
       </div>
 
+      {sendError && <p className="px-3 text-xs text-red-600" role="alert">{sendError}</p>}
+
+      {/* 识别到待办动作时的灵动胶囊浮窗 (Pill Capsule) */}
+      {pendingTodo && (
+        <div
+          className={`mx-3 mb-1.5 p-2 rounded-2xl border backdrop-blur-xl shadow-lg ring-1 transition-all duration-800 ease-out flex items-center justify-between gap-2.5 ${
+            todoFading ? 'opacity-0 -translate-y-2 pointer-events-none scale-95' : 'opacity-100 translate-y-0 scale-100'
+          } ${
+            isWork
+              ? 'bg-slate-800/95 border-emerald-500/30 ring-emerald-500/20 text-slate-100'
+              : 'bg-[#fffdf8]/95 border-amber-300/80 ring-amber-400/20 text-[#23293a] shadow-amber-950/10'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 transition-transform ${
+              todoConfirmed
+                ? 'bg-emerald-500/20 text-emerald-600 scale-110'
+                : isWork ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-[#a8681a]'
+            }`}>
+              {todoConfirmed ? <CheckCircle2 size={16} /> : <ListTodo size={15} />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold text-[#8a5410] tracking-tight">待办提醒</span>
+                {pendingTodo.dueAt ? (
+                  <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded-md bg-amber-100/90 text-amber-800">
+                    {new Date(pendingTodo.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                ) : pendingTodo.dueDate ? (
+                  <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded-md bg-amber-100/90 text-amber-800">
+                    {pendingTodo.dueDate}
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-[#7c6248]/70">时间待定</span>
+                )}
+                {!todoConfirmed && (
+                  <span className="hidden sm:inline-block text-[9px] font-mono text-slate-400 dark:text-slate-500 bg-black/5 dark:bg-white/10 px-1.5 py-0.2 rounded">Tab 确认 · Esc 忽略</span>
+                )}
+              </div>
+              <p className="text-xs font-semibold truncate mt-0.5 text-[#23293a] dark:text-slate-200">{pendingTodo.title}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {todoConfirmed ? (
+              <span className="text-xs font-semibold text-emerald-600 px-2 py-1 flex items-center gap-1 animate-pulse">
+                <CheckCircle2 size={13} /> 已记录待办
+              </span>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleConfirmTodo}
+                  disabled={todoBusy}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer transition-all shadow-xs"
+                >
+                  <CheckCircle2 size={13} />
+                  <span>确认</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDismissTodo}
+                  className="px-2 py-1 rounded-lg text-xs text-[#7c6248] hover:bg-black/5 active:scale-95 cursor-pointer transition-all"
+                >
+                  忽略
+                </button>
+              </>
+            )}
+            {onOpenTodos && (
+              <button
+                type="button"
+                onClick={onOpenTodos}
+                className="text-[11px] text-[#8a5410] hover:underline px-1 cursor-pointer"
+                title="去待办列表查看"
+              >
+                待办 →
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 输入框 */}
       <div
         className={`p-2.5 border-t flex items-end gap-2 ${
@@ -205,6 +366,8 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => { composing.current = true; }}
+            onCompositionEnd={() => { composing.current = false; }}
             placeholder="随手记录…"
             rows={1}
             className={`w-full resize-none text-[12.5px] bg-transparent focus:outline-none max-h-20 leading-5 ${
@@ -217,7 +380,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
 
         <button
           onClick={handleSend}
-          disabled={isLoading || !inputText.trim()}
+          disabled={isLoading || sendPending || !inputText.trim()}
           aria-label="发送文字记录"
           className={`p-2 rounded-xl text-white disabled:opacity-40 transition-colors shadow-xs cursor-pointer ${
             isWork ? 'bg-blue-600 hover:bg-blue-500' : 'bg-[#a8681a] hover:bg-[#8a5410]'

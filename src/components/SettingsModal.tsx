@@ -3,6 +3,7 @@ import { X, Download, Upload, KeyRound } from 'lucide-react';
 import type { AppSettings } from '../types';
 import { Repository } from '../persistence/repository';
 import { clearLegacyCredential } from '../services/legacyConnection';
+import { TodoService } from '../services/todos';
 
 interface Props { settings: AppSettings; isOpen: boolean; onClose(): void; onSaveSettings(settings: AppSettings): Promise<void>; onDataImported(): void | Promise<void>; onConnectionChange?(status: ModelConnectionStatus): void }
 export function SettingsModal({ settings, isOpen, onClose, onSaveSettings, onDataImported, onConnectionChange }: Props) {
@@ -13,10 +14,17 @@ export function SettingsModal({ settings, isOpen, onClose, onSaveSettings, onDat
   const [busy, setBusy] = useState(false);
   const [importText, setImportText] = useState('');
   const [replaceAccepted, setReplaceAccepted] = useState(false);
+  const [reminderCapability, setReminderCapability] = useState<{ background: boolean; notifications: string; exactAlarms: string; enabled: boolean } | null>(null);
   useEffect(() => {
     if (!isOpen) return;
     setForm(settings); setKey(''); setFeedback(''); setImportText(''); setReplaceAccepted(false);
+    setReminderCapability(null);
+    let active = true;
+    const refreshCapability = () => { void TodoService.capabilities().then(value => { if (active) setReminderCapability(value); }).catch(() => { if (active) setFeedback('提醒能力暂未读到，请重新打开设置核对。'); }); };
+    refreshCapability();
+    window.addEventListener?.('looma:todo-capabilities', refreshCapability);
     window.electronAPI?.modelStatus().then(s => { setStatus(s); setForm(f => ({ ...f, apiBaseUrl: s.apiBaseUrl || f.apiBaseUrl, modelName: s.modelName || f.modelName, modelEnabled: s.enabled })); }).catch(() => setFeedback('无法读取桌面模型配置，仍可使用本地记录。'));
+    return () => { active = false; window.removeEventListener?.('looma:todo-capabilities', refreshCapability); };
   }, [isOpen]);
   if (!isOpen) return null;
   async function save() {
@@ -27,10 +35,15 @@ export function SettingsModal({ settings, isOpen, onClose, onSaveSettings, onDat
         setStatus(s); setKey(''); onConnectionChange?.(s);
       }
       await onSaveSettings(form);
+      setReminderCapability(await TodoService.capabilities());
       await window.electronAPI?.setAlwaysOnTop(form.alwaysOnTop);
       setFeedback('设置已保存。');
     } catch (error) { setFeedback(`${error instanceof Error ? error.message : '设置保存失败。'} 请重新打开设置核对，部分连接配置可能已保存。`); }
     finally { setBusy(false); }
+  }
+  async function requestReminderPermissions() {
+    try { setReminderCapability(await TodoService.requestPermissions()); setFeedback('已重新读取系统权限；尚未授予的权限可在系统设置中开启。'); }
+    catch { setFeedback('系统权限请求未完成，请重试。'); }
   }
   async function backup() {
     try {
@@ -95,8 +108,9 @@ export function SettingsModal({ settings, isOpen, onClose, onSaveSettings, onDat
         <h3>使用偏好</h3>
         <label>伴侣名称<input value={form.personaName} onChange={e => setForm(f => ({ ...f, personaName: e.target.value }))}/></label>
         <label className="check-label"><input type="checkbox" checked={form.alwaysOnTop} onChange={e => setForm(f => ({ ...f, alwaysOnTop: e.target.checked }))}/>桌面窗口置顶</label>
-        <label className="check-label"><input type="checkbox" checked={!!form.remindersEnabled} onChange={e => setForm(f => ({ ...f, remindersEnabled: e.target.checked }))}/>应用开启时发送到期通知（仅显示事项数量）</label>
-        <p className="muted small">时区：Asia/Shanghai。退出后不提醒，重新打开时汇总到期事项。</p>
+        <label className="check-label"><input type="checkbox" checked={!!form.remindersEnabled} onChange={e => setForm(f => ({ ...f, remindersEnabled: e.target.checked }))}/>开启待办与后台提醒（关闭不删除记录）</label>
+        <p className="muted small">时区：Asia/Shanghai。明确建立提醒或确认建议时会开启提醒；完成后保留历史并取消通知。</p>
+        {reminderCapability ? <div className="notice"><p className="small">{reminderCapability.background ? '支持系统后台提醒。Windows关闭窗口后留在托盘；明确退出、关机或系统强行停止后不保证送达。' : '浏览器仅管理本地待办，不支持系统后台提醒。'}</p><p className="small">通知权限{reminderCapability.notifications === 'granted' ? '已授予' : reminderCapability.notifications === 'unsupported' ? '不支持' : '未授予'} · {reminderCapability.enabled ? '调度已开启' : '调度已关闭'}{!['granted', 'not-required', 'unsupported'].includes(reminderCapability.exactAlarms) ? ' · 精确闹钟权限未授予' : ''}</p>{reminderCapability.notifications !== 'granted' && reminderCapability.notifications !== 'unsupported' && <button className="soft-btn" disabled={busy} onClick={requestReminderPermissions}>开启通知权限</button>}{reminderCapability.background && !['granted', 'not-required', 'unsupported'].includes(reminderCapability.exactAlarms) && <button className="soft-btn" disabled={busy} onClick={requestReminderPermissions}>开启精确闹钟权限</button>}</div> : <p className="muted small">正在读取真实提醒能力…</p>}
         <hr/><h3>本地业务备份</h3><p className="muted small">包含生活与工作资料、手记、自定义卡和变更历史，不含 API Key。业务数据采用本地逻辑分区，并非加密保险箱。</p>
         <p className="muted small">桌面使用SQLite逐条保存；原始档案保留到你主动删除。桌面备份为完整JSONL文件，浏览器为JSON，均不受旧版5MB限制。</p>
         <div className="button-row"><button className="soft-btn" onClick={() => void backup()}><Download size={14}/>导出备份</button>{!window.electronAPI?.importDataBackup && <label className="soft-btn file-label"><Upload size={14}/>选择备份<input type="file" accept=".json,application/json" onChange={e => { void importFile(e.target.files?.[0]).catch(() => setFeedback('文件读取失败。')); e.target.value = ''; }}/></label>}</div>

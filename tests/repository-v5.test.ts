@@ -31,6 +31,14 @@ function fixture() {
   } });
   return { repository, state };
 }
+test('restoring equal-revision data still changes the read identity for project and source panels', async () => {
+  const { repository } = fixture(); await repository.initialize();
+  const before = repository.getReadIdentity(), revision = repository.getCurrent().partitions.work.revision;
+  assert.equal(await repository.importAllData(await repository.exportAllData()), true);
+  assert.equal(repository.getCurrent().partitions.work.revision, revision);
+  assert.notEqual(repository.getReadIdentity(), before);
+});
+
 test('an acknowledged capture stays committed when refreshing its view fails', async () => {
   const { repository, state } = fixture(); await repository.initialize(); state.badRefresh = true;
   assert.equal(typeof (repository as any).commitCapture, 'function');
@@ -149,6 +157,7 @@ function settingsHarness(repository: any, electronAPI?: any) {
       if (dependency === 'lucide-react') return new Proxy({}, { get: () => () => null });
       if (dependency === '../persistence/repository') return { Repository: repository };
       if (dependency === '../services/legacyConnection') return { clearLegacyCredential() {} };
+      if (dependency === '../services/todos') return { TodoService: { capabilities: async () => ({ background: true, enabled: false, notifications: 'granted', exactAlarms: 'not-required' }) } };
       return require(dependency);
     } }, { filename });
   const text = (node: any): string => node == null || typeof node === 'boolean' ? '' : typeof node === 'string' || typeof node === 'number' ? String(node) : Array.isArray(node) ? node.map(text).join('') : text(node.props?.children);

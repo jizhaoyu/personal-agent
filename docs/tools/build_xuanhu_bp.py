@@ -16,8 +16,9 @@ from docx.shared import Cm, Pt, RGBColor
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_MD = ROOT / "docs" / "04-悬壶_面向AI智能体的可验证隐私数据底座_商业计划书(定稿版).md"
-OUTPUT_DOCX = ROOT / "悬壶_面向AI智能体的可验证隐私数据底座_商业计划书(修订定稿版).docx"
-OUTPUT_SECTION_DOCX = ROOT / "悬壶_PersonalAI_产品创新哲学与技术路径.docx"
+WORD_DIR = ROOT / "docs" / "word"
+OUTPUT_DOCX = WORD_DIR / "悬壶_面向AI智能体的可验证隐私数据底座_商业计划书(修订定稿版).docx"
+OUTPUT_SECTION_DOCX = WORD_DIR / "悬壶_PersonalAI_产品创新哲学与技术路径.docx"
 
 NAVY = "183344"
 TEAL = "136E6A"
@@ -228,6 +229,7 @@ def main():
         print(f"Source file not found: {SOURCE_MD}")
         return
 
+    WORD_DIR.mkdir(parents=True, exist_ok=True)
     text = SOURCE_MD.read_text(encoding="utf-8")
     lines = text.splitlines()
 

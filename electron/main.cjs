@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, screen, safeStorage, Notification, dialog, globalShortcut, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, safeStorage, Notification, dialog, globalShortcut, clipboard, Tray, Menu, nativeImage, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { getWindowTarget, isTrustedSender, createDesktopServices } = require('./desktop-services.cjs');
+const { createTodoWindowGuard } = require(path.join(__dirname, 'todo-window.cjs'));
 
 // === 1. 运行时反调试与未授权参数熔断自检 (Anti-Debugging & Tamper Defense) ===
 const DANGEROUS_FLAGS = ['--remote-debugging-port', '--inspect', '--inspect-brk', '--remote-debugging-pipe'];
@@ -22,6 +23,10 @@ let importing = false;
 let expandedBounds;
 let compact = false;
 let closeGuard;
+let todoDesktop;
+let tray;
+let actuallyQuitting = false;
+let pendingTodoFocus = null;
 
 const target = getWindowTarget({
   nodeEnv: process.env.NODE_ENV,
@@ -92,7 +97,12 @@ function registerHandlers() {
   });
   handle('store:request', command => {
     if (importing && !['init', 'bootstrap', 'get', 'list', 'stats'].includes(command?.op)) return { ok: false, error: '正在恢复完整备份，请稍候再修改资料。' };
-    return persistence ? persistence.request(command) : { ok: false, error: persistenceInitError || '本地资料库尚未打开' };
+    const request = () => persistence ? persistence.request(command) : { ok: false, error: persistenceInitError || '本地资料库尚未打开' };
+    return todoDesktop ? todoDesktop.runExclusive(request) : request();
+  });
+  handle('todo:request', command => {
+    if (importing) return { ok: false, error: '正在恢复完整备份，请稍候再修改待办。' };
+    return todoDesktop ? todoDesktop.request(command) : { ok: false, error: persistenceInitError || '待办后台尚未打开' };
   });
   handle('store:export', async () => {
     if (importing) throw new Error('正在恢复完整备份，请稍候再导出。');
@@ -108,7 +118,10 @@ function registerHandlers() {
     if (result.canceled || !result.filePaths[0]) return { canceled: true };
     if (importing) throw new Error('已有完整备份正在恢复，请稍候。');
     importing = true;
+    todoDesktop?.suspend();
     try {
+      // Drain earlier native writes before taking over the database for restore.
+      await todoDesktop?.flush();
       let staged;
       const databasePath = path.join(app.getPath('userData'), 'looma.sqlite');
       const stagePath = `${databasePath}.recovery-${randomUUID()}`;
@@ -134,7 +147,7 @@ function registerHandlers() {
       }
       if (!restored.ok) throw new Error(restored.error || '备份校验失败，原数据未替换');
       return { canceled: false };
-    } finally { importing = false; }
+    } finally { importing = false; await todoDesktop?.resume().catch(() => {}); }
   });
   handle('window:resize', size => {
     if (!size || !Number.isFinite(size.width) || !Number.isFinite(size.height)) throw new Error('窗口尺寸无效');
@@ -154,6 +167,7 @@ function registerHandlers() {
   handle('model:clear', () => services.clearModelConnection());
   handle('model:migrateLegacy', value => services.migrateLegacyConnection(value));
   handle('model:propose', value => services.proposeModel(value));
+  handle('model:captureAgent', value => services.captureAgentModel(value));
   handle('model:recall', async value => {
     const settings = await persistence.request({ op: 'settings' });
     return services.recallModel({ ...value, authorized: settings.memoryModelEnabled === true });
@@ -168,6 +182,44 @@ function registerHandlers() {
       return '';
     }
   });
+}
+
+function showMainWindow(focus) {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show(); mainWindow.focus();
+  if (focus) {
+    if (mainWindow.webContents.isLoading()) pendingTodoFocus = focus;
+    else mainWindow.webContents.send('todo:focus', focus);
+  }
+}
+
+function quitAfterSave() {
+  actuallyQuitting = true;
+  todoDesktop?.stop();
+  app.quit();
+}
+
+function createTray() {
+  if (process.platform !== 'win32' || !Tray || !Menu || !nativeImage) return;
+  // A local generated bitmap works in packaged builds without external icon files.
+  const pixels = Buffer.alloc(16 * 16 * 4);
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+    const i = (y * 16 + x) * 4, ink = x >= 4 && x <= 6 && y >= 3 && y <= 12 || y >= 10 && y <= 12 && x >= 4 && x <= 12;
+    pixels[i] = ink ? 248 : 68; pixels[i + 1] = ink ? 248 : 103; pixels[i + 2] = ink ? 248 : 89; pixels[i + 3] = 255;
+  }
+  tray = new Tray(nativeImage.createFromBitmap(pixels, { width: 16, height: 16 }));
+  tray.setToolTip('Looma · 待办后台运行');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开 Looma', click: () => showMainWindow() },
+    { label: '打开待办', click: () => { void (async () => {
+      const result = await persistence?.request({ op: 'init' });
+      showMainWindow({ space: result?.mode === 'life' ? 'life' : 'work', id: '' });
+    })(); } },
+    { type: 'separator' },
+    { label: '退出并停止提醒', click: () => closeGuard ? closeGuard.requestQuit() : quitAfterSave() },
+  ]));
+  tray.on('double-click', () => showMainWindow());
 }
 
 function registerGlobalShortcuts() {
@@ -239,51 +291,26 @@ function createWindow() {
   }
 
   const window = mainWindow;
-  let rendererReady = false, allowClose = false, pendingId = null, closeTimer = null, prompting = false;
-  const clearCloseTimer = () => { if (closeTimer !== null) clearTimeout(closeTimer); closeTimer = null; };
-  const closeSavedWindow = () => {
-    clearCloseTimer(); pendingId = null; allowClose = true;
-    if (!window.isDestroyed()) window.close();
-  };
-  const askBeforeDiscard = async () => {
-    if (!pendingId || prompting || window.isDestroyed()) return;
-    prompting = true; clearCloseTimer();
-    try {
+  const guard = createTodoWindowGuard({
+    window, hideToTray: process.platform === 'win32' && !!tray,
+    onQuit: quitAfterSave,
+    ...(typeof setTimeout === 'function' ? { setTimeout, clearTimeout } : {}),
+    askDiscard: async () => {
       const result = await dialog.showMessageBox(window, {
         type: 'warning', title: '草稿尚未确认保存',
         message: '尚未收到草稿保存完成的回执。',
         detail: '返回应用可继续整理或重试保存。若选择退出，只能恢复最近一次成功保存的草稿。',
         buttons: ['返回应用', '放弃未保存内容并退出'], defaultId: 0, cancelId: 0, noLink: true,
       });
-      if (result.response === 1) closeSavedWindow();
-    } finally {
-      pendingId = null; prompting = false;
-    }
-  };
-  closeGuard = {
-    setReady: ready => { rendererReady = ready; },
-    confirm: ({ requestId, success }) => {
-      if (pendingId !== requestId || prompting || window.isDestroyed()) return { closed: false };
-      if (success) { closeSavedWindow(); return { closed: true }; }
-      void askBeforeDiscard().catch(() => {});
-      return { closed: false };
+      return result.response === 1;
     },
-  };
-  window.on('close', event => {
-    if (allowClose || !rendererReady || window.webContents.isDestroyed() || window.webContents.isCrashed()) return;
-    event.preventDefault();
-    if (pendingId) return;
-    pendingId = randomUUID();
-    closeTimer = setTimeout(() => { void askBeforeDiscard().catch(() => {}); }, 4000);
-    window.webContents.send('window:prepareClose', pendingId);
   });
-  window.webContents.on('did-start-loading', () => {
-    rendererReady = false; pendingId = null; clearCloseTimer();
-  });
-  window.webContents.on('render-process-gone', () => {
-    const wasClosing = pendingId !== null;
-    rendererReady = false; pendingId = null; clearCloseTimer();
-    if (wasClosing && !window.isDestroyed()) window.close();
+  closeGuard = guard;
+  window.on('close', guard.onClose);
+  window.webContents.on('did-start-loading', guard.onLoading);
+  window.webContents.on('render-process-gone', guard.onRendererGone);
+  window.webContents.on('did-finish-load', () => {
+    if (pendingTodoFocus) { window.webContents.send('todo:focus', pendingTodoFocus); pendingTodoFocus = null; }
   });
   expectedUrl = target.type === 'file' ? pathToFileURL(target.value).href : target.value;
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -293,7 +320,7 @@ function createWindow() {
   mainWindow.webContents.on('will-attach-webview', event => event.preventDefault());
   if (target.type === 'file') mainWindow.loadFile(target.value);
   else mainWindow.loadURL(target.value);
-  window.on('closed', () => { clearCloseTimer(); closeGuard = null; mainWindow = null; });
+  window.on('closed', () => { guard.dispose(); closeGuard = null; mainWindow = null; });
 }
 
 app.setAppUserModelId('com.looma.desktop');
@@ -302,18 +329,32 @@ app.whenReady().then(async () => {
   try { persistence = await createPersistence({ filePath: path.join(app.getPath('userData'), 'looma.sqlite') }); }
   catch { persistenceInitError = '本地资料库暂时无法读取，原文件已保留。请使用有效备份恢复。'; }
   services = createDesktopServices({ userDataPath: app.getPath('userData'), safeStorage, Notification });
+  if (Notification?.isSupported) {
+    const { createTodoDesktop } = require(path.join(__dirname, 'todo-desktop.cjs'));
+    todoDesktop = await createTodoDesktop({ getPersistence: () => persistence, Notification, onFocus: showMainWindow });
+  }
   registerHandlers();
+  createTray();
   createWindow();
   registerGlobalShortcuts();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showMainWindow();
   });
+  powerMonitor?.on('resume', () => { void todoDesktop?.refresh().catch(() => {}); });
+  powerMonitor?.on('unlock-screen', () => { void todoDesktop?.refresh().catch(() => {}); });
+});
+app.on('before-quit', event => {
+  if (actuallyQuitting) return;
+  event.preventDefault();
+  if (closeGuard) closeGuard.requestQuit();
+  else quitAfterSave();
 });
 app.on('will-quit', () => {
   try { globalShortcut.unregisterAll(); } catch (e) {}
+  todoDesktop?.stop(); tray?.destroy();
   persistence?.close();
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform !== 'darwin' && !tray) app.quit();
 });

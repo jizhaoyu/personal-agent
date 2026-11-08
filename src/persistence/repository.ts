@@ -2,14 +2,15 @@ import type {
   AppSnapshotV3, WorkspaceMode, PublicAppSettings, AppSettings, Message, MemoryItem, JournalArtifact,
   WalletCardState, RpgStatusCardState, PersonProfile, CrmDealItem, ProjectTaskItem, CustomLivingCard,
   ProposedChangeSet, WorkOperation, MutationResult, StateMutationReceipt, WorkPartition, LifePartition,
-  CaptureDraft, CaptureCommitResult, ClosureRecord, FollowUpItem, WorkHome,
+  CaptureDraft, CaptureCommitResult, ClosureRecord, FollowUpItem, ConditionIntent, WorkHome,
 } from '../types';
 import { StorageService, SNAPSHOT_KEY, newId } from '../services/storage';
 import { shanghaiDateKey } from '../services/dates';
 import { extractClientNames } from '../services/stateEngine';
+import { evaluateFollowUpTransition, transitionConditionIntent, convertConditionToTaskOperations, type ConditionLifecycleAction } from '../services/conditionIntents';
 import { createIndexedDbBackend } from './indexedDb';
 import type { PersistenceBackend, RecordKind } from './indexedDb';
-import { DEFAULT_PUBLIC_SETTINGS, makeBootstrap, sameValue, searchTerms, flattenV3 } from '../../shared/persistence-core.mjs';
+import { DEFAULT_PUBLIC_SETTINGS, makeBootstrap, sameValue, searchTerms, flattenV3, validateRecord, recordAt } from '../../shared/persistence-core.mjs';
 
 export type AppSnapshotV5 = Omit<AppSnapshotV3, 'schemaVersion'> & { schemaVersion: 5 };
 /** Source compatibility for the v4 UI adapters; persisted/current snapshots are v5. */
@@ -23,7 +24,8 @@ const emptyCurrent = (): AppSnapshotV4 => makeBootstrap({ settings: DEFAULT_PUBL
 const onlyPublicSettings = (settings: AppSettings) => Object.fromEntries(Object.keys(DEFAULT_PUBLIC_SETTINGS).filter(key => settings[key] !== undefined).map(key => [key, settings[key]]));
 
 /** The production API returns bounded windows. Full archives are only traversed by explicit backup / maintenance flows. */
-export function createRepository(backend: PersistenceBackend, readLegacy = () => StorageService.getSnapshot()) {
+export function createRepository(backend: PersistenceBackend, readLegacy = () => StorageService.getSnapshot(), nativeTodo = () =>
+  typeof window !== 'undefined' && window.LoomaAndroid ? window.electronAPI?.todoRequest : undefined) {
   let current = emptyCurrent();
   let initialized: Promise<Bootstrap> | undefined;
   let stats: any = {};
@@ -33,6 +35,7 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
   let acceptedMetadataSequence = 0;
   let dataEpoch = 0;
   let restoreWarning: string | undefined;
+  let restoring = false;
   const captures = new Map<string, { signature: string; intent: string; command: any; promise?: Promise<CaptureCommitResult>; uncertain?: boolean; completed?: boolean }>();
   const listeners = new Set<() => void>();
   const emit = () => { for (const listener of listeners) { try { listener(); } catch { /* UI cannot invalidate a committed write. */ } } };
@@ -67,6 +70,9 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
       return initialized;
     },
     getCurrent(): AppSnapshotV4 { return current; },
+    /** Invalidates read-only projections even when a restore preserves the business revision. */
+    getReadIdentity(): string { return `${dataEpoch}:${current.partitions.work.revision}`; },
+    isRestoring(): boolean { return restoring; },
     getStats() { return stats; },
     getRestoreWarning() { return restoreWarning; },
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -199,9 +205,38 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
     },
     async setItemState(kind: 'task' | 'followup', item: ProjectTaskItem | FollowUpItem, done: boolean): Promise<CaptureCommitResult> {
       const batchId = newId('explicit-action');
-      const after = kind === 'task' ? { ...item, done } : { ...item, status: done ? 'resolved' : 'open', updatedAt: Date.now() };
+      const now = Date.now(); const after = kind === 'task' ? { ...item, done } : { ...item, status: done ? 'resolved' : 'open', updatedAt: now };
       try {
-        const result: any = await api.transaction('work', [{ kind, id: item.id, before: item, after }], { id: batchId, event: true, sourceText: kind === 'task' ? done ? '用户明确标记行动完成' : '用户明确重新打开行动' : done ? '用户标记跟进项已处理' : '用户重新打开跟进项' });
+        const mutations: RecordMutation[] = [{ kind, id: item.id, before: item, after }];
+        if (kind === 'followup') {
+          let relatedConds: ConditionIntent[] = [];
+          try { relatedConds = (await api.query<ConditionIntent>('work', 'condition', { relatedId: item.id, limit: 50 })).items; } catch { relatedConds = current.partitions.work.conditions || []; }
+          for (const op of evaluateFollowUpTransition(relatedConds, item as FollowUpItem, after as FollowUpItem, now, `event-${batchId}`)) {
+            mutations.push({ kind: 'condition', id: op.entityId, before: op.before, after: op.after });
+          }
+        }
+        const result: any = await api.transaction('work', mutations, { id: batchId, event: true, sourceText: kind === 'task' ? done ? '用户明确标记行动完成' : '用户明确重新打开行动' : done ? '用户标记跟进项已处理' : '用户重新打开跟进项' });
+        return result.ok ? { outcome: 'committed', eventId: `event-${batchId}`, refreshWarning: result.refreshWarning } : { outcome: 'rejected', error: result.error };
+      } catch {
+        try { const event: any = await api.get('work', 'event', `event-${batchId}`); if (event) return { outcome: 'committed', eventId: event.id, refreshWarning: '操作已保存，视图可能需要刷新。' }; } catch {}
+        return { outcome: 'unknown', error: '操作结果暂时无法确认，请先重新读取，勿重复操作。' };
+      }
+    },
+    async setConditionState(item: ConditionIntent, action: ConditionLifecycleAction | 'convert_to_task'): Promise<CaptureCommitResult> {
+      const batchId = newId('condition-action'), now = Date.now();
+      try {
+        const latest = (await api.get<ConditionIntent>('work', 'condition', item.id)) || item;
+        let mutations: RecordMutation[] = [];
+        if (action === 'convert_to_task') {
+          let tasks: ProjectTaskItem[] = [];
+          try { tasks = latest.engagementId ? (await api.query<ProjectTaskItem>('work', 'task', { relatedId: latest.engagementId, limit: 50 })).items : current.partitions.work.tasks; } catch { tasks = current.partitions.work.tasks; }
+          mutations = convertConditionToTaskOperations(latest, tasks, now).map(op => ({ kind: op.target, id: op.entityId, before: op.before, after: op.after }));
+        } else {
+          const after = transitionConditionIntent(latest, action, now, `event-${batchId}`);
+          if (!sameValue(latest, after)) mutations = [{ kind: 'condition', id: latest.id, before: latest, after }];
+        }
+        if (!mutations.length) return { outcome: 'committed', eventId: `event-${batchId}` };
+        const result: any = await api.transaction('work', mutations, { id: batchId, event: action !== 'dismiss_highlight', sourceMessageId: latest.sourceMessageId, sourceText: `条件跟进操作（${action}）：${latest.actionTitle}` });
         return result.ok ? { outcome: 'committed', eventId: `event-${batchId}`, refreshWarning: result.refreshWarning } : { outcome: 'rejected', error: result.error };
       } catch {
         try { const event: any = await api.get('work', 'event', `event-${batchId}`); if (event) return { outcome: 'committed', eventId: event.id, refreshWarning: '操作已保存，视图可能需要刷新。' }; } catch {}
@@ -290,7 +325,7 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
     },
     async undo(space: WorkspaceMode, eventId?: string): Promise<MutationResult> { return api.request({ op: 'undo', space, ...(eventId ? { eventId } : {}) }); },
     async getParseContext(text: string, selectedId?: string): Promise<WorkPartition> {
-      const partition: WorkPartition = { revision: 0, messages: [], memories: [], journals: [], customCards: [], events: [], processedProposalIds: [], engagements: [], tasks: [], followUps: [], closures: [] };
+      const partition: WorkPartition = { revision: 0, messages: [], memories: [], journals: [], customCards: [], events: [], processedProposalIds: [], engagements: [], tasks: [], followUps: [], conditions: [], closures: [] };
       const tokens = searchTerms(text).filter(term => [...term].length >= 2).slice(0, 24);
       const names = extractClientNames(text).slice(0, 200);
       const pages = await Promise.all([...(names.length ? [api.query('work', 'engagement', { names, limit: 200 })] : []), ...tokens.map(query => api.query('work', 'engagement', { query, limit: 20 }))]);
@@ -301,6 +336,8 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
       partition.tasks = tasks.flatMap(page => page.items).slice(0, 200);
       const followUps = await Promise.all(partition.engagements.map(project => api.query<FollowUpItem>('work', 'followup', { relatedId: project.id, limit: 50 })));
       partition.followUps = followUps.flatMap(page => page.items).slice(0, 200);
+      const conditions = await Promise.all(partition.engagements.map(project => api.query<ConditionIntent>('work', 'condition', { relatedId: project.id, limit: 50 })));
+      partition.conditions = conditions.flatMap(page => page.items).slice(0, 200);
       await api.refresh('work'); partition.revision = current.partitions.work.revision; return partition;
     },
     async updateLifeAtomically(update: (life: LifePartition) => StateMutationReceipt[], sourceMessageId?: string, contextText?: string): Promise<StateMutationReceipt[]> {
@@ -330,9 +367,18 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
       await api.initialize();
       const data = await backend.request({ op: 'exportSnapshot' });
       if (data?.ok === false || !Array.isArray(data?.records)) throw new Error('完整备份读取失败。');
+      const port = nativeTodo();
+      if (port) {
+        const result = await port({ op: 'list' });
+        if (!result?.ok || !Array.isArray(result.todos) || result.todos.some((t: any) => !validateRecord(t.space, 'todo', t))) throw new Error('后台待办备份读取失败。');
+        data.records = [...data.records.filter((row: any) => row.kind !== 'todo'), ...result.todos.map((todo: any) => ({ space: todo.space, kind: 'todo', id: todo.id, data: todo, at: recordAt(todo) }))];
+      }
       return JSON.stringify({ version: 'looma-v5', ...data });
     },
     async importAllData(json: string): Promise<boolean> {
+      if (restoring) return false;
+      restoring = true; dataEpoch++; initialized = undefined; captures.clear();
+      partitionRefreshSequence.life++; partitionRefreshSequence.work++;
       restoreWarning = undefined;
       let acknowledged = false;
       try {
@@ -340,7 +386,36 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
         const incoming = data?.schemaVersion === 3 ? flattenV3(data) : ['looma-v4', 'looma-v5'].includes(data?.version) ? data : null;
         if (!incoming) return false;
         // Recovery intentionally bypasses initialize: a corrupt legacy snapshot must not prevent restoring a valid backup.
-        const result = await backend.request({ op: 'restore', records: incoming.records, applied: incoming.applied || [], settings: incoming.settings, mode: incoming.mode, revisions: incoming.revisions, snapshotRevision: incoming.snapshotRevision });
+        const command = { op: 'restore', records: incoming.records, applied: incoming.applied || [], settings: incoming.settings, mode: incoming.mode, revisions: incoming.revisions, snapshotRevision: incoming.snapshotRevision };
+        const port = nativeTodo();
+        let result: any;
+        if (port) {
+          if (!Array.isArray(incoming.records)) return false;
+          const rows = incoming.records.filter((row: any) => row?.kind === 'todo'), keys = new Set();
+          for (const row of rows) {
+            const key = `${row.space}:${row.id}`;
+            if (Object.keys(row).some(k => !['space','kind','id','data','at'].includes(k)) || row.id !== row.data?.id || !Number.isFinite(row.at) || !validateRecord(row.space,'todo',row.data) || keys.has(key)) return false;
+            keys.add(key);
+          }
+          const previous = await backend.request({ op: 'exportSnapshot' }), old = await port({ op: 'list' }), capabilities = await port({ op: 'capabilities' });
+          if (previous?.ok === false || !Array.isArray(previous?.records) || !old?.ok || !Array.isArray(old.todos)) return false;
+          const checked = async (c: any) => { const r = await port(c); if (!r?.ok) throw new Error(r?.error || '后台待办恢复失败'); return r; };
+          await checked({ op: 'configure', enabled: false });
+          try {
+            // The regular backend validates all remaining records before its atomic replacement.
+            result = await backend.request({ ...command, records: incoming.records.filter((row: any) => row.kind !== 'todo') });
+            if (!result?.ok) throw new Error(result?.error || '业务资料恢复失败');
+            await checked({ op: 'replaceAll', todos: rows.map((row: any) => row.data) });
+            await checked({ op: 'configure', enabled: incoming.settings.remindersEnabled === true });
+          } catch {
+            // Android uses two stores. Compensate both before reporting a failed import.
+            const rollback = await backend.request({ ...previous, op: 'restore' });
+            const reverted = await port({ op: 'replaceAll', todos: old.todos });
+            await port({ op: 'configure', enabled: capabilities.enabled === true });
+            if (!rollback?.ok || !reverted?.ok) restoreWarning = '恢复未完成，回滚也未完全确认。请保留备份并重开应用核对，勿重复导入。';
+            invalidateAfterRestore(); return false;
+          }
+        } else result = await backend.request(command);
         if (!result.ok) return false;
         acknowledged = true;
         invalidateAfterRestore(); active = incoming.mode;
@@ -348,6 +423,8 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
       } catch {
         if (acknowledged) { restoreWarning = restoredReadWarning; return true; }
         return false;
+      } finally {
+        restoring = false; emit();
       }
     },
   };

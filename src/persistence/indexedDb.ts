@@ -5,7 +5,7 @@ import {
 } from '../../shared/persistence-core.mjs';
 import type { WorkspaceMode } from '../types';
 
-export type RecordKind = 'message' | 'event' | 'engagement' | 'task' | 'memory' | 'summary' | 'expense' | 'person' | 'journal' | 'custom' | 'wallet' | 'rpg' | 'capture_draft' | 'followup' | 'closure';
+export type RecordKind = 'message' | 'event' | 'engagement' | 'task' | 'memory' | 'summary' | 'expense' | 'person' | 'journal' | 'custom' | 'wallet' | 'rpg' | 'capture_draft' | 'followup' | 'condition' | 'closure' | 'todo' | 'artifact';
 export interface PersistedRow { space: WorkspaceMode; kind: RecordKind; id: string; data: any; at: number }
 export interface PersistenceBackend { request(command: any): Promise<any> }
 type Meta = { ready: boolean; settings: any; mode: WorkspaceMode; revisions: { life: number; work: number }; snapshotRevision: number; stats: any; fingerprint?: string };
@@ -28,12 +28,12 @@ const rangeFor = (space: string, kind: string, cursor?: string) => {
   if (value && (!Number.isFinite(value.at) || typeof value.id !== 'string')) throw new Error('分页游标无效。');
   return IDBKeyRange.bound([space, kind, MIN, ''], [space, kind, value?.at ?? MAX, value?.id ?? '\uffff'], false, !!value);
 };
-function relations(data: any): string[] { return [...new Set([...(data.sourceIds || []), ...(data.engagementIds || []), ...(data.taskIds || []), ...(data.followUpIds || []), data.sourceMessageId, data.engagementId, data.supersedesId, data.eventId].filter(Boolean))] as string[]; }
+function relations(data: any): string[] { return [...new Set([...(data.sourceIds || []), ...(data.engagementIds || []), ...(data.taskIds || []), ...(data.followUpIds || []), ...(data.conditionIds || []), data.sourceMessageId, data.engagementId, data.followUpId, data.supersedesId, data.eventId].filter(Boolean))] as string[]; }
 function indexed(row: PersistedRow) {
   const agenda = row.space === 'work' ? workIndex(row.kind, row.data) : null;
   return { ...clone(row), relatedKeys: relations(row.data).map(id => encoded([row.space, row.kind, id])),
     workBucket: agenda?.bucket, workTime: agenda?.time, workSort: agenda?.sort,
-    nameKeys: [...new Set([row.data.clientName, row.data.name, row.data.title, row.data.subject].filter(value => typeof value === 'string' && value.trim()))]
+    nameKeys: [...new Set([row.data.clientName, row.data.name, row.data.title, row.data.subject, row.data.actionTitle].filter(value => typeof value === 'string' && value.trim()))]
       .map(value => encoded([row.space, row.kind, normalized(value)])) };
 }
 function updateStats(meta: Meta, row: PersistedRow, before: any | null) {
@@ -56,16 +56,16 @@ async function writeRow(tx: IDBTransaction, row: PersistedRow, before: any, meta
   else {
     tx.objectStore('records').put(indexed(row));
     const terms = [...searchTerms(recordText(row.kind, row.data)), ...relations(row.data).map(id => `@related:${id}`),
-      ...[row.data.clientName, row.data.name, row.data.title, row.data.subject].filter(value => typeof value === 'string' && value.trim()).map(value => `@name:${normalized(value)}`)];
+      ...[row.data.clientName, row.data.name, row.data.title, row.data.subject, row.data.actionTitle].filter(value => typeof value === 'string' && value.trim()).map(value => `@name:${normalized(value)}`)];
     for (const term of new Set(terms)) tx.objectStore('terms').put({ space: row.space, kind: row.kind, id: row.id, term, at: row.at });
   }
   updateStats(meta, row, before);
 }
 async function checkRemovedProjectLinks(tx: IDBTransaction, space: WorkspaceMode, mutations: any[]) {
   for (const id of new Set(mutations.filter(m => m.kind === 'engagement' && m.after === null).map(m => m.id))) {
-    for (const kind of ['task', 'followup']) {
+    for (const kind of ['task', 'followup', 'condition']) {
       const children = await collect(tx.objectStore('records').index('byRelated'), IDBKeyRange.only(encoded([space, kind, id])), 1);
-      if (children.length) throw new Error('项目仍有关联事项，未保存任何更改。');
+      if (children.length) throw new Error('项目仍有关联事项，未保存任何更改。'); } } { for (const id of new Set(mutations.filter(m => m.kind === 'followup' && m.after === null).map(m => m.id))) { const children = await collect(tx.objectStore('records').index('byRelated'), IDBKeyRange.only(encoded([space, 'condition', id])), 1); if (children.length) throw new Error('条件关联的等待事项不存在，未保存任何更改。');
     }
   }
 }
@@ -187,16 +187,16 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
     const store = tx.objectStore('records');
     const range = (bucket: string, low = MIN, high = MAX, open = false) => IDBKeyRange.bound(['work', bucket, low, ''], ['work', bucket, high, open ? '' : '\uffff'], false, open);
     const group = async (bucket: string, selected: IDBKeyRange, reverse = false) => ({
-      items: (await collect(store.index(bucket === 'waiting' || bucket === 'question' ? 'byWorkSort' : 'byWorkTime'), selected, limit, reverse ? 'prev' : 'next')).map(row => row.data),
+      items: (await collect(store.index(bucket === 'waiting' || bucket === 'question' || bucket === 'condition' ? 'byWorkSort' : 'byWorkTime'), selected, limit, reverse ? 'prev' : 'next')).map(row => row.data),
       count: await wrap(store.index('byWorkTime').count(selected)),
     });
-    const [today, overdue, waiting, questions, recent, draft] = await Promise.all([
+    const [today, overdue, waiting, questions, conditions, recent, draft] = await Promise.all([
       group('task', range('task', start, end, true)), group('task', range('task', MIN, start, true)),
-      group('waiting', range('waiting')), group('question', range('question')), group('closure', range('closure'), true),
+      group('waiting', range('waiting')), group('question', range('question')), group('condition', range('condition')), group('closure', range('closure'), true),
       wrap<any>(store.get(key('work', 'capture_draft', 'active-work'))),
     ]);
-    return { draft: draft?.data || null, today: today.items, overdue: overdue.items, waiting: waiting.items, questions: questions.items, recent: recent.items,
-      counts: { today: today.count, overdue: overdue.count, waiting: waiting.count, questions: questions.count } };
+    return { draft: draft?.data || null, today: today.items, overdue: overdue.items, waiting: waiting.items, questions: questions.items, conditions: conditions.items, recent: recent.items,
+      counts: { today: today.count, overdue: overdue.count, waiting: waiting.count, questions: questions.count, conditions: conditions.count } };
   }
   return { async request(command: any) {
     const db = await database();
@@ -249,7 +249,7 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
               (!command.originalOnly && (!sameValue(draft.proposal, p) || draft.conflicts?.length))) throw new Error('草稿已改变或仍有冲突，请重新核对。');
           const { mutations, source, closure } = captureRows(command);
           const existing = new Map<string, any>();
-          const targets = mutations.flatMap(m => [[m.kind, m.id], ...(m.after?.engagementId ? [['engagement', m.after.engagementId]] : [])]);
+          const targets = mutations.flatMap(m => [[m.kind, m.id], ...(m.after?.engagementId ? [['engagement', m.after.engagementId]] : []), ...(m.after?.followUpId ? [['followup', m.after.followUpId]] : [])]);
           await Promise.all(targets.map(async ([kind, id]) => { const row: any = await wrap(tx.objectStore('records').get(key('work', kind, id))); existing.set(`${kind}:${id}`, row?.data || null); }));
           if (mutations.length) {
             const errors = validateTransaction({ op: 'transaction', space: 'work', id: p.id, baseRevision: p.baseRevision, mutations }, meta.revisions.work, (kind, id) => existing.get(`${kind}:${id}`) || null);
@@ -283,7 +283,7 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
           }
           const existing = new Map<string, any>();
           if (!Array.isArray(command.mutations)) throw new Error('变更批次格式无效。');
-          const targets = command.mutations.flatMap(mutation => [[mutation.kind, mutation.id], ...(mutation.after?.engagementId ? [['engagement', mutation.after.engagementId]] : [])]);
+          const targets = command.mutations.flatMap(mutation => [[mutation.kind, mutation.id], ...(mutation.after?.engagementId ? [['engagement', mutation.after.engagementId]] : []), ...(mutation.after?.followUpId ? [['followup', mutation.after.followUpId]] : [])]);
           await Promise.all(targets.map(async ([kind, id]) => { const row: any = await wrap(tx.objectStore('records').get(key(command.space, kind, id))); existing.set(`${kind}:${id}`, row?.data || null); }));
           const errors = validateTransaction(command, meta.revisions[command.space], (kind, id) => existing.get(`${kind}:${id}`) || null);
           if (errors.length) { result = { ok: false, error: errors.join(' ') }; break; }
@@ -380,16 +380,17 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
         }
         case 'restore': {
           if (!Array.isArray(command.records) || !validateSettings(command.settings) || !['life', 'work'].includes(command.mode)) throw new Error('备份结构无效，当前资料未替换。');
-          const ids = new Set<string>(); const engagements = new Set<string>();
+          const ids = new Set<string>(); const engagements = new Set<string>(); const followups = new Set<string>();
           for (const row of command.records) {
             const identifier = encoded(key(row.space, row.kind, row.id));
             if (!row || typeof row !== 'object' || Object.keys(row).some(field => !['space', 'kind', 'id', 'data', 'at'].includes(field)) ||
                 !validateRecord(row.space, row.kind, row.data) || !Number.isFinite(row.at) || typeof row.id !== 'string' || !row.id ||
                 (['wallet', 'rpg'].includes(row.kind) && row.id !== row.kind) ||
                 (!['wallet', 'rpg'].includes(row.kind) && row.id !== row.data.id) || ids.has(identifier)) throw new Error('备份记录校验失败，当前资料未替换。');
-            ids.add(identifier); if (row.kind === 'engagement') engagements.add(row.id);
+            ids.add(identifier); if (row.kind === 'engagement') engagements.add(row.id); if (row.kind === 'followup') followups.add(row.id);
           }
-          if (command.records.some(row => ['task', 'followup'].includes(row.kind) && row.data.engagementId && !engagements.has(row.data.engagementId))) throw new Error('备份待办关联项目缺失。');
+          if (command.records.some(row => ['task', 'followup', 'condition'].includes(row.kind) && row.data.engagementId && !engagements.has(row.data.engagementId))) throw new Error('备份待办关联项目缺失。');
+          if (command.records.some(row => row.kind === 'condition' && row.data.followUpId && !followups.has(row.data.followUpId))) throw new Error('备份条件关联等待项缺失。');
           if (command.applied !== undefined && !Array.isArray(command.applied)) throw new Error('备份批次标记无效。');
           const applied = (command.applied || []).map(normalizeApplied), appliedKeys = new Set();
           for (const mark of applied) { const id = encoded([mark.space, mark.id]); if (appliedKeys.has(id)) throw new Error('备份含重复批次标记。'); appliedKeys.add(id); }

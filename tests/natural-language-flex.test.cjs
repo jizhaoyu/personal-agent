@@ -30,6 +30,7 @@ function loadModule(relPath) {
 }
 
 const { StateEngine } = loadModule('src/services/stateEngine.ts');
+const { validateTransaction } = require('../shared/persistence-core.mjs');
 
 function emptyLife() {
   return {
@@ -44,6 +45,70 @@ function emptyLife() {
     rpg: { energy: 70, waterCups: 0, weightKg: 0, targetWeightKg: 60, moodBuff: '平静', streakDays: 0 },
   };
 }
+
+test('life ledger records only affirmed events, each in one category', () => {
+  const cases = [
+    ['奖金到账500元', [['income',500]]],
+    ['报销64元，财务还没打给我', []],
+    ['假如地铁花了17元就贵了', []],
+    ['我姐赚了280块，不是我的收入', []],
+    ['没花45块', []],
+    ['退款39元，还没到账，不过午饭确实花了26元', [['expense',26]]],
+    ['工资到账8,500元', [['income',8500]]],
+    ['早饭18元，地铁也花了18元', [['expense',18],['expense',18]]],
+    ['我今天实付了26元买书，平台补贴还没到账', [['expense',26]]],
+    ['收到红包20元，晚饭花了18元', [['expense',18],['income',20]]],
+    ['我的退税到账62.5元', [['income',62.5]]],
+    ['发了年终奖800元，已经到卡上了', [['income',800]]],
+    ['二手书卖了42元，钱已收', [['income',42]]],
+  ];
+  for(const [text,wanted] of cases){
+    const life=emptyLife();
+    StateEngine.mutateLifeDraft(text,life);
+    assert.deepEqual(Array.from(life.wallet.entries,e=>[e.type,e.amount]).sort(),wanted.sort(),text);
+  }
+});
+
+test('water reports leave legacy status untouched and independent expenses still commit',()=>{
+  const life=emptyLife();
+  life.rpg.waterCups=2;
+  const prior=structuredClone(life);
+  for(const input of ['喝水3杯','喝了500ml水','补水一杯','我没喝两杯水，只是倒了两杯']){
+    assert.deepEqual(StateEngine.mutateLifeDraft(input,life),[]);
+    assert.deepEqual(life,prior);
+  }
+  const receipts=StateEngine.mutateLifeDraft('喝了两杯水，午饭花了28元',life);
+  assert.deepEqual(life.rpg,prior.rpg);
+  assert.equal(life.wallet.entries[0].amount,28);
+  assert.ok(receipts.every(r=>r.targetCardType==='wallet'));
+});
+
+test('a preference update and an expense form one schema-valid transaction',()=>{
+  const life=emptyLife();
+  StateEngine.mutateLifeDraft('我喝咖啡只喝无糖拿铁',life);
+  const before=structuredClone(life.memories[0]);
+  StateEngine.mutateLifeDraft('我喝咖啡只喝美式，午饭花了26元',life);
+  const after=life.memories.find(m=>m.id===before.id);
+  assert.match(after.fact,/美式/);
+  assert.equal(after.createdAt,before.createdAt);
+  const expense=life.wallet.entries.at(-1);
+  assert.equal(expense.amount,26);
+  const mutations=[
+    {kind:'memory',id:before.id,before,after},
+    {kind:'expense',id:expense.id,before:null,after:expense},
+  ];
+  assert.deepEqual(validateTransaction({op:'transaction',space:'life',id:'mixed-life',mutations},1,
+    (kind,id)=>kind==='memory'&&id===before.id?before:null),[]);
+});
+
+test('a booked refund does not overwrite a previously saved preference',()=>{
+  const life=emptyLife();
+  StateEngine.mutateLifeDraft('我喝咖啡只喝无糖拿铁',life);
+  const saved=structuredClone(life.memories);
+  StateEngine.mutateLifeDraft('我的退税到账62.5元',life);
+  assert.deepEqual(life.memories,saved);
+  assert.deepEqual(life.wallet.entries.map(e=>[e.type,e.amount]),[['income',62.5]]);
+});
 
 test('life parser records expenses without requiring 元/块 and supports diverse word orders', () => {
   const cases = [
@@ -69,7 +134,7 @@ test('life parser records expenses without requiring 元/块 and supports divers
   }
 });
 
-test('life parser supports unitless savings, income, weight, multi-cup water and multi-person colloquial kinship', () => {
+test('life parser supports unitless savings, income, weight and multi-person colloquial kinship', () => {
   const life = emptyLife();
 
   // 1. 无单位攒钱与收入（收入同步注入心愿小金库）
@@ -84,13 +149,7 @@ test('life parser supports unitless savings, income, weight, multi-cup water and
   StateEngine.mutateLifeDraft('今天63.5kg', life);
   assert.equal(life.rpg.weightKg, 63.5);
 
-  // 3. 多杯饮水与毫升折算
-  StateEngine.mutateLifeDraft('喝了两杯水', life);
-  assert.equal(life.rpg.waterCups, 2);
-  StateEngine.mutateLifeDraft('喝了500ml水', life);
-  assert.equal(life.rpg.waterCups, 4);
-
-  // 4. 口语化单字亲属与单句多亲友提取
+  // 3. 口语化单字亲属与单句多亲友提取
   StateEngine.mutateLifeDraft('我妈不能吃香菜，老王芒果过敏，老婆生日5月20日', life);
   assert.equal(life.persons.length, 3);
   assert.ok(life.persons.find(p => p.name === '妈')?.taboos.includes('不吃香菜'));

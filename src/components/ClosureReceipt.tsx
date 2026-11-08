@@ -1,6 +1,6 @@
 import React from 'react';
 import { Check, ArrowRight, FileText, RotateCcw, BookOpen } from 'lucide-react';
-import type { ClosureRecord, Message, Engagement, ProjectTaskItem, FollowUpItem, CommittedChangeEvent } from '../types';
+import type { ClosureRecord, Message, Engagement, ProjectTaskItem, FollowUpItem, ConditionIntent, CommittedChangeEvent } from '../types';
 import { eventMutations } from '../../shared/persistence-core.mjs';
 
 export interface ClosureReceiptProps {
@@ -10,6 +10,7 @@ export interface ClosureReceiptProps {
   engagements: Engagement[];
   tasks: ProjectTaskItem[];
   followUps: FollowUpItem[];
+  conditions?: ConditionIntent[];
   onProject(id: string): void;
   onContinue(): void;
   onExport(engagement: Engagement): void;
@@ -29,6 +30,7 @@ export function ClosureReceipt({ closure, source, event, engagements, tasks, fol
   const projects = historical<Engagement>('engagement', closure.engagementIds);
   const actions = historical<ProjectTaskItem>('task', closure.taskIds);
   const related = historical<FollowUpItem>('followup', closure.followUpIds);
+  const conditionItems = historical<ConditionIntent>('condition', closure.conditionIds || []);
   const waiting = related.filter(item => item.kind === 'waiting');
   const questions = related.filter(item => item.kind === 'question');
   const firstProject = engagements.find(item => closure.engagementIds.includes(item.id));
@@ -46,6 +48,7 @@ export function ClosureReceipt({ closure, source, event, engagements, tasks, fol
       <section aria-label="我方下一步"><h3>我方下一步 <span>{closure.taskIds.length}</span></h3>{actions.length ? actions.map(action => <article className="receipt-record" key={action.id}><strong>{action.title}</strong><p>{action.dueAt ? `${time(action.dueAt)}（我方提醒）` : '提醒时间尚未设置'}</p></article>) : <p className="muted small">本次没有新增我方行动。</p>}</section>
       <section aria-label="等待客户"><h3>等待客户 <span>{waiting.length}</span></h3>{waiting.length ? waiting.map(item => <article className="receipt-record" key={item.id}><strong>{item.title}</strong><p>{item.expectedDate ? `客户预计 ${item.expectedDate}（未约定具体时刻）` : item.expectedAt ? `客户预计 ${time(item.expectedAt)}` : '对方时间尚未确定'}</p><p>{item.reviewAt ? `我方回访：${time(item.reviewAt)}` : '未设置我方回访，不会自动催促'}</p></article>) : <p className="muted small">本次没有新增等待事项。</p>}</section>
       <section aria-label="仍待确认"><h3>仍待确认 <span>{questions.length}</span></h3>{questions.length ? questions.map(item => <article className="receipt-record" key={item.id}><strong>{item.title}</strong><p>尚未作为确定的预算、日期或承诺。</p></article>) : <p className="muted small">本次没有新增待确认问题。</p>}</section>
+      {conditionItems.length > 0 && <section aria-label="条件跟进"><h3>条件跟进 <span>{conditionItems.length}</span></h3>{conditionItems.map(item => <article className="receipt-record" key={item.id}><strong>当 {item.conditionText}</strong><p>则：{item.actionTitle}（{item.status === 'ready' ? '已就绪' : item.status === 'watching' ? '观察中' : item.status === 'draft' ? '待绑定' : item.status === 'paused' ? '已暂停' : item.status === 'cancelled' ? '已取消' : '已完成'} · v{item.revision}）</p></article>)}</section>}
     </div>}
     {(waiting.length > 0 || questions.length > 0) && !reverted && <p className="receipt-open-note">这些等待和未定内容会留在项目里，下次可以接着核对。</p>}
     <p className="receipt-reminder-note">{practice ? '演练不会发送通知，也不会安排真实提醒。' : 'Looma 开启时（含胶囊）才会提醒，退出后不提醒；重新打开会汇总遗漏事项。'}</p>

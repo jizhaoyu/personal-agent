@@ -23,6 +23,15 @@ function loadAndroidBridgeModule() {
 
 const { installAndroidBridge, sanitizeAndroidClipboard } = loadAndroidBridgeModule();
 
+test('Android todo bridge buffers cold-start notification focus until a subscriber exists', async () => {
+  const win = { LoomaAndroid: { todoRequest: raw => JSON.stringify({ok:true, command:JSON.parse(raw)}) } };
+  assert.equal(installAndroidBridge(win),true);
+  win.__loomaTodoFocus({space:'work',id:'quote'});
+  const received=[];const unsubscribe=win.electronAPI.onTodoFocus(focus=>received.push(focus));
+  await Promise.resolve();assert.deepEqual(received,[{space:'work',id:'quote'}]);unsubscribe();
+  const response=await win.electronAPI.todoRequest({op:'list',space:'life'});assert.equal(response.command.op,'list');
+});
+
 test('android bridge mounts window.electronAPI from window.LoomaAndroid and enforces FLAG_SECURE & clipboard defense', async () => {
   let flagSecureState = true;
   let clipboardContent = '与王总确认周五下午签约，合同预算50万';

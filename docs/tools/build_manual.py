@@ -19,6 +19,7 @@ from docx.shared import Cm, Pt, RGBColor
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS_DIR = ROOT / "docs"
+WORD_DIR = DOCS_DIR / "word"
 
 NAVY = "183344"
 TEAL = "136E6A"
@@ -316,8 +317,9 @@ def create_manual_document(doc_title: str, sub_title: str, source_md: Path, outp
 
 
 def main():
+    WORD_DIR.mkdir(parents=True, exist_ok=True)
     manual_md = DOCS_DIR / "05-软件操作与使用说明书(User_Manual).md"
-    manual_docx = ROOT / "Looma(灵犀胶囊)_软件操作与使用说明书.docx"
+    manual_docx = WORD_DIR / "Looma(灵犀胶囊)_软件操作与使用说明书.docx"
     create_manual_document(
         doc_title="软件操作与使用说明书",
         sub_title="客户端部署、核心工作流操作指引与维护手册",
@@ -327,7 +329,7 @@ def main():
     )
 
     prd_md = DOCS_DIR / "02-产品需求规格说明书(PRD_and_UX_Spec).md"
-    prd_docx = ROOT / "Looma(灵犀胶囊)_产品需求规格说明书.docx"
+    prd_docx = WORD_DIR / "Looma(灵犀胶囊)_产品需求规格说明书.docx"
     create_manual_document(
         doc_title="产品需求规格说明书",
         sub_title="交互规范、状态流转与系统边界需求说明",

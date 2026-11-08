@@ -1,12 +1,10 @@
 import React, { useState, useRef } from 'react';
 import {
   Wallet,
-  Zap,
   Users,
   Briefcase,
   Target,
   FileCheck,
-  Droplets,
   Plus,
   CheckCircle2,
   Circle,
@@ -23,7 +21,6 @@ import {
   WorkspaceMode,
   WalletCardState,
   WishItem,
-  RpgStatusCardState,
   PersonProfile,
   CrmDealItem,
   ProjectTaskItem,
@@ -45,12 +42,6 @@ const monthFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit',
 });
 const dayFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' });
-
-function statusForToday(value: RpgStatusCardState): RpgStatusCardState {
-  const today = dayFormatter.format(Date.now());
-  return { ...value, waterCups: value.dateKey === today ? value.waterCups : 0, dateKey: today };
-}
-
 
 export function normalizeWallet(w: WalletCardState): WalletCardState {
   const wishes: WishItem[] = (w.wishes && w.wishes.length > 0) ? w.wishes : [
@@ -95,7 +86,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   const cachedLife = mode === 'life' ? Repository.getCurrent().partitions.life : null;
   // Only the current space is read. The repository cache contains a bounded, already migrated window.
   const [wallet, setWallet] = useState<WalletCardState>(() => normalizeWallet(cachedLife?.wallet || { monthlyBudget: 5000, wishTitle: '我的心愿', wishTarget: 10000, wishSaved: 0, entries: [] }));
-  const [rpg, setRpg] = useState<RpgStatusCardState>(() => cachedLife ? statusForToday(cachedLife.rpg) : { energy: 0, waterCups: 0, weightKg: 0, targetWeightKg: 0, moodBuff: '未记录', streakDays: 0 });
   const [persons, setPersons] = useState<PersonProfile[]>(() => cachedLife?.persons || []);
 
   // ToB 状态
@@ -130,7 +120,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       if (mode === 'life') {
         const life = Repository.getCurrent().partitions.life;
         setWallet(normalizeWallet(life.wallet));
-        setRpg(statusForToday(life.rpg));
         setPersons(life.persons);
       }
     };
@@ -159,28 +148,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
     } finally {
       savingRef.current = false;
     }
-  };
-
-  // ==================== ToC 双向交互动作（手动嘴知） ====================
-  const handleAddWater = () => {
-    const today = statusForToday(rpg);
-    const next = {
-      ...today,
-      waterCups: Math.min(8, today.waterCups + 1),
-      energy: Math.min(100, rpg.energy + 3),
-    };
-    return persistUpdate(() => Repository.saveRpgStatusCard(next), () => setRpg(next),
-      `💧 已记录今日第 ${next.waterCups} 杯水。精力分值仅供个人记录参考。`);
-  };
-
-  const handleQuickRest = () => {
-    const next = {
-      ...statusForToday(rpg),
-      energy: Math.min(100, rpg.energy + 15),
-      moodBuff: '✨ 小憩回血 · 神清气爽',
-    };
-    return persistUpdate(() => Repository.saveRpgStatusCard(next), () => setRpg(next),
-      '⚡ 休息记录已保存。精力分值是个人状态记录，不代表生理测量。');
   };
 
   const handleQuickSaveWish = () => {
@@ -284,17 +251,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
             >
               <Wallet size={13} />
               <span>随口记账</span>
-            </button>
-            <button
-              onClick={() => setActiveSubTab('rpg_status')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                activeSubTab === 'rpg_status'
-                  ? 'bg-[#a8681a] text-white shadow-xs'
-                  : 'text-[#6b7183] hover:bg-[#efeadd]'
-              }`}
-            >
-              <Zap size={13} />
-              <span>人生状态栏</span>
             </button>
             <button
               onClick={() => setActiveSubTab('relationships')}
@@ -436,84 +392,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
           </div>
         )}
 
-        {/* ==================== ToC 2: 三维人生 RPG 状态栏 ==================== */}
-        {!isWork && activeSubTab === 'rpg_status' && (
-          <div className="space-y-3">
-            <div className="p-3.5 rounded-xl bg-white border border-[#e6decd] space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#23293a]">⚡ 个人状态与精力面板</span>
-                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-[#8a5410] text-[11px] font-medium">
-                  {rpg.moodBuff}
-                </span>
-              </div>
-
-              {/* 精力条 */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-[#6b7183]">🔋 自报精力参考值 (HP)</span>
-                  <span className="font-mono font-bold text-emerald-700">{rpg.energy} / 100</span>
-                </div>
-                <div className="w-full h-2.5 bg-[#efeadd] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
-                    style={{ width: `${rpg.energy}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* 饮水 8 格 */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-[#6b7183]">💧 今日饮水记录</span>
-                  <span className="font-mono text-sky-700 font-semibold">{rpg.waterCups} / 8 杯</span>
-                </div>
-                <div className="grid grid-cols-8 gap-1.5">
-                  {Array.from({ length: 8 }).map((_, idx) => (
-                    <button
-                      key={idx}
-                      onClick={handleAddWater}
-                      className={`h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer ${
-                        idx < rpg.waterCups
-                          ? 'bg-sky-500 text-white shadow-xs'
-                          : 'bg-[#f4f0e6] text-[#a49f91] hover:bg-sky-100'
-                      }`}
-                    >
-                      <Droplets size={13} />
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 体重与打卡天数 */}
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <div className="p-2.5 rounded-lg bg-[#f9f6ed] border border-[#ece6d5]">
-                  <span className="text-[10px] text-[#6b7183] block">⚖️ 自报体重{rpg.targetWeightKg > 0 ? `（目标 ${rpg.targetWeightKg}kg）` : ''}</span>
-                  <span className="text-base font-mono font-bold text-[#23293a]">{rpg.weightKg > 0 ? `${rpg.weightKg} kg` : '尚未记录'}</span>
-                </div>
-                <div className="p-2.5 rounded-lg bg-[#f9f6ed] border border-[#ece6d5]">
-                  <span className="text-[10px] text-[#6b7183] block">🔥 连续自律打卡</span>
-                  <span className="text-base font-mono font-bold text-[#a8681a]">{rpg.streakDays} 天</span>
-                </div>
-              </div>
-
-              {/* 双向绑定快捷按钮 */}
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={handleAddWater}
-                  className="flex-1 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium cursor-pointer"
-                >
-                  💧 喝一杯水
-                </button>
-                <button
-                  onClick={handleQuickRest}
-                  className="flex-1 py-1.5 rounded-lg bg-[#a8681a] hover:bg-[#8a5410] text-white text-xs font-medium cursor-pointer"
-                >
-                  🛌 记录休息
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* ==================== ToC 3: 人脉与亲友档案簿 ==================== */}
         {!isWork && activeSubTab === 'relationships' && (

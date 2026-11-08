@@ -10,7 +10,7 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looma-package-test-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const put = (file, content = file) => { const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, content); };
-  for (const name of ['package.json', 'package-lock.json', 'index.html', 'src/App.tsx', 'electron/main.cjs', 'electron/preload.cjs', 'electron/desktop-services.cjs', 'electron/persistence.cjs', 'shared/persistence-core.mjs']) put(name, name.endsWith('.json') ? '{}' : name);
+  for (const name of ['package.json', 'package-lock.json', 'index.html', 'src/App.tsx', 'electron/main.cjs', 'electron/preload.cjs', 'electron/desktop-services.cjs', 'electron/persistence.cjs', 'electron/todo-desktop.cjs', 'electron/todo-window.cjs', 'shared/persistence-core.mjs', 'shared/agent-model.cjs']) put(name, name.endsWith('.json') ? '{}' : name);
   put('node_modules/electron/dist/electron.exe'); put('node_modules/electron/dist/LICENSE'); put('node_modules/electron/dist/icudtl.dat'); put('node_modules/electron/dist/resources/default_app.asar'); put('node_modules/electron/dist/locales/en-US.pak');
   for (const name of ['better-sqlite3/lib/index.js', 'better-sqlite3/lib/database.js', 'better-sqlite3/build/Release/better_sqlite3.node', 'bindings/bindings.js', 'file-uri-to-path/index.js']) put(`node_modules/${name}`);
   for (const name of ['better-sqlite3', 'bindings', 'file-uri-to-path']) put(`node_modules/${name}/package.json`, JSON.stringify({ name, main: name === 'bindings' ? 'bindings.js' : name === 'file-uri-to-path' ? 'index.js' : 'lib/index.js' }));
@@ -41,6 +41,8 @@ test('portable package copies only runtime allowlisted files and never overwrite
   const result = packageTrial(root, { outputRoot: path.join(root, 'out') });
   assert.equal(fs.existsSync(path.join(result.directory, 'Looma.exe')), true);
   assert.equal(fs.existsSync(path.join(result.directory, 'resources/app/electron/main.cjs')), true);
+  assert.equal(fs.existsSync(path.join(result.directory, 'resources/app/electron/todo-desktop.cjs')), true);
+  assert.equal(fs.existsSync(path.join(result.directory, 'resources/app/electron/todo-window.cjs')), true);
   assert.equal(fs.existsSync(path.join(result.directory, 'resources/app/node_modules/better-sqlite3/build/Release/better_sqlite3.node')), true);
   const files = fs.readdirSync(result.directory, { recursive: true }).filter(name => fs.statSync(path.join(result.directory, name)).isFile());
   for (const forbidden of ['.env', 'credentials.json', 'looma.sqlite', 'full-backup.jsonl', 'private-key.pem', 'secret.json', 'default_app.asar']) assert.ok(!files.some(name => name.split(path.sep).at(-1) === forbidden), forbidden);

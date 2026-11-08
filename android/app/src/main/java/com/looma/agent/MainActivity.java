@@ -2,6 +2,7 @@ package com.looma.agent;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.os.Build;
@@ -14,13 +15,18 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import org.json.JSONObject;
+
 public class MainActivity extends Activity {
     private WebView webView;
+    private JSONObject pendingTodoFocus;
+    private boolean pageReady;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        captureTodoFocus(getIntent());
 
         // 1. 安全自检软校验（防异常闪退保护）
         try {
@@ -108,7 +114,14 @@ public class MainActivity extends Activity {
 
             // 4. 挂载原生安全桥接接口 window.LoomaAndroid
             webView.addJavascriptInterface(new LoomaBridge(this), "LoomaAndroid");
-            webView.setWebViewClient(new WebViewClient());
+            webView.setWebViewClient(new WebViewClient() {
+                @Override public void onPageFinished(WebView view, String url) {
+                    if (!"file:///android_asset/www/index.html".equals(url)) return;
+                    pageReady = true;
+                    dispatchTodoFocus(40);
+                    publishTodoCapabilities();
+                }
+            });
             webView.setWebChromeClient(new WebChromeClient());
 
             // 5. 加载本地打包的前端工作台
@@ -129,12 +142,67 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        captureTodoFocus(intent);
+        dispatchTodoFocus(40);
+    }
+
+    private void captureTodoFocus(Intent intent) {
+        if (intent == null) return;
+        String space = intent.getStringExtra(TodoScheduler.EXTRA_SPACE);
+        String id = intent.getStringExtra(TodoScheduler.EXTRA_ID);
+        if (!TodoStore.validSpace(space) || id == null || id.trim().isEmpty() || id.length() > 200) return;
+        try { pendingTodoFocus = new JSONObject().put("space", space).put("id", id); }
+        catch (Exception ignored) {}
+        intent.removeExtra(TodoScheduler.EXTRA_SPACE);
+        intent.removeExtra(TodoScheduler.EXTRA_ID);
+    }
+
+    private void dispatchTodoFocus(int retries) {
+        if (!pageReady || webView == null || pendingTodoFocus == null) return;
+        final JSONObject focus = pendingTodoFocus;
+        String payload = focus.toString().replace("\u2028", "\\u2028").replace("\u2029", "\\u2029");
+        String script = "(function(){var p=" + payload + ";if(typeof window.__loomaTodoFocus==='function'){"
+                + "window.__loomaTodoFocus(p);window.__loomaPendingTodoFocus=null;return true;}"
+                + "window.__loomaPendingTodoFocus=p;return false;})()";
+        webView.evaluateJavascript(script, result -> {
+            if (pendingTodoFocus != focus) return;
+            if ("true".equals(result)) pendingTodoFocus = null;
+            else if (retries > 0 && webView != null) webView.postDelayed(() -> dispatchTodoFocus(retries - 1), 250);
+        });
+    }
+
+    private void publishTodoCapabilities() {
+        if (!pageReady || webView == null) return;
+        try {
+            String script = "window.dispatchEvent(new CustomEvent('looma:todo-capabilities',{detail:"
+                    + TodoScheduler.capabilities(this).toString() + "}));";
+            webView.evaluateJavascript(script, null);
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == TodoScheduler.PERMISSION_REQUEST) {
+            TodoScheduler.requestExactPermission(this);
+            TodoScheduler.reconcile(this);
+            publishTodoCapabilities();
+        }
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         try {
             SecurityShield.enforceRuntimeIntegrity(this);
         } catch (Throwable ignored) {
         }
+        TodoScheduler.reconcile(this);
+        publishTodoCapabilities();
+        dispatchTodoFocus(40);
     }
 
     @Override

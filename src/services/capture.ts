@@ -34,7 +34,7 @@ export function reviseCaptureDraft(draft: CaptureDraft, patch: Partial<CaptureDr
 
 function currentFor(partition: WorkPartition, operation: WorkOperation): any {
   const rows = operation.target === 'engagement' ? partition.engagements : operation.target === 'task' ? partition.tasks :
-    operation.target === 'followup' ? partition.followUps || [] : partition.memories;
+    operation.target === 'followup' ? partition.followUps || [] : operation.target === 'condition' ? partition.conditions || [] : partition.memories;
   return rows.find(row => row.id === operation.entityId) || null;
 }
 function conflict(operation: WorkOperation, field: string, original: unknown, current: unknown, proposed: unknown): ProposalConflict {

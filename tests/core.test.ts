@@ -174,13 +174,13 @@ test('one life input aggregates cards, money, status and people into exactly one
   const workBefore = StorageService.getSnapshot().partitions.work;
   store.writes = 0;
   store.failAt = 2;
-  const receipts = StateEngine.sniffAndMutate('创建《读书》卡，目标10，午饭花了35元，喝水，妈妈喜欢白茶', 'life', 'life-atomic-1');
+  const receipts = StateEngine.sniffAndMutate('创建《读书》卡，目标10，午饭花了35元，今天跑步了，妈妈喜欢白茶', 'life', 'life-atomic-1');
   assert.ok(receipts.length >= 4);
   assert.equal(store.writes, 1);
   const snapshot = StorageService.getSnapshot();
   assert.equal(snapshot.partitions.life.customCards.length, 1);
   assert.equal(snapshot.partitions.life.wallet.entries.length, 1);
-  assert.equal(snapshot.partitions.life.rpg.waterCups, 1);
+  assert.equal(snapshot.partitions.life.rpg.streakDays, 1);
   assert.equal(snapshot.partitions.life.persons.length, 1);
   assert.deepEqual(snapshot.partitions.work, workBefore);
 });
@@ -293,4 +293,185 @@ test('deadlines resolve relative dates in Shanghai and default to 09:00', () => 
   assert.equal(resolveDeadline('2026年11月5日 15:30', now).dueAt, '2026-11-05T07:30:00.000Z');
   assert.equal(resolveDeadline('2026年2月30日', now).dueAt, undefined);
   assert.equal(resolveDeadline('2月30日', now).dueAt, undefined);
+});
+
+test('explicit project title overrides selected project on multi-project client and prevents cross-project contamination', () => {
+  const first = { ...addClient('陈总', 30000), title: '星河官网' };
+  const second = { ...first, id: 'project-store', title: '门店改版', budgetAmount: 15000 };
+  assert.equal(StorageService.commit(StorageService.createProposal('work', [
+    { target: 'engagement', entityId: first.id, before: StorageService.getSnapshot().partitions.work.engagements[0], after: first },
+    { target: 'engagement', entityId: second.id, before: null, after: second },
+  ], '初始化双项目')).ok, true);
+  const batch = propose('陈总的星河官网项目预算改为5万；陈总的门店改版项目周五前发新版方案', first.id);
+  const firstOp = batch.operations.find(op => op.target === 'engagement' && op.entityId === first.id);
+  const secondOp = batch.operations.find(op => op.target === 'engagement' && op.entityId === second.id);
+  const taskOp = batch.operations.find(op => op.target === 'task');
+  assert.equal(firstOp?.after?.budgetAmount, 50000);
+  assert.equal(secondOp?.after?.nextAction, '周五 发新版方案');
+  assert.equal(taskOp?.after?.engagementId, second.id);
+});
+test('next-day corrections update existing project task and waiting follow-up in place without creating duplicates', () => {
+  const now = new Date('2026-10-26T04:00:00Z').getTime();
+  let work = { ...StorageService.getSnapshot().partitions.work, followUps: [] as any[] };
+  const apply = (p: ReturnType<typeof propose>) => {
+    assert.deepEqual(StateEngine.validate(p, work), []);
+    work = JSON.parse(JSON.stringify(work));
+    work.revision += 1;
+    for (const op of p.operations) {
+      const list: any[] = op.target === 'engagement' ? work.engagements : op.target === 'task' ? work.tasks : op.target === 'followup' ? work.followUps : work.memories;
+      const idx = list.findIndex(item => item.id === op.entityId);
+      if (idx >= 0) list[idx] = op.after;
+      else if (op.after) list.push(op.after);
+    }
+  };
+  const initial = StateEngine.propose('陈总的项目名称是星河官网，预算5万，我周五前发新版方案，客户下周一补齐首页素材', { mode: 'work', sourceMessageId: 'm-init', partition: work, now });
+  apply(initial);
+  assert.equal(work.engagements.length, 1);
+  assert.equal(work.tasks.length, 1);
+  assert.equal(work.followUps.length, 1);
+  const taskId = work.tasks[0].id;
+  const followUpId = work.followUps[0].id;
+  assert.equal(work.tasks[0].deadline, '周五');
+  assert.equal(work.followUps[0].expectedDate, '2026-11-02');
+
+  const correction = StateEngine.propose('陈总的星河官网项目，发新版方案改到周四前；首页素材先不用催，陈总说下周整理', { mode: 'work', sourceMessageId: 'm-corr', partition: work, now });
+  const taskUpdate = correction.operations.find(op => op.target === 'task');
+  const followUpUpdate = correction.operations.find(op => op.target === 'followup');
+  assert.equal(taskUpdate?.entityId, taskId);
+  assert.ok(taskUpdate?.before);
+  assert.equal(taskUpdate?.after?.deadline, '周四');
+  assert.equal(taskUpdate?.after?.dueAt, '2026-10-29T01:00:00.000Z');
+  assert.equal(followUpUpdate?.entityId, followUpId);
+  assert.ok(followUpUpdate?.before);
+  assert.equal(followUpUpdate?.after?.expectedDate, undefined);
+  assert.equal(followUpUpdate?.after?.sourceDateText, '下周');
+  apply(correction);
+
+  assert.equal(work.tasks.length, 1);
+  assert.equal(work.tasks[0].id, taskId);
+  assert.equal(work.tasks[0].deadline, '周四');
+  assert.equal(work.followUps.length, 1);
+  assert.equal(work.followUps[0].id, followUpId);
+  assert.equal(work.followUps[0].expectedDate, undefined);
+
+  const resolved = StateEngine.propose('星河官网的首页素材已经收到了，新版方案已经发过去了', { mode: 'work', sourceMessageId: 'm-res', partition: work, now });
+  apply(resolved);
+  assert.equal(work.tasks.length, 1);
+  assert.equal(work.tasks[0].done, true);
+  assert.equal(work.followUps.length, 1);
+  assert.equal(work.followUps[0].status, 'resolved');
+});
+test('ambiguous generic reschedule across multiple open project tasks requires clarification instead of duplicating', () => {
+  assert.equal(StorageService.commit(propose('陈总的星河官网项目，我周五前发新版方案，下周一前发合同草稿')).ok, true);
+  const work = StorageService.getSnapshot().partitions.work;
+  assert.equal(work.tasks.length, 2);
+  const ambiguous = propose('陈总的星河官网项目，那条行动改到周四前', work.engagements[0].id);
+  assert.equal(ambiguous.operations.filter(op => op.target === 'task').length, 0);
+  assert.ok(ambiguous.clarification);
+  assert.ok(ambiguous.warnings.some(w => w.includes('多条')));
+});
+
+test('US05-US06: conditional intent binds waiting item, transitions to ready on resolve, converts to task, and respects modification/pause/cancel', async () => {
+  const {
+    evaluateFollowUpTransition,
+    transitionConditionIntent,
+    convertConditionToTaskOperations,
+    selectHighlightedReadyConditions,
+  } = await import('../src/services/conditionIntents');
+  const now = Date.parse('2026-10-27T02:00:00Z');
+  const work: any = { engagements: [], tasks: [], followUps: [], conditions: [], memories: [], messages: [], summaries: [], journals: [], customCards: [], events: [], closures: [], processedProposalIds: [], revision: 1 };
+  const apply = (proposal: any) => {
+    for (const op of proposal.operations) {
+      const list = op.target === 'engagement' ? work.engagements : op.target === 'task' ? work.tasks : op.target === 'followup' ? work.followUps : op.target === 'condition' ? work.conditions : work.memories;
+      const idx = list.findIndex((item: any) => item.id === op.entityId);
+      if (op.after === null) { if (idx >= 0) list.splice(idx, 1); }
+      else if (idx >= 0) list[idx] = op.after;
+      else list.push(op.after);
+    }
+    work.revision += 1;
+  };
+
+  // 1. US05: "等陈总把首页素材发过来后，再整理第二版报价" does not create immediate task, creates waiting followup + watching condition
+  const initial = StateEngine.propose('陈总的项目名称是星河官网，等陈总把首页素材发过来后，再整理第二版报价', { mode: 'work', sourceMessageId: 'm-cond-1', partition: work, now });
+  assert.equal(initial.operations.filter(op => op.target === 'task').length, 0);
+  const waitingOp = initial.operations.find(op => op.target === 'followup');
+  const condOp = initial.operations.find(op => op.target === 'condition');
+  assert.ok(waitingOp && waitingOp.after?.kind === 'waiting');
+  assert.ok(condOp && condOp.after);
+  assert.equal(condOp.after.status, 'watching');
+  assert.equal(condOp.after.conditionKind, 'followup_resolved');
+  assert.equal(condOp.after.followUpId, waitingOp.entityId);
+  assert.equal(condOp.after.actionTitle, '整理第二版报价');
+  assert.equal(condOp.after.revision, 1);
+  apply(initial);
+
+  // 2. Vague condition is saved as draft (manual_confirm) and does not auto-trigger
+  const vague = StateEngine.propose('陈总的星河官网项目，等时机成熟后再推进二期方案', { mode: 'work', sourceMessageId: 'm-cond-vague', partition: work, now: now + 1000 });
+  const vagueCondOp = vague.operations.find(op => op.target === 'condition');
+  assert.ok(vagueCondOp && vagueCondOp.after);
+  assert.equal(vagueCondOp.after.status, 'draft');
+  assert.equal(vagueCondOp.after.conditionKind, 'manual_confirm');
+  assert.equal(vagueCondOp.after.followUpId, undefined);
+  apply(vague);
+
+  // 3. US06: Modify the first condition to wait for "确认函" instead of "首页素材"
+  const modified = StateEngine.propose('陈总的星河官网项目，整理第二版报价的条件改成等陈总把确认函发过来', { mode: 'work', sourceMessageId: 'm-cond-mod', partition: work, now: now + 2000 });
+  const modCondOp = modified.operations.find(op => op.target === 'condition');
+  const newWaitOp = modified.operations.find(op => op.target === 'followup');
+  assert.ok(modCondOp && modCondOp.after);
+  assert.ok(newWaitOp && newWaitOp.after);
+  assert.equal(modCondOp.entityId, condOp.entityId);
+  assert.equal(modCondOp.after.revision, 2);
+  assert.equal(modCondOp.after.followUpId, newWaitOp.entityId);
+  assert.notEqual(modCondOp.after.followUpId, waitingOp.entityId);
+  apply(modified);
+
+  // 4. US06: Old waiting item ("首页素材") resolves -> modified condition MUST NOT trigger!
+  const oldResolved = StateEngine.propose('星河官网的首页素材已经收到了', { mode: 'work', sourceMessageId: 'm-old-res', partition: work, now: now + 3000 });
+  assert.equal(oldResolved.operations.filter(op => op.target === 'condition').length, 0);
+  apply(oldResolved);
+  assert.equal(work.conditions.find((c: any) => c.id === condOp.entityId).status, 'watching');
+
+  // 5. US06: Pause condition -> resolving new waiting item ("确认函") MUST NOT trigger!
+  const pausedCond = transitionConditionIntent(work.conditions.find((c: any) => c.id === condOp.entityId), 'pause', now + 3500);
+  assert.equal(pausedCond.status, 'paused');
+  assert.equal(pausedCond.revision, 3);
+  assert.equal(evaluateFollowUpTransition([pausedCond], newWaitOp.after, { ...newWaitOp.after, status: 'resolved' }, now + 3600).length, 0);
+
+  // 6. Resume watching -> resolving new waiting item ("确认函") transitions condition to ready (revision + 1)
+  const resumedCond = transitionConditionIntent(pausedCond, 'activate_watching', now + 3700);
+  assert.equal(resumedCond.status, 'watching');
+  assert.equal(resumedCond.revision, 4);
+  const condIdx = work.conditions.findIndex((c: any) => c.id === condOp.entityId);
+  work.conditions[condIdx] = resumedCond;
+
+  const newResolved = StateEngine.propose('星河官网的确认函已经收到了', { mode: 'work', sourceMessageId: 'm-new-res', partition: work, now: now + 4000 });
+  const readyCondOp = newResolved.operations.find(op => op.target === 'condition');
+  assert.ok(readyCondOp && readyCondOp.after);
+  assert.equal(readyCondOp.after.status, 'ready');
+  assert.equal(readyCondOp.after.revision, 5);
+  assert.equal(readyCondOp.after.triggeredAt, now + 4000);
+  apply(newResolved);
+
+  // 7. Duplicate resolve event does not trigger again or bump revision
+  const duplicateOps = evaluateFollowUpTransition(work.conditions, { ...newWaitOp.after, status: 'resolved' }, { ...newWaitOp.after, status: 'resolved' }, now + 5000);
+  assert.equal(duplicateOps.length, 0);
+
+  // 8. Highlight selection and dismiss highlight
+  const highlighted = selectHighlightedReadyConditions(work.conditions, work.followUps.filter((f: any) => f.status === 'open'), work.engagements);
+  assert.equal(highlighted.length, 1);
+  assert.equal(highlighted[0].id, condOp.entityId);
+  const dismissed = transitionConditionIntent(highlighted[0], 'dismiss_highlight', now + 5100);
+  assert.equal(selectHighlightedReadyConditions([dismissed], [], work.engagements).length, 0);
+
+  // 9. Convert ready condition to ProjectTaskItem (idempotent)
+  const convertOps = convertConditionToTaskOperations(work.conditions[0], work.tasks, now + 6000);
+  assert.equal(convertOps.length, 2);
+  apply({ operations: convertOps });
+  assert.equal(work.tasks.length, 1);
+  assert.equal(work.tasks[0].title, '整理第二版报价');
+  assert.equal(work.conditions[0].status, 'completed');
+  assert.equal(work.conditions[0].revision, 6);
+  // Calling convert again produces no duplicate task
+  assert.equal(convertConditionToTaskOperations(work.conditions[0], work.tasks, now + 7000).length, 0);
 });

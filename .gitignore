@@ -10,6 +10,9 @@ release/
 out/
 output/playwright/
 output/trial/
+# Local reports, packaged apps, databases and temporary compilation snapshots
+/output/
+/-/
 .playwright-mcp/
 tmp/
 *.local

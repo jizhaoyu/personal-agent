@@ -169,3 +169,58 @@ nativeTest('v5 backup preserves capture receipt idempotency and accepts old v4 J
   assert.equal((await store.restoreFromFile(oldFile)).ok, true);
   assert.equal((await store.request({ op: 'get', space: 'work', kind: 'engagement', id: 'website' })).budgetAmount, 300);
 });
+
+nativeTest('v5 SQLite condition intents commit atomically, surface in workHome, transition on followUp resolve, and survive backup/restore', async t => {
+  const { store, directory } = await fixture(t);
+  const now = Date.parse('2026-10-27T04:00:00Z');
+  const cond = {
+    id: 'cond-quote',
+    space: 'work',
+    conditionText: '陈总把首页素材发过来',
+    actionTitle: '整理第二版报价',
+    conditionKind: 'followup_resolved',
+    status: 'watching',
+    engagementId: 'website',
+    followUpId: 'materials',
+    sourceMessageId: 'session-1:1',
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const capCmd = command();
+  capCmd.proposal.operations.push({ target: 'condition', entityId: cond.id, before: null, after: cond });
+  const d = draft(); d.proposal = capCmd.proposal; await store.request({ op: 'saveDraft', space: 'work', draft: d });
+  const res = await store.request(capCmd);
+  assert.equal(res.ok, true);
+  const closure = await store.request({ op: 'get', space: 'work', kind: 'closure', id: res.closureId });
+  assert.deepEqual(closure.conditionIds, ['cond-quote']);
+
+  let home = await store.request({ op: 'workHome', space: 'work', now });
+  assert.equal(home.conditions.length, 1);
+  assert.equal(home.conditions[0].status, 'watching');
+
+  const waitBefore = await store.request({ op: 'get', space: 'work', kind: 'followup', id: 'materials' });
+  const waitAfter = { ...waitBefore, status: 'resolved', updatedAt: now + 1000 };
+  const condAfter = { ...cond, status: 'ready', revision: 2, triggeredAt: now + 1000, triggeredByEventId: 'resolve-wait', updatedAt: now + 1000 };
+  assert.equal((await store.request({
+    op: 'transaction',
+    space: 'work',
+    id: 'resolve-wait',
+    mutations: [
+      { kind: 'followup', id: 'materials', before: waitBefore, after: waitAfter },
+      { kind: 'condition', id: 'cond-quote', before: cond, after: condAfter },
+    ],
+  })).ok, true);
+
+  home = await store.request({ op: 'workHome', space: 'work', now: now + 1000 });
+  assert.equal(home.conditions[0].status, 'ready');
+  assert.equal(home.conditions[0].revision, 2);
+
+  const backupPath = path.join(directory, 'v5-cond.jsonl');
+  assert.equal((await store.exportToFile(backupPath)).ok, true);
+  assert.equal((await store.restoreFromFile(backupPath)).ok, true);
+  const restoredCond = await store.request({ op: 'get', space: 'work', kind: 'condition', id: 'cond-quote' });
+  assert.equal(restoredCond.status, 'ready');
+  assert.equal(restoredCond.revision, 2);
+  assert.equal((await store.request({ op: 'get', space: 'work', kind: 'engagement', id: 'website' })).budgetAmount, 300);
+});

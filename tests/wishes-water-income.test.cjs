@@ -65,16 +65,11 @@ function emptyLife() {
   };
 }
 
-test('喝了3杯水：饮水记录增加且精力值相应增加，刷新状态Buff', () => {
+test('喝了3杯水：不改变旧版饮水字段或任何状态', () => {
   const life = emptyLife();
-  const initialEnergy = life.rpg.energy;
-  const initialWater = life.rpg.waterCups;
-
-  StateEngine.mutateLifeDraft('喝了3杯水', life);
-
-  assert.equal(life.rpg.waterCups, initialWater + 3, '饮水杯数必须增加3杯');
-  assert.equal(life.rpg.energy, initialEnergy + 12, '精力值每杯增加4点，3杯增加12点');
-  assert.match(life.rpg.moodBuff, /水分充足|充沛/);
+  const previous={...life.rpg};
+  assert.equal(StateEngine.mutateLifeDraft('喝了3杯水',life).length,0);
+  assert.deepEqual(life.rpg,previous);
 });
 
 test('随口说“挣了300块”：收入明细入账同时100%全额沉淀至当前主攻心愿', () => {
