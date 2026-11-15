@@ -57,3 +57,67 @@ test('trial language keeps ordinary-name ambiguity and explicit customer date se
   assert.equal(own?.dueAt, '2026-10-30T01:00:00.000Z'); assert.equal(waiting?.expectedDate, '2026-11-02');
   assert.equal(waiting?.expectedAt, undefined); assert.equal(waiting?.reviewAt, undefined);
 });
+
+test('trial language regressions cover client splits, mixed numerals, uncertain units, tasks, and stages', () => {
+  // W-BIZ-04 & U-WCRM-01: no phantom total-price client split; mixed/sum amounts & stage advance
+  const lin = parse('林工那单总价四千五，合同已经签好了，尾款已到账');
+  const linEngs = lin.operations.filter(o => o.target === 'engagement').map(o => o.after);
+  assert.equal(linEngs.length, 1);
+  assert.equal(linEngs[0]?.clientName, '林工');
+  assert.equal(linEngs[0]?.budgetAmount, 4500);
+  assert.equal(linEngs[0]?.stage, '赢单成交');
+
+  const liu = parse('刘总那笔总额六千八，尾款已经收到');
+  const liuEng = liu.operations.find(o => o.target === 'engagement')?.after;
+  assert.equal(liuEng?.budgetAmount, 6800);
+  assert.equal(liuEng?.stage, '赢单成交');
+
+  // W-BIZ-08: ambiguous unit keeps question and leaves budgetAmount undefined
+  const zhou = parse('周总监报价350，还没说明白是万还是块');
+  assert.equal(zhou.operations.find(o => o.target === 'engagement')?.after?.budgetAmount, undefined);
+  assert.ok(zhou.operations.some(o => o.target === 'followup' && o.after?.kind === 'question' && o.after.title === '确认周总监报价350的金额单位'));
+
+  // W-BIZ-03: digital wan/qian shorthand and inline project title
+  const zheng = parse('郑老板电商小程序预算8万5，已发方案');
+  const zhengEng = zheng.operations.find(o => o.target === 'engagement')?.after;
+  assert.equal(zhengEng?.clientName, '郑老板');
+  assert.equal(zhengEng?.title, '电商小程序');
+  assert.equal(zhengEng?.budgetAmount, 85000);
+  assert.equal(zhengEng?.stage, '方案报价');
+  assert.equal(parse('李总预算1万2').operations.find(o => o.target === 'engagement')?.after?.budgetAmount, 12000);
+
+  // W-BIZ-15: client callback waiting with uncertain clock sets neither expectedAt nor expectedDate
+  const xu = parse('徐老师确认明天给我回电话，具体几点没定');
+  assert.equal(xu.operations.filter(o => o.target === 'task').length, 0);
+  const xuWait = xu.operations.find(o => o.target === 'followup' && o.after?.kind === 'waiting')?.after;
+  assert.equal(xuWait?.title, '给我回电话');
+  assert.equal(xuWait?.expectedAt, undefined);
+  assert.equal(xuWait?.expectedDate, undefined);
+
+  // W-BIZ-01, U-WFLOW-02, W-MP-03, W-BIZ-16: own tasks and scoped responsibility question
+  const demo = parse('李总，下周二上午10点我过去演示原型');
+  const demoTask = demo.operations.find(o => o.target === 'task')?.after;
+  assert.equal(demoTask?.title, '演示原型');
+  assert.ok(demoTask?.dueAt);
+
+  const joint = parse('陈总，下周四下午三点我过去现场联调');
+  const jointTask = joint.operations.find(o => o.target === 'task')?.after;
+  assert.ok(jointTask?.title.includes('联调'));
+  assert.ok(jointTask?.dueAt);
+
+  const quoteTask = parse('李总，周五前我把报价表发过去').operations.find(o => o.target === 'task')?.after;
+  assert.equal(quoteTask?.title, '把报价表发过去');
+  assert.ok(quoteTask?.dueAt);
+
+  const tian = parse('田院长那边谁来负责硬件采购还没确定，周五前对接一下采购流程');
+  assert.ok(tian.operations.some(o => o.target === 'followup' && o.after?.kind === 'question' && o.after.title.includes('谁来负责硬件采购还没确定')));
+  const tianTask = tian.operations.find(o => o.target === 'task')?.after;
+  assert.equal(tianTask?.title, '对接一下采购流程');
+  assert.ok(tianTask?.dueAt);
+
+  // W-BIZ-02, W-BIZ-05, W-BIZ-09, U-WFLOW-04: stage transitions & W-BIZ-12 hypothetical guard
+  assert.equal(parse('马经理的看板项目已经发报价单了').operations.find(o => o.target === 'engagement')?.after?.stage, '方案报价');
+  assert.equal(parse('刘总方案报价阶段了').operations.find(o => o.target === 'engagement')?.after?.stage, '方案报价');
+  assert.equal(parse('赵总需求已经聊清楚').operations.find(o => o.target === 'engagement')?.after?.stage, '需求确认');
+  assert.equal(parse('如果客户能提前把资料发来，我就周五前出稿').operations.length, 0);
+});

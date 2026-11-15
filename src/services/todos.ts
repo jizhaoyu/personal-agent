@@ -10,43 +10,75 @@ type Port = (command: any) => Promise<any>;
 const active = (t: TodoRecord) => t.status === 'pending' || t.status === 'suggested';
 const numeral = (text: string) => {
   if (/^\d+$/.test(text)) return Number(text);
-  const n = (s: string) => '零一二三四五六七八九'.indexOf(s.replace('两','二'));
-  if (text.includes('十')) { const [a,b] = text.split('十'); return (a ? n(a) : 1)*10 + (b ? n(b) : 0); }
-  return n(text);
+  const digits = '零一二三四五六七八九';
+  const d = (s: string) => digits.indexOf(s.replace('两', '二'));
+  const clean = text.replace(/^零+(?=[一二两三四五六七八九])/, '');
+  if (clean.includes('十')) {
+    const [a, b] = clean.split('十');
+    const tens = a ? d(a) : 1;
+    const ones = b ? d(b) : 0;
+    return tens >= 0 && ones >= 0 ? tens * 10 + ones : -1;
+  }
+  return d(clean);
 };
 function timeFields(raw: string, now: number): {dueAt?: string; dueDate?: string; needsTime?: boolean} {
-  const text = raw.replace(/点一刻/g,'点15分').replace(/点三刻/g,'点45分')
-    .replace(/(点)([零一二两三四五六七八九十]+)(分?)/g, (_s,p,n)=>`${p}${numeral(n)}分`)
-    .replace(/([零一二两三四五六七八九十]+)\s*个?\s*半\s*小时(?:之)?后/g, (_s,n)=>`${numeral(n)*60+30}分钟后`)
-    .replace(/半\s*个?\s*小时(?:之)?后/g,'30分钟后')
-    .replace(/([零一二两三四五六七八九十]+)\s*个?(?=点|分|小时|分钟|天后)/g, (_s,n) => String(numeral(n)));
+  const text = raw
+    .replace(/点[一1]刻/g, '点15分')
+    .replace(/点[三3]刻/g, '点45分')
+    .replace(/(点)([零一二两三四五六七八九十]+)(分?)/g, (m, p, n) => {
+      const v = numeral(n);
+      return v >= 0 && v <= 59 ? `${p}${v}分` : m;
+    })
+    .replace(/([零一二两三四五六七八九十]+)\s*个?\s*半\s*小时(?:之)?后/g, (m, n) => {
+      const v = numeral(n);
+      return v >= 0 ? `${v * 60 + 30}分钟后` : m;
+    })
+    .replace(/半\s*个?\s*小时(?:之)?后/g, '30分钟后')
+    .replace(/(上午|下午|晚上|傍晚|中午|早上|凌晨|今晚|明早|明晚)\s*([零一二两三四五六七八九十]+)点/g, (m, period, n) => {
+      const v = numeral(n);
+      return v >= 0 ? `${period}${v}点` : m;
+    })
+    .replace(/(?<![有早晚快慢差好没多几\d])([零一二两三四五六七八九十]+)\s*个?(?=点(?!(?:儿|头|点|意见|建议|想法|问题|原因|理由|要求|说明|内容|注意|事项|都|也))|分|小时|分钟|天(?:后|之后|内))/g, (m, n) => {
+      const v = numeral(n);
+      return v >= 0 ? String(v) : m;
+    });
   const relative = text.match(/(\d+)\s*(分钟|小时)(?:之)?后/);
   if (relative) {
     const delta = +relative[1] * (relative[2] === '小时' ? 60 : 1);
-    return delta > 0 && delta <= 525600 ? {dueAt: new Date(now+delta*60000).toISOString()} : {needsTime:true};
+    return delta > 0 && delta <= 525600 ? {dueAt: new Date(now + delta * 60000).toISOString()} : {needsTime: true};
   }
   const clock = /\d{1,2}(?:[:：]\d{2}|点)/.test(text);
-  const date = /今天|今日|今晚|明天|明早|明晚|后天|大后天|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|\d+[年月号]|\d{4}-\d{2}-\d{2}|\d+天后|月底|月初|月中/.test(text);
-  if (!date) return {needsTime:true};
+  const date = /今天|今日|今晚|明天|明早|明晚|后天|大后天|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|\d+[年月号]|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d+\s*天(?:后|之后|内)|月底|月初|月中/.test(text);
+  if (!date) return {needsTime: true};
   const resolved = resolveDeadline(text, now).dueAt;
-  if (!resolved) return {needsTime:true};
+  if (!resolved) return {needsTime: true};
   const dueDate = shanghaiDateKey(Date.parse(resolved));
-  if (!clock || Date.parse(resolved) <= now) return {dueDate:date ? dueDate : undefined, needsTime:true};
-  return {dueAt:resolved};
+  if (!clock || Date.parse(resolved) <= now) return {dueDate: date ? dueDate : undefined, needsTime: true};
+  return {dueAt: resolved};
 }
-const NO_TIME_QUALIFIER = /(?:(?:都|先|暂时|统统|全都)?(?:不设|不用设|不需要设|暂不设|别设|不要设)(?:置)?(?:时间|提醒|闹钟)|(?:都)?先记着|(?:先|暂时)?(?:不用|不要|别)(?:设)?(?:提醒|闹钟|时间)|(?:现在|今天|这会儿)?没空(?:弄|处理|做)?|(?:具体)?(?:几点|哪天|哪一天|时间|日期)(?:以后再说|再说|我还没想好|还没想好|还没定|没定|以后再定|待定))/;
+const NO_TIME_QUALIFIER = /(?:(?:都|先|暂时|统统|全都)?(?:不设|不用设|不需要设|暂不设|别设|不要设)(?:置)?(?:时间|提醒|闹钟)|(?:都)?先记着|(?:先|暂时)?(?:不用|不要|别)(?:设)?(?:提醒|闹钟|时间)|(?:现在|今天|这会儿)?没空(?:弄|处理|做)?|(?:具体)?(?:几点|哪天|哪一天|时间|日期)(?:以后再说|再说|我还没想好|还没想好|还没定|没定|以后再定|再定|再决定|待定|未定|不确定|没确定|还没确定|先不定))/;
+const NO_TIME_STRIP_RE = new RegExp(`[，,；;\\s]*${NO_TIME_QUALIFIER.source}[。！!\\s]*`, 'g');
 export function taskTitle(text: string) {
   return text.replace(/^[，,\s]*(?:还有|另外|顺便|以及|并且|同时|然后再|然后|再(?!说|定|补|议|看))\s*/,'')
-    .replace(/[，,；;\s]*(?:(?:都|先|暂时|统统|全都)?(?:不设|不用设|不需要设|暂不设|别设|不要设)(?:置)?(?:时间|提醒|闹钟)|(?:都)?先记着|(?:先|暂时)?(?:不用|不要|别)(?:设)?(?:提醒|闹钟|时间)|(?:现在|今天|这会儿)?没空(?:弄|处理|做)?|(?:具体)?(?:几点|哪天|哪一天|时间|日期)(?:以后再说|再说|我还没想好|还没想好|还没定|没定|以后再定|待定))[。！!\s]*/g,'')
+    .replace(NO_TIME_STRIP_RE,'')
     .replace(/(?:这两件事|两件事|二件事|这几件事|几件事|这件事)?(?:请|帮我|给我|先|都)?记(?:一下|下来|下|着|住|上|一笔)(?:两件事|二件事|几件事)?|找时间|回头|有空(?:再)?/g,'').replace(/^把/,'').replace(/交了/g,'交')
     .replace(/(?:\d+|[一二两三四五六七八九十]+)\s*个?\s*(?:半\s*)?(?:分钟|小时)(?:之)?后|半\s*个?\s*小时(?:之)?后/g,'')
-    .replace(/\d{4}[年\-/]\d{1,2}[月\-/]\d{1,2}[日号]?|\d{1,2}月\d{1,2}[日号]?/g,'')
-    .replace(/(?:下|本|这)?(?:周|星期|礼拜)[一二三四五六日天]|大后天|后天|明天|今天|今日|今晚|明早|明晚|\d+天后/g,'')
-    .replace(/(?:上午|下午|晚上|傍晚|中午|早上|凌晨)?\s*(?:\d{1,2}|[一二两三四五六七八九十]+)(?:[:：]\d{2}|点(?:半|(?:\d{1,2}|[一二三四五六七八九十]+)分?)?)/g,'')
+    .replace(/\d{4}[年\-/]\d{1,2}[月\-/]\d{1,2}[日号]?|\d{4}年\d{1,2}月底|\d{1,2}月\d{1,2}[日号]?|\d{1,2}月底|(?:(?<![一记写留])下|本|这)个?月\d{1,2}[日号]?/g,'')
+    .replace(/(?:(?:(?:(?<![一记写留])下|本|这)个?)?(?:周|星期|礼拜)[一二三四五六日天]|(?:(?<![一记写留])下|本|这)个?月(?:底|初|中)|(?:月底|月初|月中)(?!(?:总结|报表|报告|盘点|结账|对账|结算|汇报|考核|工作|的))|大后天|后天|明天|今天|今日|今晚|明早|明晚|(?:\d+|[一二两三四五六七八九十零]+)天(?:之)?后)/g,'')
+    .replace(/(?:(?:上午|下午|晚上|傍晚|中午|早上|凌晨)\s*)?(?<![早晚快多差])(?:\d{1,2}|[一二两三四五六七八九十]+)(?:[:：]\d{2}|点(?:[一三13]刻|半|整|(?:零?[\d一二两三四五六七八九十]+)分?)?(?:钟)?)(?!儿|意见|想法|建议|问题|东西|小事)/g,'')
     .replace(/(?:请|帮我|给我|记得)?(?:提醒我|提醒一下|提醒|叫我一下|叫我一声|喊我一下|喊我一声|(?:添加|新增|记|加|留)(?:一个|一条|个|条)?(?:待办|任务)|设(?:置)?(?:一个|一条)?提醒)(?:一下|去|要)?/g,'')
     .replace(/^[我\s，,：:]+|[\s，,。！!]+$/g,'').replace(/^(?:可能|准备|计划|打算|要|得|会|去)/,'').trim().slice(0,500);
 }
-const significant = (s: string) => s.replace(/已经|已|完成|完毕|结束|取消|不用|提醒|待办|任务|那个|这个|我|把|的|了|发(?:送)?|交|去|做|好|付|缴纳|[\s\p{P}]/gu,'');
+const significant = (s: string) => s.replace(/那(?:一)?(?:条|个|项|件)|这(?:一)?(?:条|个|项|件)|已经|已|完成|完毕|完了|完事|结束|搞定|处理(?=[好完]|$)|取消掉?|不用再?|不需要再?|别再|提醒|待办|任务|那个|这个|帮我|给我|一下|我|把|的|了|掉|付清|缴清|结清|发(?:送)?|交|去|做|好|付|缴纳|[\s\p{P}]/gu,'');
+const hasSplitPair = (longer: string, shorter: string) => {
+  if (shorter.length < 4) return false;
+  for (let k = 2; k <= shorter.length - 2; k += 1) {
+    if (longer.includes(shorter.slice(0, k)) && longer.includes(shorter.slice(k))) return true;
+  }
+  return false;
+};
+const fuzzyTitleMatch = (a: string, b: string) =>
+  Boolean(a && b) && (b.includes(a) || a.includes(b) || hasSplitPair(a, b) || hasSplitPair(b, a));
 export const todoRescheduleVerb = /改到|改成|改为|挪到|移到|调到|推到|推迟到|提前到|延后到/;
 export function analyzeTodoText(text: string, context: {now:number;space:WorkspaceMode;todos:TodoRecord[];contextTaskId?:string}): Analysis {
   const clean=text.trim(), todos=context.todos.filter(t=>t.space===context.space && active(t));
@@ -54,17 +86,24 @@ export function analyzeTodoText(text: string, context: {now:number;space:Workspa
   if(context.space==='life'&&isUnboundLifeCancellation(clean))return {kind:'none'};
   // An instruction to move an existing item is not a new plan or reminder.
   if (todoRescheduleVerb.test(clean)
-      && /(?:那(?:一)?(?:条|项|件|个)|这(?:一)?(?:条|项|件|个)|原(?:来|先)|提醒|待办|改到|挪到|推迟到|提前到)/.test(clean)) return {kind:'none'};
-  const hasCapturePrefix = /(?:请|帮我|给我|先)?记(?:一下|下来|下|着|住|上|一笔)|(?:请|帮我|给我|先)?把.+?(?:先|都)?记(?:一下|下来|下|着|住|上|一笔)|(?:请|帮我|给我)?(?:记|加|新增|添加|留)(?:一条|一个|个)?(?:待办|任务)/.test(clean);
+      && /(?:那(?:一)?(?:条|项|件|个)|这(?:一)?(?:条|项|件|个)|原(?:来|先)|提醒|待办|标题|改到|挪到|推迟到|提前到|延后到|调到)/.test(clean)) return {kind:'none'};
+  const hasCapturePrefix = /(?:请|帮我|给我|先)?记(?:一下|下来|下|着|住|上|一笔)|(?:请|帮我|给我|先)?把.+?(?:先|都)?记(?:一下|下来|下|着|住|上|一笔)|(?:请|帮我|给我)?(?:记|加|新增|添加|留)(?:一条|一个|个|条)?(?:待办|任务)/.test(clean);
   const hasNoTimeQualifier = hasCapturePrefix && NO_TIME_QUALIFIER.test(clean) && !/不用给我|别给我|不要给我/.test(clean);
-  const cancel = !/(?:别|不要|不用|不必|不能|先别|暂不).{0,6}(?:取消|撤|删|关)|不是.*取消|先缓|暂缓/.test(clean) && /取消|不用再提醒|不需要.*提醒/.test(clean) && !hasNoTimeQualifier;
-  const isFactNote = /记(?:一)?个信息|随手记(?:一)?个信息|别动.*资料|先别整理|喜欢|讨厌|爱喝|爱吃|爱听|不吃|不喝|过敏|生日是|密码是|车位在/.test(clean);
-  const captureVerb = /交|买|联系|发|办理|整理|提交|检查|对|校对|核对|复核|确认|汇总|打印|复印|预约|领取|跟进|催|问|拿|取|寄|修|改|写|做|准备|更新|盘点|清点|归档|备份|导出|上传|下载|同步|安排|沟通|对接|回访|开票|报销|预订|续费|盖章|审阅|审核|测试|部署|采购|补齐|补交|给.{1,10}发/;
+  const cancel = !/(?:别|不要|不用|不必|不能|先别|暂不).{0,6}(?:取消|撤|删|关)|不是.*取消|先缓|暂缓/.test(clean)
+    && /(?:取消|不用再提醒|不需要再?提醒|别再提醒|不要再提醒|(?:撤掉|删掉|关掉).*(?:提醒|待办)|(?:提醒|待办).*(?:撤掉|删掉|关掉))/.test(clean)
+    && !hasNoTimeQualifier;
+  const isFactNote = /记(?:一)?个信息|随手记(?:一)?个信息|别动.*资料|先别整理|喜欢|讨厌|爱喝|爱吃|爱听|不吃|不喝|忌口|只喝|最爱|过敏|生日是|密码是|车位在|住址是|电话是|手机号是|邮箱是/.test(clean);
+  const captureVerb = /交|买|联系|发|办理|整理|提交|检查|对|校对|核对|复核|确认|汇总|打印|复印|预约|领取|跟进|催|问|拿|取|寄|修|改|写|做|准备|更新|盘点|清点|归档|备份|导出|上传|下载|同步|安排|沟通|对接|回访|开票|报销|预订|续费|盖章|审阅|审核|测试|部署|采购|补齐|补交|去|打|洗|订|定|签|接|送|陪|看|带|喂|换|续|还|查|收|关|煮|充|泡|清|退|缴|领|开|扫|贴|装|拜访|汇报|演示|复盘|体检|复查|复诊|吃药|给.{1,10}(?:发|打|买|订|办|送|带)/;
   const capture = !isFactNote && hasCapturePrefix && (hasNoTimeQualifier || captureVerb.test(clean));
-  const completed = !capture && !/(?:客户|同事|对方|别人|他们|她们|他|她)(?:说|已经|刚)|还没|没有|未完成|[没不未别].{0,8}(?:完成|做|交|发|付|办)|明天|后天|准备|计划|打算|将要|等.*完成/.test(clean) && /已经.*[了好]|已完成|完成了|做完了|搞定|办好了|交了|发了|付了/.test(clean);
+  const completedGuard = /(?:客户|同事|对方|别人|他们|她们|他|她|[A-Za-z\u4e00-\u9fa5]{1,3}(?:总|工|经理|老师|师傅|医生|律师|女士|先生))(?:说|让|要求|通知|已经|已|刚|把)|还没|没有|未完成|尚未|暂未|[没不未别无].{0,8}(?:完成|做|交|发|付|办|处理|搞定|签|洗|打|预约|订)|明天|后天|大后天|下周|下礼拜|下星期|准备|计划|打算|将要|还要|等.*完成|打卡|(?:跑了?|走了?|喝了?|存了?|花了?|省了?|收入|支出|体重|饮水).*\d+(?:\.\d+)?\s*(?:元|块|公里|km|米|ml|毫升|L|升|kg|斤|步|杯)/i;
+  const completedVerb = /已完成|完成了|做完了|搞定了?|办好了|办完了|(?:已|已经).{0,6}处理|处理(?:好|完)了?|交了|发了|付了|付清了?|缴清了?|结清了?|预约好了?|订好了?|洗好了?|签好了?|弄好了|弄完了|打完了|标(?:为|成)?完成|勾掉/.test(clean)
+    || (/已经.*[了好]/.test(clean) && !/(?:^|[，,\s])(?:请|帮我|给我|记得)?提醒我(?!(?:已经|已|刚))/.test(clean));
+  const completed = !capture && !completedGuard.test(clean) && completedVerb;
   if (cancel || completed) {
     const key=significant(clean);
-    let matches=key ? todos.filter(t=>{const title=significant(t.title);return title && (title.includes(key)||key.includes(title));}) : todos;
+    let matches=key
+      ? todos.filter(t=>fuzzyTitleMatch(key, significant(t.title)))
+      : (cancel && !context.contextTaskId ? [] : todos);
     if (!key && context.contextTaskId) matches=todos.filter(t=>t.id===context.contextTaskId);
     if(matches.length===1)return {kind:cancel?'cancel':'complete',todoId:matches[0].id};
     if(matches.length>1)return {kind:'clarify',choices:matches,choiceAction:cancel?'cancel':'complete'};
@@ -72,9 +111,12 @@ export function analyzeTodoText(text: string, context: {now:number;space:Workspa
   }
   if (!hasNoTimeQualifier && /不(?:用|要|需要).*提醒|别.*提醒|不要.*待办/.test(clean)) return {kind:'none'};
   const waiting=todos.filter(t=>t.needsTime);
-  if (/^(?:今天|明天|后天|\d{4}-\d{2}-\d{2})?(?:上午|下午|晚上|中午|早上|凌晨)?\s*[\d一二两三四五六七八九十]+(?:[:：]\d{2}|点(?:半|\d+分?)?)[。！!\s]*$/.test(clean) && waiting.length) {
+  const supplyMatch = clean.match(/^(?:(?:就|那就|定在|定到|改到|改为|推到|移到)\s*)?((?:(?:今天|今日|今晚|明天|明早|明晚|后天|大后天|(?:(?:这|本|(?<![一记写留])下)个?)?(?:周|星期|礼拜)[一二三四五六日天]|(?:这|本|(?<![一记写留])下)个?月(?:底|初|中)|月底|月初|月中|(?:这|本|(?<![一记写留])下)个?月\d{1,2}[日号]?|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日号]?|\d{1,2}月\d{1,2}[日号]?|\d{1,2}月底)\s*)?(?:上午|下午|晚上|傍晚|中午|早上|凌晨)?\s*(?:\d{1,2}|[一二两三四五六七八九十]+)(?:[:：]\d{2}|点(?:[一三13]刻|半|整|(?:零?[\d一二两三四五六七八九十]+)分?)?))(?:[，,\s]*(?:吧|啊|好吗|行吗))?[。！!\s]*$/);
+  if (supplyMatch && waiting.length) {
     if(waiting.length>1)return {kind:'clarify',choices:waiting,choiceAction:'time'};
-    return {kind:'supply-time',todoId:waiting[0].id,...timeFields(/今天|明天|后天|\d{4}-/.test(clean)?clean:`${waiting[0].dueDate||''} ${clean}`,context.now)};
+    const timeText = supplyMatch[1];
+    const hasDate = /今天|今日|今晚|明天|明早|明晚|后天|大后天|周|星期|礼拜|\d{4}[-/年]|\d{1,2}月|月底|月初|月中/.test(timeText);
+    return {kind:'supply-time',todoId:waiting[0].id,...timeFields(hasDate?timeText:`${waiting[0].dueDate||''} ${timeText}`,context.now)};
   }
   const explicit=capture||/提醒|(?:叫我|喊我)(?:一下|一声)|添加.*(?:待办|任务)|记.*待办/.test(clean)||context.space==='life'&&isExplicitLifeTask(clean);
   // Life ledger entries (expenses, income, savings, water, sleep, weight) and past-tense records are facts, not future todos.
@@ -92,7 +134,7 @@ export function analyzeTodoText(text: string, context: {now:number;space:Workspa
     : isLifeRecord) return {kind:'none'};
   // Multi-fact client communications must keep the existing project review flow.
   if (!explicit && context.space === 'work' && /[，,。；;]/.test(clean) && /预算|项目|客户|需求|阶段/.test(clean)) return {kind:'none'};
-  const plan=/明天|后天|大后天|今天|周[一二三四五六日天]|星期|礼拜|\d+点|[一二两三四五六七八九十]+点/.test(clean) && !/还没|没有|吗|？|\?|取消/.test(clean);
+  const plan=/明天|后天|大后天|今天|今日|今晚|明早|明晚|(?:这|本|下)个?(?:周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|月底|\d{1,2}[日号])|周[一二三四五六日天]|星期|礼拜|\d+点|[一二两三四五六七八九十]+点/.test(clean) && !/还没|没有|吗|？|\?|取消/.test(clean);
   if(!explicit&&!plan)return {kind:'none'};
   const title=taskTitle(clean); if(!title)return {kind:'none'};
   return {kind:explicit?'create':'suggest',title,...timeFields(clean,context.now)};

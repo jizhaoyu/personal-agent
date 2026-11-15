@@ -116,3 +116,39 @@ test('failed scheduling enable never leaves a falsely pending task; retry can fi
 test('complex project communication stays in the existing review flow rather than a todo suggestion',()=>{
   const result=analyzeTodoText('陈总的商城改版项目预算3万元，需求已确认，周五下午三点发报价',{now,space:'work',todos:[]});assert.equal(result.kind,'none');
 });
+
+test('month-end, weekday with trailing clock, and quarter-hour expressions extract cleanly', () => {
+  const monthEnd = analyzeTodoText('这月底提醒我交房租，几点再定', { now, space: 'life', todos: [] });
+  assert.equal(monthEnd.kind, 'create');
+  assert.equal(monthEnd.title, '交房租');
+  assert.equal(monthEnd.dueDate, '2026-11-30');
+  assert.equal(monthEnd.dueAt, undefined);
+  assert.equal(monthEnd.needsTime, true);
+
+  const sundayVac = analyzeTodoText('帮我记一下星期天去给猫打疫苗，早上九点', { now: Date.parse('2026-11-05T02:00:00Z'), space: 'life', todos: [] });
+  assert.equal(sundayVac.kind, 'create');
+  assert.equal(sundayVac.title, '给猫打疫苗');
+  assert.equal(sundayVac.dueAt, '2026-11-08T01:00:00.000Z');
+
+  const nextSundayVac = analyzeTodoText('帮我记一下下星期天去给猫打疫苗，早上九点', { now: Date.parse('2026-11-05T02:00:00Z'), space: 'life', todos: [] });
+  assert.equal(nextSundayVac.kind, 'create');
+  assert.equal(nextSundayVac.title, '给猫打疫苗');
+  assert.equal(nextSundayVac.dueAt, '2026-11-15T01:00:00.000Z');
+
+  const pastSundayVac = analyzeTodoText('帮我记一下星期天去给猫打疫苗，早上九点', { now: Date.parse('2026-11-08T06:00:00Z'), space: 'life', todos: [] });
+  assert.equal(pastSundayVac.kind, 'create');
+  assert.equal(pastSundayVac.title, '给猫打疫苗');
+  assert.equal(pastSundayVac.dueDate, '2026-11-08');
+  assert.equal(pastSundayVac.dueAt, undefined);
+  assert.equal(pastSundayVac.needsTime, true);
+
+  const oneQuarter = analyzeTodoText('明天上午九点一刻提醒我开站会', { now, space: 'work', todos: [] });
+  assert.equal(oneQuarter.kind, 'create');
+  assert.equal(oneQuarter.title, '开站会');
+  assert.equal(oneQuarter.dueAt, '2026-11-05T01:15:00.000Z');
+
+  const threeQuarter = analyzeTodoText('下礼拜四下午两点三刻提醒我签协议', { now, space: 'work', todos: [] });
+  assert.equal(threeQuarter.kind, 'create');
+  assert.equal(threeQuarter.title, '签协议');
+  assert.equal(threeQuarter.dueAt, '2026-11-12T06:45:00.000Z');
+});

@@ -11,13 +11,16 @@ export interface AgentModelInput { requestId:string; text:string; space:Workspac
 export interface AgentCaptureInput { text:string;space:WorkspaceMode;sourceId:string;turns?:AgentTurn[];contextTaskId?:string;useModel?:boolean;expectedIdentity?:string }
 export interface AgentCaptureResult {handled:boolean;created:TodoRecord[];changed:TodoRecord[];message?:string;silent?:boolean;needsChoice?:TodoRecord[];choiceAction?:'complete'|'cancel'|'time';needsReview?:boolean;modelUsed:boolean;warning?:string}
 type Todos=Pick<ReturnType<typeof createTodoService>,'list'|'create'|'update'|'complete'|'cancel'|'handleText'|'configure'>;
-type PlanContext={text:string;space:WorkspaceMode;todos:TodoRecord[];now:number};
+type PlanContext={text:string;space:WorkspaceMode;todos:TodoRecord[];now:number;focused?:TodoRecord;contextTask?:TodoRecord;fallback?:TodoRecord;focusInvalidated?:boolean};
 const active=(t:TodoRecord)=>t.status==='pending'||t.status==='suggested';
 const targetKey=(s:string)=>s.normalize('NFKC').toLowerCase().replace(/[\s\p{P}]/gu,'');
 function mentionsTarget(text:string,title:string) {
   const key=targetKey(title);
   const subject=key.replace(/^(?:交|缴|付)(?=.{2,}$)/,'').replace(/^找(?:行政|前台)(?=.{2,}$)/,'');
   if(subject.length>=2&&text.includes(subject))return true;
+  for(let k=2;k<=key.length-2;k++){
+    if(text.includes(key.slice(0,k))&&text.includes(key.slice(k)))return true;
+  }
   const scoped=key.match(/^([a-z0-9]+店)盘点$/);
   if(scoped)return text.includes(scoped[1])&&/盘点|清点/.test(text);
   const delivery=key.match(/^(送.{2,8})去(.{2,8})$/);
@@ -35,37 +38,64 @@ function originalOnly(text:string){
   const explicit=/(?:提醒我|提醒一下|请提醒|记住|记一下|记下|记着|添加.*(?:任务|待办)|新增.*(?:任务|待办)|(?:我|帮我|请)(?:计划|打算|准备))/.test(text)&&!/不要.*提醒|不用.*提醒|别.*提醒/.test(text);
   return uncertain&&!explicit;
 }
-function explicitLocalChange(context:PlanContext):AgentChange|undefined {
+function explicitLocalChange(context:PlanContext,preNamed=false):AgentChange|undefined {
   const {text,todos,space,now}=context;
+  const trimmed=text.trim();
   // A named action category can still select one target after a multi-item turn.
-  if(/^交费那(?:个|项|条)已经处理好了[。！!\s]*$/.test(text)){
-    const fees=todos.filter(t=>active(t)&&t.space===space&&/^(?:交|缴纳|缴|付)(?:.{0,15}费(?:用)?|房租|租金)$/.test(targetKey(t.title)));
+  if(/^(?:交|缴)费(?:那(?:一)?(?:个|项|条|件)|这(?:一)?(?:个|项|条|件))(?:已经|已)?(?:处理好|处理完|搞定|办好|办完|完成|交完|交清|付清)(?:了)?[。！!\s]*$/.test(trimmed)){
+    const fees=todos.filter(t=>{
+      if(!active(t)||t.space!==space)return false;
+      const k=targetKey(t.title);
+      return /^(?:交|缴|付)(?:.{0,15}费(?:用)?|房租|租金)$/.test(k)||/[交缴付].{0,8}(?:房租|租金)/.test(k)||(/[交缴付]/.test(k)&&k.includes('费'));
+    });
     if(fees.length===1)return {todoId:fees[0].id,expectedRevision:fees[0].revision,sourceQuote:text,action:'complete'};
     return;
   }
+  if(/[？?「」“”"]|如果|假如|举例|比如|原话|可能|好像|是不是|是否|先等等/.test(text))return;
   const targets=todos.filter(t=>active(t)&&t.space===space&&mentionsTarget(targetKey(text),t.title));
-  if(targets.length!==1||/[？?「」“”"]|如果|假如|举例|比如|原话|可能|好像|是不是|是否|先等等/.test(text))return;
-  const target=targets[0];
-  const candidate={todoId:target.id,expectedRevision:target.revision,sourceQuote:text};
   // A clock-only change must preserve the date and use the existing reminder to disambiguate the old clock.
-  const shift=text.match(/把([一二三四五六七八九十\d]+点(?:半|[一二三四五六七八九十\d]+分?)?)响改成([一二三四五六七八九十\d]+点(?:半|[一二三四五六七八九十\d]+分?)?)[。！!\s]*$/);
-  if(shift&&target.dueAt&&/那(?:条|项|个)/.test(text)&&!/改天|明天|后天|周[一二三四五六日天]|不改时间|不要改|别改/.test(text)){
-    const original=Date.parse(target.dueAt);
-    if(!Number.isFinite(original))return;
-    const local=new Date(original+8*3600000);
-    const day=local.toISOString().slice(0,10);
-    const half=local.getUTCHours()>=12?'下午':'上午';
-    const parseClock=(clock:string)=>analyzeTodoText(`提醒我核对时间${day}${half}${clock}`,{now:original-86400000,space,todos:[]}).dueAt;
-    if(Date.parse(parseClock(shift[1])||'')!==original)return;
-    const dueAt=parseClock(shift[2]);
-    if(dueAt&&Date.parse(dueAt)>now)return {...candidate,action:'reschedule',dueAt};
+  const shift=trimmed.match(/把([一二三四五六七八九十两\d]+点(?:[一三13]刻|半|[一二三四五六七八九十两\d]+分?)?)响?(?:的?提醒)?(?:改成|改到|调到|挪到)([一二三四五六七八九十两\d]+点(?:[一三13]刻|半|[一二三四五六七八九十两\d]+分?)?)[。！!\s]*$/);
+  if(shift&&!/改天|明天|后天|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|不改时间|不要改|别改|先别/.test(text)){
+    const hasAnaphora=/那(?:条|项|个|件)|这(?:条|项|个|件)/.test(text);
+    const rescheduleFor=(t:TodoRecord)=>{
+      if(!t.dueAt)return undefined;
+      const original=Date.parse(t.dueAt);
+      if(!Number.isFinite(original))return undefined;
+      const local=new Date(original+8*3600000);
+      const day=local.toISOString().slice(0,10);
+      const h=local.getUTCHours();
+      const half=h>=18?'晚上':h>=13?'下午':h===12?'中午':'上午';
+      const parseClock=(clock:string)=>analyzeTodoText(`提醒我核对时间${day}${half}${clock}`,{now:original-86400000,space,todos:[]}).dueAt;
+      if(Date.parse(parseClock(shift[1])||'')!==original)return undefined;
+      const dueAt=parseClock(shift[2]);
+      return dueAt&&Date.parse(dueAt)>now?dueAt:undefined;
+    };
+    let target=targets.length===1&&(hasAnaphora||/响/.test(trimmed)||context.focused?.id===targets[0].id)?targets[0]:undefined;
+    if(!target&&targets.length===0){
+      const ctxTarget=[context.focused,context.contextTask,context.fallback].find(t=>t&&active(t)&&t.space===space&&rescheduleFor(t));
+      if(ctxTarget)target=ctxTarget;
+      else if(!context.focusInvalidated&&!hasAnaphora&&/响(?:改成|改到|调到|挪到)/.test(trimmed)){
+        const byClock=todos.filter(t=>active(t)&&t.space===space&&rescheduleFor(t));
+        if(byClock.length===1)target=byClock[0];
+      }
+    }
+    if(target){
+      const dueAt=rescheduleFor(target);
+      if(dueAt)return {todoId:target.id,expectedRevision:target.revision,sourceQuote:text,action:'reschedule',dueAt};
+    }
     return;
   }
+  if(preNamed||targets.length!==1)return;
+  const target=targets[0];
+  const candidate={todoId:target.id,expectedRevision:target.revision,sourceQuote:text};
   const clauses=text.split(/[，,；;。\n]+/).map(s=>s.trim()).filter(Boolean);
   const directive=clauses.at(-1)||'';
   if(!unsafeCompletion(text)&&!/(?:他们|对方|同事|客户|别人|他|她)(?:说|已|刚|做|发|交|弄|把|那份|的)|快(?:要)?(?:完|好)|就差/.test(text)
-      && /(?:已经|刚|总算).{0,12}(?:做完|跑完|清点完|发出去了|盖了|拿回来了)|(?:做|跑|清点)完了/.test(text)
-      && /(?:那(?:条|项|件)|这(?:条|项|件)).{0,7}(?:划了|关一下|收了|勾掉|标完成|标完)/.test(directive))return {...candidate,action:'complete'};
+      && (/(?:(?:已经|刚|总算).{0,12}(?:做完|跑完|清点完|发出去了|盖了|拿回来了)|(?:做|跑|清点)完了)/.test(text)
+          && /(?:那(?:条|项|件)|这(?:条|项|件)).{0,7}(?:划了|关一下|收了|勾掉|标完成|标完)/.test(directive)
+        || !/另(?:一件|外)|顺便|改名|改到|改成|但是|可是|不过|然而/.test(text)
+          && /(?:已经|已)(?:预约好|订好|洗好|签好|办好|办完|搞定|弄好|弄完|处理好|处理完|付清|缴清|结清|完成|做完)(?:了)?[。！!\s]*$/.test(trimmed)))
+    return {...candidate,action:'complete'};
   if(!/先缓|暂缓|先放|保持|留着|不是让|不是说|(?:别|不要|不用|不必|不能).{0,4}(?:撤|关掉|取消|删掉)/.test(text)
       && clauses.some(s=>/不.{1,12}了|不要了/.test(s))
       && clauses.some(s=>/(?:提醒|待办).{0,8}(?:撤|关掉|取消)|(?:那条|这条).{0,14}不要了/.test(s)
@@ -74,7 +104,7 @@ function explicitLocalChange(context:PlanContext):AgentChange|undefined {
 }
 const followupRename=/^标题(?:改成|改为|换成)([^。！？!?，,；;\n]{1,100})[。！!\s]*$/;
 const followupCorrection=/^不是((?:今天|明天|后天|(?:下|本|这)?周[一二三四五六日天]))[，,]\s*是(.+?)[。！!\s]*$/;
-const followupTime=/^(?:就|定在|定到|改到)?\s*((?:今天|今晚|明天|明早|明晚|后天|大后天|(?:下|本|这)?(?:周|星期|礼拜)[一二三四五六日天])(?:上午|中午|下午|晚上|傍晚|早上)?[一二三四五六七八九十两\d]+(?:点(?:半|[一二三四五六七八九十两\d]+分?)?|[:：]\d{2}))(?:吧)?[。！!\s]*$/;
+const followupTime=/^(?:就|定在|定到|改到)?\s*((?:今天|今晚|明天|明早|明晚|后天|大后天|(?:下|本|这)?(?:周|星期|礼拜)[一二三四五六日天]|(?:这|本|下)个?月(?:\d{1,2}[日号]|底|初|中)|\d{1,2}月\d{1,2}[日号])(?:上午|中午|下午|晚上|傍晚|早上|凌晨)?[一二三四五六七八九十两\d]+(?:点(?:[一三13]刻|半|整|[一二三四五六七八九十两\d]+分?)?|[:：]\d{2}))(?:吧)?[。！!\s]*$/;
 function contextualChange(text:string,todo:TodoRecord,now:number):AgentChange|undefined {
   const rename=text.match(followupRename);
   const base={todoId:todo.id,expectedRevision:todo.revision,sourceQuote:text};
@@ -94,22 +124,38 @@ function contextualChange(text:string,todo:TodoRecord,now:number):AgentChange|un
 }
 // Extract the old title before looking up the target: the new title and the
 // new time are not evidence of which existing task should be changed.
-function namedWorkChange({text,todos,space,now}:PlanContext):{change?:AgentChange}|undefined {
-  if(space!=='work')return;
+function namedChange({text,todos,space,now}:PlanContext):{change?:AgentChange}|undefined {
   const command=text.trim().replace(/[。！!]+$/,'').trimEnd();
-  const rename=command.match(/^(?:把)?(.+?)(?:那(?:一)?条(?:待办)?(?:的)?|(?:的)?)标题(?:改成|改为|换成)(.+)$/)
-    ?? command.match(/^(?:把)?(.+?)那(?:一)?条(?:待办)?改名(?:成|为|叫)(.+)$/);
-  const move=command.match(/^(?:把)?(.+?)(?:那(?:一)?条)?(?:的)?提醒(?:时间)?(?:改到|挪到|推迟到|提前到|调到)(.+?)(?:提醒)?$/);
-  const cancel=command.match(/^(?:(?:别|不要|不用|先别|暂时)?(?:帮我|请)?)?(?:取消(?:掉)?(.+?)的提醒|把(.+?)(?:那(?:一)?条)?的?提醒(?:取消(?:掉)?|撤掉|删掉|关掉)|(.+?)不用(?:再)?提醒(?:我)?了)$/);
-  const complete=command.match(/^(?:把)?(.+?)(?:那(?:一)?条)?(?:已经)?(?:完成了|做完了|搞定了|弄完了|处理好了|办好了|标(?:为|成)?完成|勾掉)$/);
-  const subject=(rename?.[1]??move?.[1]??cancel?.[1]??cancel?.[2]??cancel?.[3]??complete?.[1])?.trim();
+  const rename=command.match(/^(?:把)?(.+?)(?:(?:那|这)(?:一)?(?:条|个|项|件)(?:待办)?(?:的)?|(?:的)?)标题(?:改成|改为|换成)(.+)$/)
+    ?? command.match(/^(?:把)?(.+?)(?:那|这)(?:一)?(?:条|个|项|件)(?:待办)?改名(?:成|为|叫)(.+)$/);
+  const move=command.match(/^(?:把)?(.+?)(?:(?:那|这)(?:一)?(?:条|个|项|件))?(?:的)?提醒(?:时间)?(?:改到|挪到|推迟到|提前到|调到)(.+?)(?:提醒)?$/);
+  const stopRemind=command.match(/^(?:不用|不需要)(?:再)?提醒我(.+?)了$/)
+    ?? command.match(/^(?:别|不要)再提醒我(.+?)了$/)
+    ?? command.match(/^(.+?)(?:不用|不需要)(?:再)?提醒(?:我)?了$/);
+  const cancel=stopRemind
+    ?? command.match(/^(?:(?:别|不要|不用|先别|暂时)?(?:帮我|请)?)?(?:取消(?:掉)?(.+?)(?:(?:这|那)(?:一)?(?:个|条|项|件)(?:的)?|的)?(?:提醒|待办)|把(.+?)(?:(?:那|这)(?:一)?(?:条|个|项|件)(?:的)?|的)?(?:提醒|待办)(?:取消(?:掉)?|撤掉|删掉|关掉))$/);
+  const complete=command.match(/^(?:把)?(.+?)(?:(?:那|这)(?:一)?(?:条|个|项|件))?(?:已经|已)?(?:完成了|做完了|搞定了|弄完了|处理好了|办好了|标(?:为|成)?完成|勾掉)$/);
+  const rawSubject=(rename?.[1]??move?.[1]??stopRemind?.[1]??cancel?.[1]??cancel?.[2]??complete?.[1])?.trim();
+  const subject=rawSubject?.replace(/^(?:请|帮我|给我|先|就|把|一下)+\s*/,'').trim();
   if(!subject)return;
+  if(/^(?:这|那|哪)(?:一|两|二|几)?(?:个|条|项|件)?(?:都)?$/.test(subject)||/^交费$/.test(subject))return;
+  if(stopRemind&&/^(?:我|了|设|设置)/.test(subject))return;
   if(/[，,；;。\n？?「」“”"]|如果|假如|要是|举例|比如|原话|可能|好像/.test(command)||
-     /^(?:别|不要|不用|先别|暂时)/.test(command)||
+     (!stopRemind&&/^(?:别|不要|不用|先别|暂时)/.test(command))||
      /^(?:(?:客户|同事|对方|别人|他们|她们|他|她)(?:说|已经|刚)|(?:别|不要|不用|暂时))/.test(subject)||
      /(?:还没|没|未|不|别|等到|快要)$/.test(subject))return {};
   const key=(title:string)=>title.trim().normalize('NFKC').toLowerCase();
-  const targets=todos.filter(t=>t.space===space&&active(t)&&key(t.title)===key(subject));
+  let targets=todos.filter(t=>t.space===space&&active(t)&&key(t.title)===key(subject));
+  if(targets.length===0&&stopRemind){
+    const sk=targetKey(subject);
+    if(sk.length>=2){
+      targets=todos.filter(t=>{
+        if(t.space!==space||!active(t))return false;
+        const tk=targetKey(t.title);
+        return tk===sk||(sk.length<=tk.length&&mentionsTarget(sk,t.title));
+      });
+    }
+  }
   if(targets.length!==1)return {};
   const target=targets[0];
   const base={todoId:target.id,expectedRevision:target.revision,sourceQuote:text};
@@ -124,11 +170,11 @@ function namedWorkChange({text,todos,space,now}:PlanContext):{change?:AgentChang
   }
   return {change:{...base,action:cancel?'cancel':'complete'}};
 }
-const qualifierClause=/^(?:(?:都|先|暂时|统统|全都)?(?:不设|不用设|不需要设|暂不设|别设|不要设)(?:置)?(?:时间|提醒|闹钟)|(?:都)?先记着|(?:先|暂时)?(?:不用|不要|别)(?:设)?(?:提醒|闹钟|时间)|(?:现在|今天|这会儿)?没空(?:弄|处理|做)?|(?:具体)?(?:几点|哪天|哪一天|时间|日期).*(?:再说|没定|没想好|再定|待定)|(?:请|帮我|先|给我)?记(?:一下|下来|下|着|住|上|一笔)(?:两件事|二件事|几件事)?)[。！!：:\s]*$/;
-const clausesOf=(text:string)=>text.split(/[，,；;\n。]|然后|还要|以及|顺便|和|再(?!说|定|补|议|看)/).map(s=>s.trim()).filter(Boolean);
+const qualifierClause=/^(?:(?:都|先|暂时|统统|全都)?(?:不设|不用设|不需要设|暂不设|别设|不要设)(?:置)?(?:时间|提醒|闹钟)|(?:都)?先记着|(?:先|暂时)?(?:不用|不要|别)(?:设)?(?:提醒|闹钟|时间)|(?:现在|今天|这会儿)?没空(?:弄|处理|做)?|(?:具体)?(?:几点|哪天|哪一天|时间|日期).*(?:再说|没定|没想好|再定|再决定|待定|未定|不确定|没确定|先不定)|(?:请|帮我|先|给我)?记(?:一下|下来|下|着|住|上|一笔)(?:两件事|二件事|几件事)?)[。！!：:\s]*$/;
+const clausesOf=(text:string)=>text.split(/[，,；;\n。]|然后|还要|以及|顺便|和|(?<!家里|手头|店里)还有|再(?!说|定|补|议|看)/).map(s=>s.trim()).filter(Boolean);
 const captureClauses=(text:string)=>clausesOf(text).filter(s=>!/如果|假如|不对|不用|不必|不要|别|不是|(?:家里|手头|店里)还有|算了|实际|已经|已发|发了|交了|累|不想|开心|烦/.test(s)
   && !qualifierClause.test(s) && taskTitle(s)!=='');
-const actionStartVerb=/^(?:交|买|联系|发|办理|整理|提交|检查|对|校对|核对|复核|确认|汇总|打印|复印|预约|领取|跟进|催|问|拿|取|寄|修|改|写|做|准备|更新|盘点|清点|归档|备份|导出|上传|下载|同步|安排|沟通|对接|回访|开票|报销|预订|续费|盖章|审阅|审核|测试|部署|采购|补齐|补交|给.{1,10}发)/;
+const actionStartVerb=/^(?:交|买|联系|发|办理|整理|提交|检查|对|校对|核对|复核|确认|汇总|打印|复印|预约|领取|跟进|催|问|拿|取|寄|修|改|写|做|准备|更新|盘点|清点|归档|备份|导出|上传|下载|同步|安排|沟通|对接|回访|开票|报销|预订|续费|盖章|审阅|审核|测试|部署|采购|补齐|补交|打|订|定|洗|换|续|还|查|带|收|关|煮|充|泡|清|喂|接|送|陪|签|去|把|给.{1,10}(?:发|买|订|打|办|送|带))/;
 function localMultiTasks(text:string,space:WorkspaceMode,nowMs:number,initial:TodoRecord[]):{title:string;dueAt?:string;dueDate?:string}[]|undefined {
   const clean=text.trim();
   const hasCaptureStart=/^(?:请|帮我|给我|先)?记(?:一下|下来|下|着|住|上|一笔|(?:两|二|2|几)(?:件事|个待办|条待办))|^(?:请|帮我|给我|先)?把.+?(?:这两件事|两件事|二件事|这几件事|几件事)?(?:先|都)?记(?:一下|下来|下|着|住|上|一笔)|^(?:请|帮我|给我)?(?:添加|新增|记|加)(?:两|二|2|几)(?:个|条)?(?:待办|任务)/.test(clean);
@@ -136,8 +182,9 @@ function localMultiTasks(text:string,space:WorkspaceMode,nowMs:number,initial:To
   if(!hasCaptureStart&&!hasReminderStart)return;
   const body=clean
     .replace(/^(?:请|帮我|给我|先)?(?:记(?:一下|下来|下|着|住|上|一笔)?|添加|新增)(?:两|二|2|几)(?:件事|个待办|条待办|个任务|条任务)[：:，,\s]*/,'')
+    .replace(/^(?:请|帮我|给我|先)?记(?:一下|下来|下|着|住|上|一笔)[：:，,\s]*/,'')
     .replace(/^(?:请|帮我|给我|先)?把(.+?)(?:这两件事|两件事|二件事|这几件事|几件事|这件事)?(?:先|都)?记(?:一下|下来|下|着|住|上|一笔)/,'$1');
-  const rawSplit=body.split(/[，,；;\n。]|然后|还要|以及|顺便|再(?!说|定|补|议|看)/).map(s=>s.trim()).filter(s=>s&&!qualifierClause.test(s));
+  const rawSplit=body.split(/[，,；;\n。]|(?<!还有|另外|顺便|以及|并且|同时|然后|还要|再)(?=(?:然后|还要|以及|顺便|(?<!家里|手头|店里)还有|再(?!说|定|补|议|看)))/).map(s=>s.trim()).filter(s=>s&&!qualifierClause.test(s));
   const raw=rawSplit.flatMap(clause=>{
     const stripped=clause.replace(/^(?:请|帮我|给我|先)?记(?:一下|下来|下|着|住|上|一笔)\s*/,'').trim();
     const parts=stripped.split(/(?:和|、)/).map(s=>s.trim()).filter(Boolean);
@@ -157,12 +204,13 @@ function localMultiTasks(text:string,space:WorkspaceMode,nowMs:number,initial:To
   const items=kept.filter(c=>!cancelled.some(k=>k&&c.includes(k)));
   if(!items.length||(items.length===1&&!cancelled.length))return;
   if(items.some(c=>/如果|假如|不对|不用|不必|不要|别|不是|算了|实际|已经|已发|发了|交了|累|不想|开心|烦/.test(c)))return;
-  if(!hasCaptureStart&&items.slice(1).some(c=>!/^(?:还有|另外|顺便|以及|并且|同时|再|请|帮我|给我|记得|提醒|记(?:一下|下来|下|着|住|上|一笔))/.test(c)))return;
+  if(!hasCaptureStart&&items.slice(1).some(c=>!/^(?:还有|另外|顺便|以及|并且|同时|还要|然后|再|请|帮我|给我|记得|提醒|记(?:一下|下来|下|着|住|上|一笔))/.test(c)))return;
   const forceNoTime=/(?:都|先|暂时|统统|全都)?(?:不设|不用设|不需要设|暂不设|别设|不要设)(?:置)?(?:时间|提醒|闹钟)|(?:都)?先记着|(?:先|暂时)?(?:不用|不要|别)(?:设)?(?:提醒|闹钟|时间)/.test(clean);
   const parsedItems:{title:string;dueAt?:string;dueDate?:string}[]=[];
   for(const item of items){
-    const stripped=item.replace(/^(?:还有|另外|顺便|以及|并且|同时|然后再|然后|再)\s*/,'').trim();
-    const probe=/^(?:请|帮我|给我|先|记得)?(?:提醒|记(?:一下|下来|下|着|住|上|一笔)|(?:添加|新增|记|加).*(?:待办|任务))/.test(stripped)?stripped:`帮我记一下${stripped}`;
+    const stripped=item.replace(/^(?:(?:还有|另外|顺便|以及|并且|同时|还要|然后再|然后|再)\s*)+/,'').trim();
+    const baseProbe=/^(?:请|帮我|给我|先|记得)?(?:提醒|记(?:一下|下来|下|着|住|上|一笔)|(?:添加|新增|记|加).*(?:待办|任务))/.test(stripped)?stripped:`帮我记一下${stripped}`;
+    const probe=forceNoTime&&!/不设|不用设|先记着|暂不设|别设/.test(baseProbe)?`${baseProbe}，先不设时间`:baseProbe;
     const parsed=analyzeTodoText(probe,{now:nowMs,space,todos:initial});
     if(parsed.kind!=='create'||!parsed.title)return;
     parsedItems.push({title:parsed.title,dueAt:forceNoTime?undefined:parsed.dueAt,dueDate:forceNoTime?undefined:parsed.dueDate});
@@ -222,6 +270,8 @@ export function createPersonalAgent(options:{todos:Todos;repository?:{getReadIde
   const identity=()=>options.readIdentity?.()??options.repository?.getReadIdentity?.().split(':')[0]??'';
   const completed=new Map<string,AgentCaptureResult>();
   let previousTarget:{identity:string;space:WorkspaceMode;id:string;revision:number}|undefined;
+  let clockFallbackTarget:{identity:string;space:WorkspaceMode;id:string;revision:number}|undefined;
+  let focusInvalidated=false;
   const frozenPlans=new Map<string,{text:string;raw:string}>();let queue:Promise<unknown>=Promise.resolve();
   function assertCurrent(expected:string){if(options.repository?.isRestoring?.()||identity()!==expected)throw Error('资料已变化，原文已保留，请按当前事项重新核对。');}
   async function capture(input:AgentCaptureInput):Promise<AgentCaptureResult>{
@@ -230,11 +280,34 @@ export function createPersonalAgent(options:{todos:Todos;repository?:{getReadIde
     const expected=input.expectedIdentity??identity(),key=`${expected}:${input.space}:${input.sourceId}`;
     const cached=completed.get(key);if(cached)return {...cached,created:[...cached.created],changed:[]};
     const focus=previousTarget;previousTarget=undefined;
+    const fallbackFocus=clockFallbackTarget;clockFallbackTarget=undefined;
+    const wasInvalidated=focusInvalidated;focusInvalidated=false;
+    let currentInitial:TodoRecord[]=[];
+    let focused:TodoRecord|undefined;
+    let validContextTask:TodoRecord|undefined;
+    let validFallback:TodoRecord|undefined;
+    let staleFocus=false;
+    const preserveSafeGuard=()=>{
+      const isGuard=/(?:别|不要|不用|先别|先缓|暂缓|留着|还没|未|不改)/.test(input.text);
+      if(!isGuard||result.created.length||result.changed.length||result.needsChoice)return;
+      if(focused&&!staleFocus&&!wasInvalidated&&mentionsTarget(targetKey(input.text),focused.title)){
+        previousTarget=focus;clockFallbackTarget=focus;return;
+      }
+      const matches=currentInitial.filter(t=>active(t)&&t.space===input.space&&mentionsTarget(targetKey(input.text),t.title));
+      if(matches.length===1)clockFallbackTarget={identity:expected,space:input.space,id:matches[0].id,revision:matches[0].revision};
+    };
     const remember=()=>{
       completed.set(key,result);
       const writes=[...result.created,...result.changed];
-      if(!result.warning&&!result.needsChoice&&writes.length===1&&active(writes[0]))
+      if(!result.warning&&!result.needsChoice&&writes.length===1&&active(writes[0])){
         previousTarget={identity:expected,space:input.space,id:writes[0].id,revision:writes[0].revision};
+        clockFallbackTarget=previousTarget;
+      }else if(writes.length>1||result.needsChoice||staleFocus){
+        focusInvalidated=true;
+      }else if(writes.length===0){
+        preserveSafeGuard();
+        if(wasInvalidated||staleFocus)focusInvalidated=true;
+      }
       return result;
     };
     try{
@@ -242,26 +315,33 @@ export function createPersonalAgent(options:{todos:Todos;repository?:{getReadIde
       // Interpret uncertainty over the whole original, never a model-selected positive fragment.
       if(originalOnly(input.text)){result.handled=true;result.message='原文已保存。';return remember();}
       const initial=await todos.list(input.space,true);assertCurrent(expected);
+      currentInitial=initial;
       const text=input.text.trim();
       const followup=followupRename.test(text)||followupCorrection.test(text)||followupTime.test(text);
-      const focused=focus?.identity===expected&&focus.space===input.space
+      focused=focus?.identity===expected&&focus.space===input.space
         ? initial.find(t=>t.id===focus.id&&t.revision===focus.revision&&t.space===input.space&&active(t)) : undefined;
-      const localContext={text:input.text,todos:initial,space:input.space,now:now()};
+      staleFocus=!!focus&&!focused;
+      validContextTask=!wasInvalidated&&!staleFocus&&input.contextTaskId
+        ? initial.find(t=>t.id===input.contextTaskId&&t.space===input.space&&active(t)) : undefined;
+      validFallback=!wasInvalidated&&!staleFocus&&fallbackFocus?.identity===expected&&fallbackFocus.space===input.space
+        ? initial.find(t=>t.id===fallbackFocus.id&&t.revision===fallbackFocus.revision&&t.space===input.space&&active(t)) : undefined;
+      const localContext:PlanContext={text:input.text,todos:initial,space:input.space,now:now(),focused,contextTask:validContextTask,fallback:validFallback,focusInvalidated:wasInvalidated||staleFocus};
       const contextual=followup&&focused?contextualChange(text,focused,now()):undefined;
       // Do not reinterpret an unresolved referential instruction as a new todo.
       if(followup&&(!contextual||businessRisk)){
         result.handled=true;result.warning='未确认上一条待办或新时间，原文已保留。';return remember();
       }
-      const named=!businessRisk?namedWorkChange(localContext):undefined;
+      const preDirect=!contextual&&!businessRisk?explicitLocalChange(localContext,true):undefined;
+      const named=!contextual&&!preDirect&&!businessRisk?namedChange(localContext):undefined;
       if(named&&!named.change){
         result.handled=true;result.warning='未能唯一确认待办或新时间，原文已保留。';return remember();
       }
-      const direct=contextual??named?.change??explicitLocalChange(localContext);
+      const direct=contextual??preDirect??named?.change??explicitLocalChange(localContext);
       if(direct&&!businessRisk){
         const verified=(records:TodoRecord[])=>{
           if(contextual)return records.some(t=>t.id===focused!.id&&t.revision===focused!.revision&&t.space===input.space&&active(t));
-          const currentContext={...localContext,todos:records,now:now()};
-          const change=named?namedWorkChange(currentContext)?.change:explicitLocalChange(currentContext);
+          const currentContext:PlanContext={...localContext,todos:records,now:now()};
+          const change=preDirect?explicitLocalChange(currentContext,true):named?namedChange(currentContext)?.change:explicitLocalChange(currentContext);
           return change?.todoId===direct.todoId&&change.action===direct.action&&change.dueAt===direct.dueAt;
         };
         const current=await todos.list(input.space,true);assertCurrent(expected);
@@ -284,9 +364,16 @@ export function createPersonalAgent(options:{todos:Todos;repository?:{getReadIde
       const contextTaskId=focused?.id;
       const routes=input.space==='life'?routeLifeInput(text):[];
       if (routes.some(part=>part.route==='fact')&&!routes.some(part=>part.route==='action')) {
+        preserveSafeGuard();
         return result;
       }
       const analysis=analyzeTodoText(input.text,{now:now(),space:input.space,todos:initial,contextTaskId});
+      const lifeBusinessReview=input.space==='life'
+        && routes.length>0&&!routes.some(part=>part.route==='action'||part.route==='fact')
+        && analysis.kind==='none'
+        && !localMultiTasks(input.text,input.space,now(),initial)
+        && /(?:项目|预算|报价|签约|成交|商务|合作).*(?:还没答应|未定|没定|待定|还没确认|他提|她提|提的)|预算.*(?:万|元)|我还没答应/.test(input.text);
+      if(lifeBusinessReview)result.needsReview=true;
       const rawClauses=clausesOf(input.text);
       const actionClauses=captureClauses(input.text);
       const complex=rawClauses.length>1||/[，,；;\n。].*\S|预算|承诺|刚才|那个|这个|之前|不是|实际|不对|改成|改到/.test(input.text)||businessRisk;
@@ -342,7 +429,7 @@ export function createPersonalAgent(options:{todos:Todos;repository?:{getReadIde
           result.message=result.created.some(t=>!t.dueAt)?'已记下，时间可以以后再补。':'已记下，原文已保存。';
           return remember();
         }
-        result.warning='原文已保留，复杂内容稍后整理。';return result;
+        result.warning='原文已保留，复杂内容稍后整理。';preserveSafeGuard();return result;
       }
       result.modelUsed=true;
       let p:AgentPlan;
@@ -370,9 +457,9 @@ export function createPersonalAgent(options:{todos:Todos;repository?:{getReadIde
       }catch(error){
         assertCurrent(expected);
         if(!complex)await local();
-        result.warning='原文已保留，自动整理暂未完成。';return result;
+        result.warning='原文已保留，自动整理暂未完成。';preserveSafeGuard();return result;
       }
-      result.needsReview=businessRisk||!!p.requiresBusinessReview;
+      result.needsReview=businessRisk||!!p.requiresBusinessReview||lifeBusinessReview;
       if(p.changes.length>1){
         result.handled=true;
         const action=p.changes[0].action;
@@ -413,10 +500,10 @@ export function createPersonalAgent(options:{todos:Todos;repository?:{getReadIde
       if(!result.silent)result.message=result.created.length?'已记下，原文已保存。':result.needsReview?'原文已保存，重要业务信息仍需核对。':'原文已保存。';
       if(missingCoverage){result.warning='原文已保留，部分行动尚未整理完整，可稍后继续整理。';return result;}
       return remember();
-    }catch(error){result.handled=true;result.warning=result.created.length||result.changed.length?'原文及部分事项已保存，其余整理未完成，无需重复输入。':'原文已保留，本次整理未执行。';return result;}
+    }catch(error){result.handled=true;result.warning=result.created.length||result.changed.length?'原文及部分事项已保存，其余整理未完成，无需重复输入。':'原文已保留，本次整理未执行。';preserveSafeGuard();return result;}
   }
   return {
     capture(input:AgentCaptureInput){const run=queue.then(()=>capture(input));queue=run.catch(()=>{});return run;},
-    clearFocus(space:WorkspaceMode){if(previousTarget?.space===space)previousTarget=undefined;},
+    clearFocus(space:WorkspaceMode){if(previousTarget?.space===space)previousTarget=undefined;if(clockFallbackTarget?.space===space)clockFallbackTarget=undefined;},
   };
 }

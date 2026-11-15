@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPersonalAgent, parseAgentPlan } from '../src/services/personalAgent';
+import { lifeActionText, routeLifeInput } from '../src/services/lifeRouting';
 import { createTodoService } from '../src/services/todos';
 import { StateEngine } from '../src/services/stateEngine';
 import type { TodoRecord, WorkPartition } from '../src/types';
@@ -499,4 +500,133 @@ test('colloquial non-template spoken Chinese handles Chinese numerals, inverted 
   assert.equal(sr2.needsReview,true);
   const stageTalk=StateEngine.propose('陈总的门店改版项目进入砍价阶段了',{mode:'work',sourceMessageId:'colloq-stage-2',partition,now});
   assert.equal(stageTalk.operations.some(o=>o.target==='engagement'&&o.entityId==='p0'&&o.after?.stage==='商务谈判'),true);
+});
+
+test('lifeRouting handles mixed retractions, capture preambles, third-party guards, and unitless repairs',()=>{
+  const mix05='存了200块，啊不对最后没存，别记账';
+  const r05=routeLifeInput(mix05);
+  assert.equal(r05.some(x=>x.route==='fact'),false);
+  assert.equal(lifeActionText(mix05),'');
+  assert.equal(r05.every(x=>x.text===mix05.slice(x.start,x.end)),true);
+
+  assert.deepEqual(routeLifeInput('记一笔花了30').map(x=>x.route),['fact']);
+
+  const mixTodo='交话费50元；给我记个待办，周末清理相册';
+  const rMix=routeLifeInput(mixTodo);
+  assert.deepEqual(rMix.map(x=>x.route),['fact','action']);
+  assert.equal(rMix.every(x=>x.text===mixTodo.slice(x.start,x.end)),true);
+
+  assert.deepEqual(routeLifeInput('同学买了双鞋699').map(x=>x.route),['original']);
+  assert.deepEqual(routeLifeInput('请同学吃饭120').map(x=>x.route),['fact']);
+  assert.deepEqual(routeLifeInput('给老板买了咖啡30').map(x=>x.route),['fact']);
+  assert.deepEqual(routeLifeInput('转转出了个旧键盘260，钱已收').map(x=>x.route),['fact']);
+  assert.deepEqual(routeLifeInput('楼下配钥匙15，顺便买了瓶水3').map(x=>x.route),['fact','fact']);
+});
+
+test('personalAgent regression coverage for MIX-08/10, TODO-T18, TODO-M01..M05, and routed captures',async()=>{
+  // MIX-08: undated action note vs money fact
+  {
+    const f=fixture();
+    const agent=createPersonalAgent({...f,now:()=>now});
+    assert.deepEqual(routeLifeInput('帮我记一笔给猫买猫粮').map(x=>x.route),['action']);
+    const r=await agent.capture({text:'帮我记一笔给猫买猫粮',space:'life',sourceId:'reg-mix08'});
+    assert.equal(r.created.length,1);
+    assert.equal(r.created[0].title,'给猫买猫粮');
+    assert.equal(r.created[0].status,'pending');
+    assert.equal(r.created[0].dueAt,undefined);
+  }
+
+  // MIX-10 & TODO-T18: multi-task undated splits with stacked connectors
+  for(const [id,text,expectedTitles] of [
+    ['reg-mix10','帮我记两件事：交电费，给物业打电话，都不设提醒',['交电费','给物业打电话']],
+    ['reg-t18','帮我记一下：给父母订车票，还有顺便把空调滤网洗了，都不设时间',['给父母订车票','空调滤网洗了']],
+  ] as const){
+    const f=fixture();
+    const agent=createPersonalAgent({...f,now:()=>now});
+    const routes=routeLifeInput(text);
+    assert.equal(routes.every(x=>x.route==='action'),true,id);
+    const r=await agent.capture({text,space:'life',sourceId:id});
+    assert.deepEqual(r.created.map(t=>t.title),expectedTitles,id);
+    assert.equal(r.created.every(t=>t.status==='pending'&&!t.dueAt),true,id);
+  }
+
+  // #15 routed preamble capture into personalAgent
+  {
+    const f=fixture();
+    const agent=createPersonalAgent({...f,now:()=>now});
+    const action=lifeActionText('交话费50元；给我记个待办，周末清理相册');
+    const r=await agent.capture({text:action,space:'life',sourceId:'reg-mix-exp-todo'});
+    assert.equal(r.created.length,1);
+    assert.equal(r.created[0].title,'周末清理相册');
+    assert.equal(r.created[0].needsTime,true);
+  }
+
+  // TODO-M01: verb-object inverted completion ("洗牙已经预约好了" -> "预约洗牙")
+  {
+    const seed:TodoRecord={id:'m01',space:'life',title:'预约洗牙',status:'pending',revision:1,createdAt:now,updatedAt:now};
+    const f=fixture([seed]);
+    const agent=createPersonalAgent({...f,now:()=>now});
+    assert.deepEqual(routeLifeInput('洗牙已经预约好了').map(x=>x.route),['action']);
+    const r=await agent.capture({text:'洗牙已经预约好了',space:'life',sourceId:'reg-m01'});
+    assert.equal(r.changed.length,1);
+    assert.equal(r.changed[0].id,'m01');
+    assert.equal(r.changed[0].status,'completed');
+  }
+
+  // TODO-M02: bare clock shift inherits existing date across a safety guard turn
+  {
+    const f=fixture();
+    const agent=createPersonalAgent({...f,now:()=>now});
+    const r1=await agent.capture({text:'明天下午三点提醒我交差旅报销',space:'work',sourceId:'reg-m02-1'});
+    assert.equal(r1.created.length,1);
+    const guard=await agent.capture({text:'差旅报销那个先别撤，还没交呢',space:'work',sourceId:'reg-m02-2'});
+    assert.equal(guard.changed.length,0);
+    assert.equal(f.records.get(r1.created[0].id)?.status,'pending');
+    const shift=await agent.capture({text:'把3点响改成4点',space:'work',sourceId:'reg-m02-3'});
+    assert.equal(shift.changed.length,1);
+    assert.equal(shift.changed[0].id,r1.created[0].id);
+    assert.equal(shift.changed[0].dueAt,'2026-11-06T08:00:00.000Z');
+  }
+
+  // TODO-M03, TODO-M04 & TODO-M05 across both life and work
+  for(const space of ['life','work'] as const){
+    const f=fixture([
+      {id:`${space}-m03`,space,title:'找周经理核对10月发票',status:'pending',revision:1,createdAt:now,updatedAt:now},
+      {id:`${space}-m04a`,space,title:'交水费',status:'pending',revision:1,createdAt:now,updatedAt:now},
+      {id:`${space}-m04b`,space,title:'给李工发合同',status:'pending',revision:1,createdAt:now,updatedAt:now},
+      {id:`${space}-m05a`,space,title:'买牛奶',status:'pending',revision:1,createdAt:now,updatedAt:now},
+      {id:`${space}-m05b`,space,title:'跟进合同反馈',status:'pending',revision:1,createdAt:now,updatedAt:now},
+    ]);
+    const agent=createPersonalAgent({...f,now:()=>now});
+
+    const m03=await agent.capture({text:'不用再提醒我找周经理核对10月发票了',space,sourceId:`reg-m03-${space}`});
+    assert.equal(m03.changed.length,1);
+    assert.equal(m03.changed[0].id,`${space}-m03`);
+    assert.equal(m03.changed[0].status,'cancelled');
+
+    const m04=await agent.capture({text:'交费那个已经处理好了',space,sourceId:`reg-m04-${space}`});
+    assert.equal(m04.changed.length,1);
+    assert.equal(m04.changed[0].id,`${space}-m04a`);
+    assert.equal(m04.changed[0].status,'completed');
+
+    const m05a=await agent.capture({text:'取消买牛奶这个待办',space,sourceId:`reg-m05a-${space}`});
+    assert.equal(m05a.changed.length,1);
+    assert.equal(m05a.changed[0].id,`${space}-m05a`);
+    assert.equal(m05a.changed[0].status,'cancelled');
+
+    const m05b=await agent.capture({text:'取消跟进合同反馈这个待办',space,sourceId:`reg-m05b-${space}`});
+    assert.equal(m05b.changed.length,1);
+    assert.equal(m05b.changed[0].id,`${space}-m05b`);
+    assert.equal(m05b.changed[0].status,'cancelled');
+
+    // Genuine ambiguity when 2+ fee items remain active must still be refused
+    const ambig=fixture([
+      {id:`${space}-f1`,space,title:'交房租',status:'pending',revision:1,createdAt:now,updatedAt:now},
+      {id:`${space}-f2`,space,title:'交电费',status:'pending',revision:1,createdAt:now,updatedAt:now},
+      {id:`${space}-f3`,space,title:'给李工发合同',status:'pending',revision:1,createdAt:now,updatedAt:now},
+    ]);
+    const agentAmbig=createPersonalAgent({...ambig,now:()=>now});
+    const m04Ambig=await agentAmbig.capture({text:'交费那个已经处理好了',space,sourceId:`reg-m04-ambig-${space}`});
+    assert.equal(m04Ambig.changed.length,0);
+  }
 });

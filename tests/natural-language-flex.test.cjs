@@ -61,6 +61,20 @@ test('life ledger records only affirmed events, each in one category', () => {
     ['我的退税到账62.5元', [['income',62.5]]],
     ['发了年终奖800元，已经到卡上了', [['income',800]]],
     ['二手书卖了42元，钱已收', [['income',42]]],
+    ['同事买新手机花了5999', []],
+    ['同学买了双鞋699', []],
+    ['炒股亏了500块', []],
+    ['转转出了个旧键盘260，钱已收', [['income',260]]],
+    ['闲鱼卖了个旧相机950，钱已收', [['income',950]]],
+    ['过年抢到个88.8元大红包', [['income',88.8]]],
+    ['房租押金退回来了2000，钱已到卡', [['income',2000]]],
+    ['押金退回2000，钱已到卡', [['income',2000]]],
+    ['昨晚海底捞AA我出了168.5', [['expense',168.5]]],
+    ['楼下理发洗剪吹58', [['expense',58]]],
+    ['超市扫货420大洋', [['expense',420]]],
+    ['茶颜悦色奶茶18，顺便买蛋挞12', [['expense',18],['expense',12]]],
+    ['刚才花了九十九块买书', [['expense',99]]],
+    ['楼下配钥匙15，顺便买了瓶水3', [['expense',15],['expense',3]]],
   ];
   for(const [text,wanted] of cases){
     const life=emptyLife();
@@ -182,4 +196,70 @@ test('work parser supports prefix currency symbols, extended titles, half-hour c
   const waiting = proposal.operations.find(op => op.target === 'followup' && op.after?.kind === 'waiting')?.after;
   assert.equal(waiting?.title, '补充资料');
   assert.equal(waiting?.expectedDate, '2026-10-29');
+});
+
+test('life parser handles retractions, persons with health/dates, parking facts, and quoted custom cards', () => {
+  // 1. MIX-05 retraction defense
+  const retracted = emptyLife();
+  const retractReceipts = StateEngine.mutateLifeDraft('存了200块，啊不对最后没存，别记账', retracted);
+  assert.equal(retracted.wallet.entries.length, 0);
+  assert.equal(retracted.wallet.wishSaved, 0);
+  assert.equal(retractReceipts.length, 0);
+
+  // 2. AA / scene / Chinese numeral categories
+  const expChecks = [
+    ['昨晚海底捞AA我出了168.5', '餐饮☕', 168.5],
+    ['楼下理发洗剪吹58', '生活🏠', 58],
+    ['超市扫货420大洋', '购物🛍️', 420],
+    ['刚才花了九十九块买书', '购物🛍️', 99],
+  ];
+  for (const [input, cat, amt] of expChecks) {
+    const life = emptyLife();
+    StateEngine.mutateLifeDraft(input, life);
+    assert.equal(life.wallet.entries.length, 1, input);
+    assert.equal(life.wallet.entries[0].category, cat, input);
+    assert.equal(life.wallet.entries[0].amount, amt, input);
+  }
+
+  // 3. Multi-clause kinship taboos/preferences, allergy+birthday, and non-overwriting facts
+  const lifeMem = emptyLife();
+  StateEngine.mutateLifeDraft('我妈对青霉素过敏，平时也不吃香菜', lifeMem);
+  assert.deepEqual(lifeMem.persons.find(p => p.name === '妈')?.taboos, ['青霉素过敏', '不吃香菜']);
+  assert.equal(lifeMem.memories.some(m => m.subject === '我'), false);
+
+  StateEngine.mutateLifeDraft('老爸血压高不碰咸菜，爱喝铁观音', lifeMem);
+  assert.ok(lifeMem.persons.find(p => p.name === '爸爸')?.taboos.includes('不吃咸菜'));
+  assert.ok(lifeMem.persons.find(p => p.name === '爸爸')?.preferences.includes('喜欢铁观音'));
+
+  const dadEat = emptyLife();
+  StateEngine.mutateLifeDraft('老爸血压高不吃咸菜，爱喝铁观音', dadEat);
+  assert.ok(dadEat.persons.find(p => p.name === '爸爸')?.taboos.includes('不吃咸菜'));
+  assert.ok(dadEat.persons.find(p => p.name === '爸爸')?.preferences.includes('喜欢铁观音'));
+
+  StateEngine.mutateLifeDraft('我姐对海鲜过敏，平时也不吃辣', lifeMem);
+  assert.deepEqual(lifeMem.persons.find(p => p.name === '姐')?.taboos, ['海鲜过敏', '不吃辣']);
+
+  StateEngine.mutateLifeDraft('小林芒果过敏，生日是6月12号', lifeMem);
+  const lin = lifeMem.persons.find(p => p.name === '小林');
+  assert.ok(lin?.taboos.includes('芒果过敏'));
+  assert.equal(lin?.nextImportantDate, '6月12号');
+
+  StateEngine.mutateLifeDraft('张阿姨忌口牛羊肉', lifeMem);
+  assert.ok(lifeMem.persons.find(p => p.name === '张阿姨')?.taboos.includes('不吃牛羊肉'));
+
+  StateEngine.mutateLifeDraft('记住家里燃气卡放在玄关第二个抽屉', lifeMem);
+  StateEngine.mutateLifeDraft('小区地库车位在B2-108', lifeMem);
+  assert.ok(lifeMem.memories.some(m => m.fact.includes('燃气卡放在玄关第二个抽屉')));
+  assert.ok(lifeMem.memories.some(m => m.fact.includes('小区地库车位在B2-108')));
+
+  // 4. Quoted custom card creation and incremental check-in
+  const cardsLife = emptyLife();
+  StateEngine.mutateLifeDraft('新建《英语单词打卡》卡，目标30', cardsLife);
+  assert.equal(cardsLife.customCards.length, 1);
+  assert.equal(cardsLife.customCards[0].title, '英语单词打卡');
+  assert.equal(cardsLife.customCards[0].metricTarget, 30);
+  assert.equal(cardsLife.customCards[0].metricValue, 0);
+
+  StateEngine.mutateLifeDraft('英语单词打卡 +5', cardsLife);
+  assert.equal(cardsLife.customCards[0].metricValue, 5);
 });
