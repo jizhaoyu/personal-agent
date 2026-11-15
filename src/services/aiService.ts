@@ -1,4 +1,4 @@
-import type { AppSettings, Message, MemoryItem, JournalArtifact, WorkspaceMode, StateMutationReceipt, Engagement, ProjectTaskItem, ProposedChangeSet, WorkPartition, AlignmentDraft, FollowUpItem } from '../types';
+import type { AppSettings, Message, MemoryItem, WorkspaceMode, StateMutationReceipt, Engagement, ProjectTaskItem, ProposedChangeSet, WorkPartition, AlignmentDraft, FollowUpItem } from '../types';
 import { StateEngine, budgetIsUncertain, dateIsUncertain } from './stateEngine';
 import { resolveDeadline, shanghaiDateKey } from './dates';
 
@@ -221,9 +221,5 @@ export const AiService = {
     const last = messages[messages.length - 1];
     const mutations = StateEngine.sniffAndMutate(last?.content || '', 'life', last?.id);
     return { reply: mutations.length ? `已更新生活记录：\n${mutations.map(m => m.summaryText).join('\n')}` : '这句话已保留在当前生活对话中，尚未识别出可更新的生活卡片。', mutations };
-  },
-  async generateDailyJournal(messages: Message[], _settings: AppSettings, mode: WorkspaceMode): Promise<JournalArtifact> {
-    const now = Date.now(); const users = messages.filter(m => m.role === 'user');
-    return { id: `journal-${mode}-${now}`, mode, date: new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(now), title: mode === 'life' ? '今日生活手记' : '今日工作回顾', mood: mode === 'life' ? '生活记录' : '工作记录', userGoldenQuote: users[users.length - 1]?.content.slice(0, 120) || '今天还没有对话记录。', aiReflection: mode === 'life' ? '这是一份由当前空间本地记录整理的手记，你可以按自己的节奏补充生活。' : '仅整理当前工作空间的记录，不代表客户已经确认。', stickers: mode === 'life' ? ['🌙', '☕'] : ['📋'], createdAt: now };
   },
 };

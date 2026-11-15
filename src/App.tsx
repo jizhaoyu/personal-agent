@@ -417,6 +417,12 @@ export function App() {
           if (target) {
             setTodoFocus({ space: 'life', id: target.id, requestId: id() });
             setPendingTodoFloat(target);
+          } else {
+            const inactiveIds = new Set((todo.changed || []).filter(item => item.status !== 'pending' && item.status !== 'suggested').map(item => item.id));
+            if (inactiveIds.size > 0) {
+              setTodoFocus(current => current && current.space === 'life' && inactiveIds.has(current.id) ? undefined : current);
+              setPendingTodoFloat(current => current && inactiveIds.has(current.id) ? null : current);
+            }
           }
           if (todo.silent) setToast('');
         }

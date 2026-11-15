@@ -174,57 +174,6 @@ test('unused work card surface does not read the life cache', () => {
   assert.doesNotThrow(() => view.render({ mode: 'work', onCompanionToast() {} }));
 });
 
-test.skip('a migrated previous-day water count starts today at zero before adding a cup', async () => {
-  let written;
-  const view = component('LivingCardsBoard', {}, { saveRpgStatusCard: async value => { written = value; } });
-  view.snapshot.partitions.life.rpg = { ...view.snapshot.partitions.life.rpg, dateKey: '2026-01-01', waterCups: 6 };
-  const props = { mode: 'life', onCompanionToast() {} };
-  const initial = view.render(props);
-  find(initial, node => node.type === 'button' && text(node).includes('人生状态栏')).props.onClick();
-  const tree = view.render(props);
-  const add = find(tree, node => node.type === 'button' && /喝一杯|喝水|记一杯|一杯水/.test(text(node)));
-  assert.ok(add);
-  await add.props.onClick();
-  assert.equal(written.waterCups, 1);
-  assert.notEqual(written.dateKey, '2026-01-01');
-});
-
-test('journal waits for persisted add before notifying its parent or selecting the new entry', async () => {
-  let finish;
-  const notifications = [];
-  const journal = { id: 'new-journal', mode: 'life', date: '2026-10-27', title: '真实记录', mood: '平静', userGoldenQuote: '读书', aiReflection: '记录', stickers: [] };
-  let savedMode;
-  const view = component('ArtifactJournal', {}, {
-    addJournal: (_journal, mode) => { savedMode = mode; return new Promise(resolve => finish = resolve); },
-  }, { generateDailyJournal: async () => journal });
-  const tree = view.render({ mode: 'life', journals: [], messages: [{ id: 'm', role: 'user', content: '读书' }], settings: {}, onJournalsChange: value => notifications.push(value) });
-  const pending = find(tree, node => node.type === 'button' && text(node).includes('生成今日')).props.onClick();
-  // The component executes in a VM realm; let its awaited host promise continue before inspecting the write.
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(savedMode, 'life');
-  assert.equal(notifications.length, 0);
-  assert.equal(view.updates.some(update => update.value === 'new-journal'), false);
-  view.snapshot.partitions.life.journals = [journal];
-  finish();
-  await pending;
-  assert.equal(notifications[0][0].id, 'new-journal');
-  assert.equal(view.updates.some(update => update.value === 'new-journal'), true);
-});
-
-test('journal async disk failure never publishes the generated journal as saved', async () => {
-  const notifications = [];
-  let writes = 0;
-  const view = component('ArtifactJournal', {}, { addJournal: async () => { writes++; throw new Error('disk full'); } }, {
-    generateDailyJournal: async () => ({ id: 'never-saved', mode: 'life' }),
-  });
-  const tree = view.render({ mode: 'life', journals: [], messages: [{ id: 'm', role: 'user', content: '原文' }], settings: {}, onJournalsChange: value => notifications.push(value) });
-  await find(tree, node => node.type === 'button' && text(node).includes('生成今日')).props.onClick();
-  assert.equal(writes, 1);
-  assert.equal(notifications.length, 0);
-  assert.ok(view.updates.some(update => /失败/.test(update.value)));
-  assert.equal(view.updates.some(update => update.value === 'never-saved'), false);
-});
-
 test('a completed life write after unmount does not send a stale toast into another screen', async () => {
   let finish;
   const notifications = [];
@@ -241,34 +190,6 @@ test('a completed life write after unmount does not send a stale toast into anot
   assert.equal(view.updates.length, 0);
 });
 
-test('journal persistence that finishes after unmount cannot replace another visible partition', async () => {
-  let finish;
-  const notifications = [];
-  const view = component('ArtifactJournal', {}, { addJournal: () => new Promise(resolve => finish = resolve) }, {
-    generateDailyJournal: async () => ({ id: 'life-journal', mode: 'life' }),
-  });
-  const tree = view.render({ mode: 'life', journals: [], messages: [{ id: 'm', role: 'user', content: '生活原文' }], settings: {}, onJournalsChange: value => notifications.push(value) });
-  const unmount = view.mount();
-  const pending = find(tree, node => node.type === 'button' && text(node).includes('生成今日')).props.onClick();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(typeof finish, 'function');
-  unmount();
-  view.updates.length = 0;
-  finish();
-  await pending;
-  assert.equal(notifications.length, 0);
-  assert.equal(view.updates.length, 0);
-});
-
-test('fresh journal is an explicit empty state with image export disabled', () => {
-  const view = component('ArtifactJournal');
-  const tree = view.exports.ArtifactJournal({ mode: 'life', journals: [], messages: [], settings: {}, onJournalsChange() {} });
-  assert.match(text(tree), /还没有生活手帐/);
-  assert.equal(text(tree).includes('今天在窗边看落日'), false);
-  const exportButton = find(tree, node => node.type === 'button' && text(node).includes('存图'));
-  assert.equal(exportButton.props.disabled, true);
-});
-
 test('life chat accepts text only and has no drop handler advertising image extraction', () => {
   const view = component('ChatPill');
   const tree = view.exports.ChatPill({ mode: 'life', messages: [], settings: {}, isLoading: false, onSendMessage() {}, onInspectMutation() {}, onOpenCards() {} });
@@ -277,18 +198,7 @@ test('life chat accepts text only and has no drop handler advertising image extr
   assert.equal(find(tree, node => node.type === 'input' && node.props.type === 'file'), undefined);
 });
 
-test('memory banners describe logical local separation without screen protection guarantees', () => {
-  for (const mode of ['life', 'work']) {
-    const { exports } = component('MemoryTimeline');
-    const tree = exports.MemoryTimeline({ mode, memories: [], onMemoriesChange() {} });
-    assert.match(text(tree), /本地逻辑分区/);
-    assert.doesNotMatch(text(tree), /100%|物理隔离|投屏防窥/);
-  }
-});
-
-test('image renderer is not loaded while opening board or journal', () => {
-  for (const name of ['LivingCardsBoard', 'ArtifactJournal']) {
-    const view = component(name);
-    assert.equal(view.loads.includes('html2canvas'), false);
-  }
+test('image renderer is not loaded while opening living cards board', () => {
+  const view = component('LivingCardsBoard');
+  assert.equal(view.loads.includes('html2canvas'), false);
 });

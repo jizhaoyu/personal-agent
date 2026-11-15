@@ -14,6 +14,9 @@ test('life routing keeps activity and commentary out of todos and preserves inde
   assert.ok(parts.every(x=>x.text===raw.slice(x.start,x.end)));
   assert.deepEqual(routeLifeInput('有人说“花了99元，先记一笔”；午饭实付18元').map(x=>x.route),['original','fact']);
   assert.ok(routeLifeInput('取消那个提醒，我不记得是哪一条').every(x=>x.route==='original'));
+  assert.deepEqual(routeLifeInput('已完成提交合成报告').map(x=>x.route),['action']);
+  assert.deepEqual(routeLifeInput('已完成5公里跑步打卡').map(x=>x.route),['fact']);
+  assert.deepEqual(routeLifeInput('同事已完成提交合成报告').map(x=>x.route),['original']);
   assert.equal(analyzeTodoText('取消那个提醒',{now,space:'life',todos:[todo('x','交电费')]}).kind,'none');
 });
 test('explicit reminders create only with a complete future date and clock', () => {

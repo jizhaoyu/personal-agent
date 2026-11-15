@@ -41,29 +41,33 @@ const valueText = (field: string, value: unknown) => {
 export function ProjectContinuation(props: Props) {
   const [identity, setIdentity] = useState(() => Repository.getReadIdentity());
   const [retry, setRetry] = useState(0);
+  const viewKey = `${props.projectId}:${identity.split(':')[0]}:${retry}`;
   const key = `${props.projectId}:${identity}:${props.revision}:${retry}`;
+  const liveViewKey = useRef(viewKey); liveViewKey.current = viewKey;
+  const loadedViewKey = useRef(viewKey);
   const liveKey = useRef(key); liveKey.current = key;
-  const [state, setState] = useState<{ key: string; data?: ProjectContinuationData; error?: string } | null>(null);
+  const [state, setState] = useState<{ viewKey: string; key: string; data?: ProjectContinuationData; error?: string } | null>(null);
   const [pageBusy, setPageBusy] = useState('');
   const [pageError, setPageError] = useState('');
-  const [source, setSource] = useState<{ key: string; target: EvidenceTarget; result?: FieldEvidence; error?: string; loading: boolean } | null>(null);
+  const [source, setSource] = useState<{ viewKey: string; key: string; target: EvidenceTarget; result?: FieldEvidence; error?: string; loading: boolean } | null>(null);
   const sourceSequence = useRef(0);
   const sourceTrigger = useRef<HTMLButtonElement | null>(null);
   const sourcePanel = useRef<HTMLElement | null>(null);
-  const data = state?.key === key ? state.data : null;
-  const error = state?.key === key ? state.error : null;
-  const visibleSource = source?.key === key ? source : null;
+  const data = state?.viewKey === viewKey ? state.data : null;
+  const error = state?.viewKey === viewKey ? state.error : null;
+  const visibleSource = source?.viewKey === viewKey ? source : null;
 
   useEffect(() => Repository.subscribe(() => setIdentity(Repository.getReadIdentity())), []);
   useEffect(() => {
     let active = true;
-    setPageBusy(''); setPageError(''); setSource(null); sourceSequence.current++;
+    setPageBusy(''); setPageError('');
+    if (loadedViewKey.current !== viewKey) { loadedViewKey.current = viewKey; setSource(null); sourceSequence.current++; }
     void loadProjectContinuation(Repository, props.projectId).then(data => {
-      if (active && liveKey.current === key && Repository.getReadIdentity() === identity) { setState({ key, data }); props.onProjectLoaded?.(data.project); }
+      if (active && liveKey.current === key && Repository.getReadIdentity() === identity) { setState({ viewKey, key, data }); props.onProjectLoaded?.(data.project); }
     }).catch(() => {
-      if (active && liveKey.current === key) setState({ key, error: '项目关联资料暂未读全，原数据仍保留。' });
+      if (active && liveKey.current === key) setState({ viewKey, key, error: '项目关联资料暂未读全，原数据仍保留。' });
     });
-    return () => { active = false; sourceSequence.current++; };
+    return () => { active = false; if (liveViewKey.current !== viewKey) sourceSequence.current++; };
   }, [key]);
   useEffect(() => { if (visibleSource) sourcePanel.current?.focus(); }, [visibleSource?.target, visibleSource?.key]);
 
@@ -80,23 +84,23 @@ export function ProjectContinuation(props: Props) {
       setState(previous => {
         if (previous?.key !== requestKey || !previous.data || !previous.data[section]) return previous;
         const items = [...new Map([...previous.data[section]!.items, ...page.items].map(item => [item.id, item])).values()];
-        return { key: requestKey, data: { ...previous.data, [section]: { ...page, items } } };
+        return { viewKey: previous.viewKey, key: requestKey, data: { ...previous.data, [section]: { ...page, items } } };
       });
     } catch { if (liveKey.current === requestKey) setPageError('后续记录暂未读到，可再次点击加载重试。'); }
     finally { if (liveKey.current === requestKey) setPageBusy(''); }
   }
   async function evidence(target: EvidenceTarget, trigger?: HTMLButtonElement, older = false) {
-    const requestKey = key, sequence = ++sourceSequence.current;
+    const requestViewKey = viewKey, requestKey = key, sequence = ++sourceSequence.current;
     if (trigger) sourceTrigger.current = trigger;
     const previous = older ? visibleSource?.result : undefined;
-    setSource({ key, target, result: previous, loading: true });
+    setSource({ viewKey: requestViewKey, key: requestKey, target, result: previous, loading: true });
     try {
       const result = await loadFieldEvidence(Repository, props.projectId, target, older ? previous?.nextCursor || undefined : undefined);
-      if (liveKey.current !== requestKey || Repository.getReadIdentity() !== identity || sourceSequence.current !== sequence) return;
+      if (liveViewKey.current !== requestViewKey || liveKey.current !== requestKey || Repository.getReadIdentity() !== identity || sourceSequence.current !== sequence) return;
       if (previous) result.entries = [...new Map([...previous.entries, ...result.entries].map(entry => [entry.closure.id, entry])).values()];
-      setSource({ key: requestKey, target, result, loading: false });
+      setSource({ viewKey: requestViewKey, key: requestKey, target, result, loading: false });
     } catch {
-      if (liveKey.current === requestKey && sourceSequence.current === sequence) setSource({ key: requestKey, target, result: previous, loading: false, error: '依据暂未读全，请重试。' });
+      if (liveKey.current === requestKey && sourceSequence.current === sequence) setSource({ viewKey: requestViewKey, key: requestKey, target, result: previous, loading: false, error: '依据暂未读全，请重试。' });
     }
   }
   function closeSource() { sourceSequence.current++; setSource(null); sourceTrigger.current?.focus(); }

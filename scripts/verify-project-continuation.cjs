@@ -33,6 +33,7 @@ async function main() {
         add('closure', { id: `cc-${i}`, mode: 'work', sourceMessageId: `cm-${i}`, eventId: `ce-${i}`, engagementIds: [project.id], taskIds: i === 35 ? ['ct-0'] : [], followUpIds: [], confirmedAt: i, ...(i === 34 ? { revertedAt: 50 } : {}), ...(i === 33 ? { originalOnly: true } : {}) });
       }
       if (!await r.importAllData(JSON.stringify({ ...baseline, records, mode: 'work', applied: [] }))) throw new Error('synthetic import failed');
+      await (await import('/src/services/todos.ts')).TodoService.syncLegacy();
       window.continuationFixture = { project, other };
     });
     await page.getByRole('button', { name: '工作态', exact: true }).click();
@@ -119,6 +120,7 @@ async function main() {
     pass('读取失败不冒充空状态，恢复后可显式重试');
     await detail().getByRole('button', { name: '完成合成行动9', exact: true }).click();
     await detail().getByRole('button', { name: '完成合成行动9', exact: true }).waitFor({ state: 'hidden' });
+    await page.evaluate(async () => { await (await import('/src/services/todos.ts')).TodoService.syncLegacy(); });
     pass('项目中完成行动后刷新到已完成分组');
     await page.evaluate(async () => {
       const { Repository: r } = await import('/src/persistence/repository.ts');
