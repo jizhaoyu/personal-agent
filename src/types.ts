@@ -176,6 +176,7 @@ export interface AppSettings {
   modelEnabled?: boolean;
   remindersEnabled?: boolean;
   memoryModelEnabled?: boolean;
+  workSuggestionsEnabled?: boolean;
 }
 
 export type PublicAppSettings = Omit<AppSettings, 'apiKey'>;

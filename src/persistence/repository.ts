@@ -2,7 +2,7 @@ import type {
   AppSnapshotV3, WorkspaceMode, PublicAppSettings, AppSettings, Message, MemoryItem, JournalArtifact,
   WalletCardState, RpgStatusCardState, PersonProfile, CrmDealItem, ProjectTaskItem, CustomLivingCard,
   ProposedChangeSet, WorkOperation, MutationResult, StateMutationReceipt, WorkPartition, LifePartition,
-  CaptureDraft, CaptureCommitResult, ClosureRecord, FollowUpItem, ConditionIntent, WorkHome,
+  CaptureDraft, CaptureCommitResult, ClosureRecord, FollowUpItem, ConditionIntent, ArtifactDraft, WorkHome,
 } from '../types';
 import { StorageService, SNAPSHOT_KEY, newId } from '../services/storage';
 import { shanghaiDateKey } from '../services/dates';
@@ -221,6 +221,27 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
         try { const event: any = await api.get('work', 'event', `event-${batchId}`); if (event) return { outcome: 'committed', eventId: event.id, refreshWarning: '操作已保存，视图可能需要刷新。' }; } catch {}
         return { outcome: 'unknown', error: '操作结果暂时无法确认，请先重新读取，勿重复操作。' };
       }
+    },
+    async listProjectArtifacts(projectId: string): Promise<ArtifactDraft[]> {
+      const items: ArtifactDraft[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await api.query<ArtifactDraft>('work', 'artifact', { relatedId: projectId, limit: 200, ...(cursor ? { cursor } : {}) });
+        items.push(...page.items.filter(item => item.projectId === projectId));
+        cursor = page.nextCursor || undefined;
+      } while (cursor);
+      return items;
+    },
+    async saveArtifactDraft(draft: ArtifactDraft): Promise<MutationResult> {
+      const next: ArtifactDraft = { ...copy(draft), space: 'work', updatedAt: draft.updatedAt || Date.now() };
+      if (!validateRecord('work', 'artifact', next)) return { ok: false, error: '成品草稿字段无效，未保存。' };
+      const before = await api.get<ArtifactDraft>('work', 'artifact', next.id);
+      return api.transaction('work', [{ kind: 'artifact', id: next.id, before, after: next }], { event: false });
+    },
+    async deleteArtifactDraft(id: string): Promise<MutationResult> {
+      const before = await api.get<ArtifactDraft>('work', 'artifact', id);
+      if (!before) return { ok: true, receipts: [] };
+      return api.transaction('work', [{ kind: 'artifact', id, before, after: null }], { event: false });
     },
     async setConditionState(item: ConditionIntent, action: ConditionLifecycleAction | 'convert_to_task'): Promise<CaptureCommitResult> {
       const batchId = newId('condition-action'), now = Date.now();

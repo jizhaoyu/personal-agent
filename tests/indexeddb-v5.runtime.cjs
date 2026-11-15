@@ -55,13 +55,56 @@ const { chromium } = require(process.env.LOOMA_PLAYWRIGHT_MODULE || 'playwright'
       const rejected = await backend.request({ op: 'restore', records: bad, settings: before.settings, mode: before.mode, applied: before.applied });
       const after = await backend.request({ op: 'exportSnapshot' });
       const restored = await backend.request({ op: 'restore', records: before.records, settings: before.settings, mode: before.mode, revisions: before.revisions, snapshotRevision: before.snapshotRevision, applied: before.applied });
+      const restoredRevision = (await backend.request({ op: 'bootstrap', space: 'work' })).snapshot.partitions.work.revision;
+      // IndexedDB artifact relation indexing & foreign key parity check
+      const proj = { id: 'p-art', clientName: '王总', title: '系统交付', stage: '方案报价', internalContext: '', shareableSummary: '', nextAction: '', updatedAt: 10 };
+      const cond = { id: 'c-art', space: 'work', conditionText: '确认报价', actionTitle: '整理报价简报', conditionKind: 'manual_confirm', status: 'ready', engagementId: 'p-art', sourceMessageId: 'source', revision: 1, createdAt: 10, updatedAt: 10 };
+      const art = { id: 'art-1', space: 'work', projectId: 'p-art', conditionId: 'c-art', type: 'proposal_brief', title: '王总方案简报', content: '待核对草稿', sourceSnapshot: { projectUpdatedAt: 10, tasksCount: 0, followUpsCount: 0, conditionsCount: 1 }, version: 1, status: 'draft', createdAt: 10, updatedAt: 10 };
+      await backend.request({ op: 'transaction', space: 'work', id: 'seed-art', mutations: [
+        { kind: 'engagement', id: 'p-art', before: null, after: proj },
+        { kind: 'condition', id: 'c-art', before: null, after: cond },
+        { kind: 'artifact', id: 'art-1', before: null, after: art },
+      ] });
+      const byProj = await backend.request({ op: 'list', space: 'work', kind: 'artifact', relatedId: 'p-art' });
+      const byCond = await backend.request({ op: 'list', space: 'work', kind: 'artifact', relatedId: 'c-art' });
+      const deleteProjBlocked = await backend.request({ op: 'transaction', space: 'work', id: 'del-proj-with-art', mutations: [
+        { kind: 'condition', id: 'c-art', before: cond, after: null },
+        { kind: 'engagement', id: 'p-art', before: proj, after: null },
+      ] });
+      const snapWithArt = await backend.request({ op: 'exportSnapshot' });
+      const orphanArtRestore = await backend.request({
+        op: 'restore',
+        records: snapWithArt.records.filter(r => !(r.kind === 'engagement' && r.id === 'p-art')),
+        settings: snapWithArt.settings, mode: snapWithArt.mode, applied: snapWithArt.applied,
+      });
+      const artReady = { ...art, status: 'ready', content: 'IDB精修正文', updatedAt: 11 };
+      await backend.request({ op: 'transaction', space: 'work', id: 'art-ready-1', mutations: [{ kind: 'artifact', id: 'art-1', before: art, after: artReady }] });
+      await backend.request({ op: 'transaction', space: 'work', id: 'art-task-1', event: true, sourceText: '新增任务', mutations: [{ kind: 'task', id: 't-art', before: null, after: { id: 't-art', engagementId: 'p-art', title: '确认终版', assignee: '我', deadline: '周五', priority: 'high', done: false } }] });
+      const artAfterTask = await backend.request({ op: 'get', space: 'work', kind: 'artifact', id: 'art-1' });
+      const artReady2 = { ...artAfterTask, status: 'ready', updatedAt: artAfterTask.updatedAt + 1 };
+      delete artReady2.reviewReason;
+      await backend.request({ op: 'transaction', space: 'work', id: 'art-ready-2', mutations: [{ kind: 'artifact', id: 'art-1', before: artAfterTask, after: artReady2 }] });
+      await backend.request({ op: 'undo', space: 'work' });
+      const artAfterUndo = await backend.request({ op: 'get', space: 'work', kind: 'artifact', id: 'art-1' });
       return { ids, dueFollowUps: stats.dueFollowUps, waitingCount: home.counts.waiting, questionCount: home.counts.questions, homeBound: home.waiting.length,
         unchangedAfterBadRestore: JSON.stringify(before) === JSON.stringify(after), rejected: rejected.ok, restored: restored.ok,
-        revision: (await backend.request({ op: 'bootstrap', space: 'work' })).snapshot.partitions.work.revision };
+        revision: restoredRevision,
+        byProjIds: byProj.items.map(i => i.id), byCondIds: byCond.items.map(i => i.id),
+        deleteProjBlockedOk: deleteProjBlocked.ok, orphanArtRestoreOk: orphanArtRestore.ok,
+        idbAfterTaskStatus: artAfterTask.status, idbAfterTaskContent: artAfterTask.content,
+        idbAfterUndoStatus: artAfterUndo.status, idbAfterUndoContent: artAfterUndo.content };
     });
     assert.deepEqual(result.ids, ['a', 'b', 'c']); assert.equal(result.dueFollowUps, 3);
     assert.equal(result.waitingCount, 3); assert.equal(result.questionCount, 1); assert.equal(result.homeBound, 3);
     assert.equal(result.rejected, false); assert.equal(result.unchangedAfterBadRestore, true); assert.equal(result.restored, true); assert.equal(result.revision, 3);
+    assert.deepEqual(result.byProjIds, ['art-1']);
+    assert.deepEqual(result.byCondIds, ['art-1']);
+    assert.equal(result.deleteProjBlockedOk, false);
+    assert.equal(result.orphanArtRestoreOk, false);
+    assert.equal(result.idbAfterTaskStatus, 'needs_review');
+    assert.equal(result.idbAfterTaskContent, 'IDB精修正文');
+    assert.equal(result.idbAfterUndoStatus, 'needs_review');
+    assert.equal(result.idbAfterUndoContent, 'IDB精修正文');
     console.log(JSON.stringify({ ok: true, ...result }, null, 2));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

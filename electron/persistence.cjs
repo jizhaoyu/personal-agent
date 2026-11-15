@@ -67,7 +67,8 @@ async function createPersistence({ filePath }) {
   const { redactEvent } = core;
   const { RECORD_KINDS, DEFAULT_PUBLIC_SETTINGS, validateRecord, validateSettings, validateTransaction, flattenV3,
     makeBootstrap, searchTerms, recordAt, recordText, stableJson, sameValue, eventMutations, isBusinessKind,
-    validateCaptureCommand, captureRows, workIndex, workDay, normalizeApplied } = core;
+    validateCaptureCommand, captureRows, workIndex, workDay, normalizeApplied,
+    collectAffectedWorkProjects, markArtifactStale } = core;
   if (filePath !== ':memory:') fs.mkdirSync(path.dirname(path.resolve(filePath)), { recursive: true });
   let db = new Database(filePath);
   try {
@@ -77,6 +78,39 @@ async function createPersistence({ filePath }) {
   } catch (error) { db.close(); throw error; }
   let closed = false;
   const filename = filePath === ':memory:' ? filePath : path.resolve(filePath);
+  function invalidateArtifacts(projectIds, reason, excludeIds = new Set(), now = Date.now()) {
+    for (const projectId of projectIds) {
+      if (!get('work', 'engagement', projectId)) continue;
+      const rows = db.prepare(`SELECT r.* FROM records r JOIN relations rel ON rel.space=r.space AND rel.kind=r.kind AND rel.id=r.id
+        WHERE r.space='work' AND r.kind='artifact' AND rel.related_id=?`).all(projectId);
+      for (const row of rows) {
+        if (excludeIds.has(row.id)) continue;
+        const data = JSON.parse(row.data);
+        if (data.projectId !== projectId) continue;
+        const next = markArtifactStale(data, reason, now);
+        if (next) put(db, { space: 'work', kind: 'artifact', id: next.id, data: next, at: recordAt(next) });
+      }
+    }
+  }
+  function redactedProjectIds(redactSourceIds = [], retiredMemoryIds = []) {
+    const ids = new Set();
+    const collectBySource = srcId => {
+      const linked = db.prepare(`SELECT r.data FROM records r JOIN relations rel ON rel.space=r.space AND rel.kind=r.kind AND rel.id=r.id
+        WHERE r.space='work' AND rel.related_id=?`).all(srcId);
+      for (const row of linked) {
+        const data = JSON.parse(row.data);
+        for (const pid of (data.engagementIds || [])) ids.add(pid);
+        if (data.engagementId) ids.add(data.engagementId);
+      }
+    };
+    for (const srcId of redactSourceIds) collectBySource(srcId);
+    for (const memId of retiredMemoryIds) {
+      const mem = get('work', 'memory', memId);
+      for (const pid of (mem?.engagementIds || [])) ids.add(pid);
+      for (const srcId of (mem?.sourceIds || [])) collectBySource(srcId);
+    }
+    return ids;
+  }
   const get = (space, kind, id) => {
     const row = db.prepare('SELECT data FROM records WHERE space=? AND kind=? AND id=?').get(space, kind, id);
     return row ? JSON.parse(row.data) : null;
@@ -184,6 +218,12 @@ async function createPersistence({ filePath }) {
         else put(db, { space: 'work', kind: m.kind, id: m.id, data: m.after, at: recordAt(m.after) });
       }
       validateLinks(db);
+      invalidateArtifacts(
+        collectAffectedWorkProjects(mutations),
+        '关联项目资料、行动或跟进条件已更新，建议重新核对',
+        new Set(mutations.filter(m => m.kind === 'artifact').map(m => m.id)),
+        command.confirmedAt,
+      );
       const createdAt = Math.max(command.confirmedAt, (db.prepare("SELECT max(at) AS at FROM records WHERE space='work' AND kind='event'").get().at || 0) + 1);
       const event = { id: closure.eventId, proposalId: p.id, mode: 'work', sourceMessageId: p.sourceMessageId, sourceText: p.sourceText, mutations, createdAt };
       put(db, { space: 'work', kind: 'event', id: event.id, data: event, at: createdAt });
@@ -279,6 +319,10 @@ async function createPersistence({ filePath }) {
         if (previous.signature && previous.signature !== signature) throw new Error('同一批次标识被用于不同内容。');
         return { ...JSON.parse(previous.result), already: true };
       }
+      const preRetired = command.mutations.filter(m => m.kind === 'memory' && m.after?.status === 'retracted').map(m => m.id);
+      const redactedProjects = command.space === 'work' && (command.redactSourceIds?.length || preRetired.length)
+        ? redactedProjectIds(command.redactSourceIds || [], preRetired)
+        : new Set();
       const errors = validateTransaction(command, metadata().revisions[command.space], (kind, id) => get(command.space, kind, id));
       if (errors.length) throw new Error(errors.join(' '));
       for (const mutation of command.mutations) {
@@ -301,6 +345,12 @@ async function createPersistence({ filePath }) {
         }
       }
       validateLinks(db);
+      if (command.space === 'work') {
+        const explicitArtifacts = new Set(command.mutations.filter(m => m.kind === 'artifact').map(m => m.id));
+        const ts = Date.now();
+        invalidateArtifacts(collectAffectedWorkProjects(command.mutations), '关联项目资料、行动或跟进条件已更新，建议重新核对', explicitArtifacts, ts);
+        invalidateArtifacts(redactedProjects, '关联来源原文或记忆已清理，原草稿正文已保留，请重新核对', explicitArtifacts, ts);
+      }
       const now = Math.max(Date.now(), (db.prepare("SELECT max(at) AS at FROM records WHERE space=? AND kind='event'").get(command.space).at || 0) + 1);
       if (command.event) {
         const event = { id: `event-${command.id}`, proposalId: command.id, mode: command.space, sourceMessageId: command.sourceMessageId || '',
@@ -331,6 +381,9 @@ async function createPersistence({ filePath }) {
       }
       validateLinks(db);
       event.revertedAt = Date.now(); put(db, { ...fromRow(row), data: event });
+      if (space === 'work') {
+        invalidateArtifacts(collectAffectedWorkProjects(mutations), '最近工作变更已撤销，建议重新核对草稿内容', new Set(mutations.filter(m => m.kind === 'artifact').map(m => m.id)), event.revertedAt);
+      }
       const closure = get(space, 'closure', `closure-${event.proposalId}`);
       if (closure) put(db, { space, kind: 'closure', id: closure.id, data: { ...closure, revertedAt: event.revertedAt }, at: closure.confirmedAt });
       bump(space, mutations.some(m => isBusinessKind(m.kind)));

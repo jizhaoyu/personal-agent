@@ -1204,6 +1204,13 @@
 }
 .work-v5 .continuation-next-action h4 { color: var(--work-accent); font-size: 12px; font-weight: 700; }
 .work-v5 .continuation-next-action > p:first-of-type { font-weight: 600; margin: 4px 0; }
+.work-v5 .continuation-artifacts { margin-top: 20px; border-top: 1px solid var(--work-border); padding-top: 16px; }
+.work-v5 .artifact-composer { margin: 12px 0 18px; padding: 14px; border: 1px solid var(--work-accent); border-radius: 10px; background: var(--work-accent-glow); display: grid; gap: 10px; }
+.work-v5 .artifact-composer textarea, .work-v5 .artifact-composer input, .work-v5 .artifact-composer select { width: 100%; }
+.work-v5 .artifact-card { display: grid; gap: 8px; }
+.work-v5 .artifact-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.work-v5 .artifact-stale-banner { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--work-accent); background: var(--work-accent-glow); display: grid; gap: 8px; }
+.work-v5 .artifact-preview-content { margin: 0; padding: 10px 12px; border: 1px solid var(--work-border); border-radius: 8px; font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; }
 
 @media (max-width: 900px) {
   .work-v5 .work-home-layout { grid-template-columns: minmax(0, 1fr); }

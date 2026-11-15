@@ -224,3 +224,156 @@ nativeTest('v5 SQLite condition intents commit atomically, surface in workHome, 
   assert.equal(restoredCond.revision, 2);
   assert.equal((await store.request({ op: 'get', space: 'work', kind: 'engagement', id: 'website' })).budgetAmount, 300);
 });
+
+test('US09 workSuggestionsEnabled defaults to true and remains optional on historical settings restore', async () => {
+  const core = await corePromise;
+  assert.equal(core.DEFAULT_PUBLIC_SETTINGS.workSuggestionsEnabled, true);
+  const legacySettings = { ...core.DEFAULT_PUBLIC_SETTINGS };
+  delete legacySettings.workSuggestionsEnabled;
+  delete legacySettings.memoryModelEnabled;
+  assert.equal(core.validateSettings(legacySettings), true);
+  assert.equal(core.validateSettings({ workSuggestionsEnabled: false }, true), true);
+  assert.equal(core.validateSettings({ workSuggestionsEnabled: 'invalid' }, true), false);
+});
+
+nativeTest('US09 SQLite persists workSuggestionsEnabled independently from remindersEnabled across backup restore', async t => {
+  const { store, directory } = await fixture(t);
+  const initial = await store.request({ op: 'init' });
+  assert.equal(initial.settings.workSuggestionsEnabled, true);
+  const saved = await store.request({ op: 'settings', patch: { workSuggestionsEnabled: false, remindersEnabled: true } });
+  assert.equal(saved.workSuggestionsEnabled, false);
+  assert.equal(saved.remindersEnabled, true);
+  const backupPath = path.join(directory, 'v5-us09.jsonl');
+  assert.equal((await store.exportToFile(backupPath)).ok, true);
+  await store.request({ op: 'settings', patch: { workSuggestionsEnabled: true, remindersEnabled: false } });
+  assert.equal((await store.restoreFromFile(backupPath)).ok, true);
+  const restored = await store.request({ op: 'init' });
+  assert.equal(restored.settings.workSuggestionsEnabled, false);
+  assert.equal(restored.settings.remindersEnabled, true);
+
+  const lines = fs.readFileSync(backupPath, 'utf8').trimEnd().split('\n');
+  const header = JSON.parse(lines[0]);
+  delete header.meta.settings.workSuggestionsEnabled;
+  lines[0] = JSON.stringify(header);
+  const end = JSON.parse(lines.at(-1));
+  end.sha256 = require('node:crypto').createHash('sha256').update(`${lines.slice(0, -1).join('\n')}\n`).digest('hex');
+  lines[lines.length - 1] = JSON.stringify(end);
+  const legacyPath = path.join(directory, 'v5-legacy-settings.jsonl');
+  fs.writeFileSync(legacyPath, `${lines.join('\n')}\n`);
+  assert.equal((await store.restoreFromFile(legacyPath)).ok, true);
+  assert.equal((await store.request({ op: 'init' })).settings.workSuggestionsEnabled, true);
+});
+
+test('M3 collectAffectedWorkProjects and markArtifactStale handle cross-project moves and preserve user content', async () => {
+  const core = await corePromise;
+  assert.equal(typeof core.collectAffectedWorkProjects, 'function');
+  assert.equal(typeof core.markArtifactStale, 'function');
+  const ids = core.collectAffectedWorkProjects([
+    { kind: 'engagement', id: 'p1', before: project(), after: { ...project(), id: 'p1', updatedAt: 5 } },
+    { kind: 'task', id: 't1', before: { id: 't1', engagementId: 'p2' }, after: { id: 't1', engagementId: 'p3' } },
+    { kind: 'followup', id: 'f1', before: waiting(), after: null },
+    { kind: 'artifact', id: 'a1', before: null, after: { id: 'a1', projectId: 'p4' } },
+  ]);
+  assert.deepEqual([...ids].sort(), ['p1', 'p2', 'p3', 'website']);
+
+  const art = {
+    id: 'art-1',
+    space: 'work',
+    projectId: 'website',
+    type: 'proposal_brief',
+    title: '用户自定义标题',
+    content: '用户精修正文（不可覆盖）',
+    sourceSnapshot: { projectUpdatedAt: 1, tasksCount: 1, followUpsCount: 1, conditionsCount: 0 },
+    version: 2,
+    status: 'ready',
+    createdAt: 10,
+    updatedAt: 20,
+  };
+  const marked = core.markArtifactStale(art, '项目资料已更新', 50);
+  assert.equal(marked.status, 'needs_review');
+  assert.equal(marked.reviewReason, '项目资料已更新');
+  assert.equal(marked.content, '用户精修正文（不可覆盖）');
+  assert.equal(marked.title, '用户自定义标题');
+  assert.deepEqual(marked.sourceSnapshot, art.sourceSnapshot);
+  assert.equal(marked.version, 2);
+});
+
+nativeTest('M3 SQLite marks linked artifacts needs_review on project/task update, undo, and source redaction while preserving content', async t => {
+  const { store } = await fixture(t);
+  await store.request({ op: 'saveDraft', space: 'work', draft: draft() });
+  assert.equal((await store.request(command())).ok, true);
+
+  const editedContent = '用户手动修改过的方案简报正文';
+  const art = {
+    id: 'art-website',
+    space: 'work',
+    projectId: 'website',
+    type: 'proposal_brief',
+    title: '张三方案简报',
+    content: editedContent,
+    sourceSnapshot: { projectUpdatedAt: 1, tasksCount: 0, followUpsCount: 1, conditionsCount: 0 },
+    version: 1,
+    status: 'ready',
+    createdAt: 10,
+    updatedAt: 10,
+  };
+  assert.equal((await store.request({
+    op: 'transaction',
+    space: 'work',
+    id: 'save-art-1',
+    mutations: [{ kind: 'artifact', id: art.id, before: null, after: art }],
+  })).ok, true);
+
+  // Mutate a linked task -> artifact flips to needs_review without overwriting editedContent
+  const task1 = { id: 'task-1', engagementId: 'website', title: '确认初版报价', assignee: '我', deadline: '周五', priority: 'high', done: false };
+  assert.equal((await store.request({
+    op: 'transaction',
+    space: 'work',
+    id: 'add-task-1',
+    event: true,
+    sourceMessageId: 'manual-1',
+    sourceText: '新增任务确认',
+    mutations: [{ kind: 'task', id: 'task-1', before: null, after: task1 }],
+  })).ok, true);
+
+  const afterTaskMutation = await store.request({ op: 'get', space: 'work', kind: 'artifact', id: art.id });
+  assert.equal(afterTaskMutation.status, 'needs_review');
+  assert.ok(afterTaskMutation.reviewReason);
+  assert.equal(afterTaskMutation.content, editedContent);
+
+  // Re-mark ready -> undo the task event -> flips back to needs_review again, still preserving content
+  const reReady = { ...afterTaskMutation, status: 'ready', updatedAt: afterTaskMutation.updatedAt + 1 };
+  delete reReady.reviewReason;
+  assert.equal((await store.request({
+    op: 'transaction',
+    space: 'work',
+    id: 'reready-1',
+    mutations: [{ kind: 'artifact', id: art.id, before: afterTaskMutation, after: reReady }],
+  })).ok, true);
+  assert.equal((await store.request({ op: 'undo', space: 'work' })).ok, true);
+  const afterUndo = await store.request({ op: 'get', space: 'work', kind: 'artifact', id: art.id });
+  assert.equal(afterUndo.status, 'needs_review');
+  assert.equal(afterUndo.content, editedContent);
+
+  // Re-mark ready -> redact original message source -> flips to needs_review cleanly
+  const reReady2 = { ...afterUndo, status: 'ready', updatedAt: afterUndo.updatedAt + 1 };
+  delete reReady2.reviewReason;
+  assert.equal((await store.request({
+    op: 'transaction',
+    space: 'work',
+    id: 'reready-2',
+    mutations: [{ kind: 'artifact', id: art.id, before: afterUndo, after: reReady2 }],
+  })).ok, true);
+  const msg = await store.request({ op: 'get', space: 'work', kind: 'message', id: 'session-1:1' });
+  assert.equal((await store.request({
+    op: 'transaction',
+    space: 'work',
+    id: 'redact-src-1',
+    redactSourceIds: ['session-1:1'],
+    mutations: [{ kind: 'message', id: 'session-1:1', before: msg, after: null }],
+  })).ok, true);
+  const afterRedact = await store.request({ op: 'get', space: 'work', kind: 'artifact', id: art.id });
+  assert.equal(afterRedact.status, 'needs_review');
+  assert.match(afterRedact.reviewReason || '', /来源|记忆|清理/);
+  assert.equal(afterRedact.content, editedContent);
+});

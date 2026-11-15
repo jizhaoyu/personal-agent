@@ -1,4 +1,4 @@
-import type { CaptureDraft, ClosureRecord, CommittedChangeEvent, ConditionIntent, Engagement, FollowUpItem, Message, ProjectTaskItem } from '../types';
+import type { ArtifactDraft, CaptureDraft, ClosureRecord, CommittedChangeEvent, ConditionIntent, Engagement, FollowUpItem, Message, ProjectTaskItem } from '../types';
 import type { QueryOptions, QueryPage } from '../persistence/repository';
 import type { RecordKind } from '../persistence/indexedDb';
 import { eventMutations } from '../../shared/persistence-core.mjs';
@@ -14,6 +14,7 @@ export interface ProjectContinuationData {
   tasks: QueryPage<ProjectTaskItem>;
   followUps: QueryPage<FollowUpItem>;
   conditions?: QueryPage<ConditionIntent>;
+  artifacts?: QueryPage<ArtifactDraft>;
   recent: QueryPage<ClosureRecord>;
 }
 export interface EvidenceTarget { kind: 'engagement' | 'task' | 'followup' | 'condition'; id: string; field: string; label: string }
@@ -43,24 +44,25 @@ function guard(reader: ContinuationReader) {
   const identity = reader.getReadIdentity?.();
   return () => { if (reader.getReadIdentity?.() !== identity) throw new Error('资料已变化，请重新读取项目。'); };
 }
-export async function loadContinuationPage<T = any>(reader: ContinuationReader, projectId: string, kind: 'task' | 'followup' | 'condition' | 'closure', cursor?: string): Promise<QueryPage<T>> {
+export async function loadContinuationPage<T = any>(reader: ContinuationReader, projectId: string, kind: 'task' | 'followup' | 'condition' | 'artifact' | 'closure', cursor?: string): Promise<QueryPage<T>> {
   const check = guard(reader);
   const page = await reader.query<any>('work', kind, { relatedId: projectId, limit: 25, ...(cursor ? { cursor } : {}) });
   check();
-  return { ...page, items: page.items.filter(row => kind === 'closure' ? row.engagementIds?.includes(projectId) : row.engagementId === projectId) };
+  return { ...page, items: page.items.filter(row => kind === 'closure' ? row.engagementIds?.includes(projectId) : kind === 'artifact' ? row.projectId === projectId : row.engagementId === projectId) };
 }
 export async function loadProjectContinuation(reader: ContinuationReader, projectId: string): Promise<ProjectContinuationData> {
   const check = guard(reader);
-  const [project, tasks, followUps, conditions, recent] = await Promise.all([
+  const [project, tasks, followUps, conditions, artifacts, recent] = await Promise.all([
     reader.get<Engagement>('work', 'engagement', projectId),
     loadContinuationPage<ProjectTaskItem>(reader, projectId, 'task'),
     loadContinuationPage<FollowUpItem>(reader, projectId, 'followup'),
     loadContinuationPage<ConditionIntent>(reader, projectId, 'condition'),
+    loadContinuationPage<ArtifactDraft>(reader, projectId, 'artifact'),
     loadContinuationPage<ClosureRecord>(reader, projectId, 'closure'),
   ]);
   check();
   if (!project || project.id !== projectId) throw new Error('项目不存在或暂不可用。');
-  return { project, tasks, followUps, conditions, recent };
+  return { project, tasks, followUps, conditions, artifacts, recent };
 }
 export function groupContinuation(tasks: ProjectTaskItem[], followUps: FollowUpItem[], conditions: ConditionIntent[] = []) {
   return {

@@ -3,7 +3,7 @@ export const DEFAULT_PUBLIC_SETTINGS = Object.freeze({
   apiBaseUrl: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat', personaName: 'Looma',
   personaAvatar: '✨', personaGreeting: '把零散沟通整理成可信的下一步。',
   systemPrompt: '你是 Looma 客户跟进伴侣。整理用户提供的事实，不猜测预算、成交或承诺；变更必须由用户确认。',
-  alwaysOnTop: false, modelEnabled: false, remindersEnabled: false, memoryModelEnabled: false,
+  alwaysOnTop: false, modelEnabled: false, remindersEnabled: false, memoryModelEnabled: false, workSuggestionsEnabled: true,
 });
 export const RECORD_KINDS = Object.freeze(['message', 'event', 'engagement', 'task', 'memory', 'summary', 'expense', 'person', 'journal', 'custom', 'wallet', 'rpg', 'capture_draft', 'followup', 'condition', 'closure', 'todo', 'artifact']);
 const spaces = ['life', 'work'];
@@ -90,7 +90,7 @@ export function normalizeApplied(value) {
 export function validateSettings(settings, partial = false) {
   return only(settings, Object.keys(DEFAULT_PUBLIC_SETTINGS)) &&
     Object.keys(settings).every(k => typeof settings[k] === typeof DEFAULT_PUBLIC_SETTINGS[k]) &&
-    (partial || Object.keys(DEFAULT_PUBLIC_SETTINGS).filter(k => k !== 'memoryModelEnabled').every(k => k in settings));
+    (partial || Object.keys(DEFAULT_PUBLIC_SETTINGS).filter(k => k !== 'memoryModelEnabled' && k !== 'workSuggestionsEnabled').every(k => k in settings));
 }
 function validMutation(space, m) {
   return only(m, ['kind', 'id', 'before', 'after']) && RECORD_KINDS.includes(m.kind) && m.kind !== 'event' &&
@@ -250,6 +250,24 @@ export function searchTerms(text) {
   return [...tokens];
 }
 export function recordAt(data) { return data.timestamp ?? data.confirmedAt ?? data.updatedAt ?? data.createdAt ?? 0; }
+export function collectAffectedWorkProjects(mutations = []) {
+  const ids = new Set();
+  for (const m of mutations) {
+    if (!m || !['engagement', 'task', 'followup', 'condition'].includes(m.kind)) continue;
+    if (m.kind === 'engagement') {
+      if (m.id) ids.add(m.id);
+    } else {
+      if (m.before?.engagementId) ids.add(m.before.engagementId);
+      if (m.after?.engagementId) ids.add(m.after.engagementId);
+    }
+  }
+  return ids;
+}
+export function markArtifactStale(artifact, reason, now = Date.now()) {
+  if (!artifact || !validateRecord('work', 'artifact', artifact)) return null;
+  if (artifact.status === 'needs_review' && artifact.reviewReason === reason) return null;
+  return { ...artifact, status: 'needs_review', reviewReason: reason, updatedAt: Math.max(now, artifact.updatedAt + 1) };
+}
 export function recordText(kind, data) {
   if (kind === 'engagement') return [data.clientName, data.title, data.budgetAmount, data.stage, data.internalContext, data.shareableSummary, data.nextAction].filter(v => v !== undefined).join(' ');
   if (kind === 'event') return [data.sourceText, data.proposalId].join(' ');

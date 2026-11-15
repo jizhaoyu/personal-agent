@@ -177,3 +177,52 @@ test('settings report acknowledged native restore accurately even if reloading t
   await new Promise(resolve => setImmediate(resolve)); tree = ui.render();
   assert.match(ui.text(tree), /已.*恢复/); assert.doesNotMatch(ui.text(tree), /当前业务数据未替换/); assert.equal(ui.imported(), 1);
 });
+
+test('Repository lists, saves, and deletes project artifacts strictly scoped by projectId without noise events', async () => {
+  const rows = new Map<string, any>();
+  const events: any[] = [];
+  let rev = 1;
+  const repo: any = createRepository({
+    async request(cmd: any) {
+      if (cmd.op === 'init') return { ready: true, mode: 'work', settings: makeBootstrap({}, [], { space: 'work' }).snapshot.settings };
+      if (cmd.op === 'bootstrap') return makeBootstrap({ mode: 'work', revisions: { life: 0, work: rev } }, [...rows.values()], { space: cmd.space });
+      if (cmd.op === 'get') return rows.get(`${cmd.space}:${cmd.kind}:${cmd.id}`)?.data || null;
+      if (cmd.op === 'list') {
+        const all = [...rows.values()].filter(r => r.space === cmd.space && r.kind === cmd.kind);
+        const filtered = cmd.relatedId ? all.filter(r => r.data.projectId === cmd.relatedId || r.data.engagementId === cmd.relatedId) : all;
+        return { items: filtered.map(r => r.data), nextCursor: null };
+      }
+      if (cmd.op === 'transaction') {
+        for (const m of cmd.mutations) {
+          const key = `${cmd.space}:${m.kind}:${m.id}`;
+          if (m.after === null) rows.delete(key);
+          else rows.set(key, { space: cmd.space, kind: m.kind, id: m.id, data: structuredClone(m.after), at: m.after.updatedAt || 1 });
+        }
+        if (cmd.event) events.push(cmd);
+        rev++;
+        return { ok: true, receipts: [] };
+      }
+      throw new Error(`unexpected op ${cmd.op}`);
+    },
+  });
+  await repo.initialize();
+  const project = { id: 'p-1', clientName: '周总', title: '官网', stage: '方案报价', internalContext: '', shareableSummary: '', nextAction: '', updatedAt: 10 };
+  const other = { id: 'p-2', clientName: '刘总', title: '小程序', stage: '初步接触', internalContext: '', shareableSummary: '', nextAction: '', updatedAt: 10 };
+  await repo.transaction('work', [
+    { kind: 'engagement', id: 'p-1', before: null, after: project },
+    { kind: 'engagement', id: 'p-2', before: null, after: other },
+  ], { event: false });
+
+  const art1 = { id: 'art-1', space: 'work', projectId: 'p-1', type: 'proposal_brief', title: '周总方案', content: '内容1', sourceSnapshot: { projectUpdatedAt: 10, tasksCount: 0, followUpsCount: 0, conditionsCount: 0 }, version: 1, status: 'draft', createdAt: 10, updatedAt: 10 };
+  const art2 = { id: 'art-2', space: 'work', projectId: 'p-2', type: 'meeting_brief', title: '刘总纪要', content: '内容2', sourceSnapshot: { projectUpdatedAt: 10, tasksCount: 0, followUpsCount: 0, conditionsCount: 0 }, version: 1, status: 'draft', createdAt: 10, updatedAt: 10 };
+  assert.equal((await repo.saveArtifactDraft(art1)).ok, true);
+  assert.equal((await repo.saveArtifactDraft(art2)).ok, true);
+  assert.equal(events.length, 0);
+
+  const list1 = await repo.listProjectArtifacts('p-1');
+  assert.deepEqual(list1.map((item: any) => item.id), ['art-1']);
+
+  assert.equal((await repo.deleteArtifactDraft('art-1')).ok, true);
+  assert.deepEqual(await repo.listProjectArtifacts('p-1'), []);
+  assert.equal((await repo.listProjectArtifacts('p-2')).length, 1);
+});

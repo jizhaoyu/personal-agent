@@ -2,6 +2,7 @@ import {
   DEFAULT_PUBLIC_SETTINGS, RECORD_KINDS, validateRecord, validateTransaction, flattenV3, searchTerms,
   makeBootstrap, recordAt, recordText, sameValue, eventMutations, validateSettings, stableJson, redactEvent,
   isBusinessKind, validateCaptureCommand, captureRows, workIndex, workDay, normalizeApplied,
+  collectAffectedWorkProjects, markArtifactStale,
 } from '../../shared/persistence-core.mjs';
 import type { WorkspaceMode } from '../types';
 
@@ -28,7 +29,7 @@ const rangeFor = (space: string, kind: string, cursor?: string) => {
   if (value && (!Number.isFinite(value.at) || typeof value.id !== 'string')) throw new Error('分页游标无效。');
   return IDBKeyRange.bound([space, kind, MIN, ''], [space, kind, value?.at ?? MAX, value?.id ?? '\uffff'], false, !!value);
 };
-function relations(data: any): string[] { return [...new Set([...(data.sourceIds || []), ...(data.engagementIds || []), ...(data.taskIds || []), ...(data.followUpIds || []), ...(data.conditionIds || []), data.sourceMessageId, data.engagementId, data.followUpId, data.supersedesId, data.eventId].filter(Boolean))] as string[]; }
+function relations(data: any): string[] { return [...new Set([...(data.sourceIds || []), ...(data.engagementIds || []), ...(data.taskIds || []), ...(data.followUpIds || []), ...(data.conditionIds || []), data.sourceMessageId, data.engagementId, data.followUpId, data.supersedesId, data.eventId, data.projectId, data.conditionId].filter(Boolean))] as string[]; }
 function indexed(row: PersistedRow) {
   const agenda = row.space === 'work' ? workIndex(row.kind, row.data) : null;
   return { ...clone(row), relatedKeys: relations(row.data).map(id => encoded([row.space, row.kind, id])),
@@ -63,11 +64,43 @@ async function writeRow(tx: IDBTransaction, row: PersistedRow, before: any, meta
 }
 async function checkRemovedProjectLinks(tx: IDBTransaction, space: WorkspaceMode, mutations: any[]) {
   for (const id of new Set(mutations.filter(m => m.kind === 'engagement' && m.after === null).map(m => m.id))) {
-    for (const kind of ['task', 'followup', 'condition']) {
+    for (const kind of ['task', 'followup', 'condition', 'artifact']) {
       const children = await collect(tx.objectStore('records').index('byRelated'), IDBKeyRange.only(encoded([space, kind, id])), 1);
       if (children.length) throw new Error('项目仍有关联事项，未保存任何更改。'); } } { for (const id of new Set(mutations.filter(m => m.kind === 'followup' && m.after === null).map(m => m.id))) { const children = await collect(tx.objectStore('records').index('byRelated'), IDBKeyRange.only(encoded([space, 'condition', id])), 1); if (children.length) throw new Error('条件关联的等待事项不存在，未保存任何更改。');
     }
   }
+}
+async function invalidateArtifacts(tx: IDBTransaction, projectIds: Set<string>, reason: string, excludeIds: Set<string>, meta: Meta, now = Date.now()) {
+  const store = tx.objectStore('records');
+  for (const projectId of projectIds) {
+    const projectRow: any = await wrap(store.get(key('work', 'engagement', projectId)));
+    if (!projectRow?.data) continue;
+    const rows = await collect(store.index('byRelated'), IDBKeyRange.only(encoded(['work', 'artifact', projectId])), 500);
+    for (const row of rows) {
+      if (excludeIds.has(row.id) || row.data?.projectId !== projectId) continue;
+      const next = markArtifactStale(row.data, reason, now);
+      if (next) await writeRow(tx, { space: 'work', kind: 'artifact', id: next.id, data: next, at: recordAt(next) }, row.data, meta);
+    }
+  }
+}
+async function redactedProjectIds(tx: IDBTransaction, redactSourceIds: string[] = [], retiredMemoryIds: string[] = []) {
+  const store = tx.objectStore('records'), ids = new Set<string>();
+  const collectBySource = async (srcId: string) => {
+    for (const kind of ['closure', 'memory', 'followup', 'condition']) {
+      const rows = await collect(store.index('byRelated'), IDBKeyRange.only(encoded(['work', kind, srcId])), 200);
+      for (const row of rows) {
+        for (const pid of (row.data?.engagementIds || [])) ids.add(pid);
+        if (row.data?.engagementId) ids.add(row.data.engagementId);
+      }
+    }
+  };
+  for (const srcId of redactSourceIds) await collectBySource(srcId);
+  for (const memId of retiredMemoryIds) {
+    const row: any = await wrap(store.get(key('work', 'memory', memId)));
+    for (const pid of (row?.data?.engagementIds || [])) ids.add(pid);
+    for (const srcId of (row?.data?.sourceIds || [])) await collectBySource(srcId);
+  }
+  return ids;
 }
 function collect(index: IDBIndex | IDBObjectStore, range: IDBKeyRange | undefined, limit: number, direction: IDBCursorDirection = 'prev',
   accept: (row: any) => boolean = () => true): Promise<any[]> {
@@ -260,6 +293,14 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
           if (!previousSource) await writeRow(tx, { space: 'work', kind: 'message', id: source.id, data: source, at: source.timestamp }, null, meta);
           for (const m of mutations) await writeRow(tx, { space: 'work', kind: m.kind, id: m.id, data: m.after, at: m.after ? recordAt(m.after) : 0 }, m.before, meta);
           await checkRemovedProjectLinks(tx, 'work', mutations);
+          await invalidateArtifacts(
+            tx,
+            collectAffectedWorkProjects(mutations),
+            '关联项目资料、行动或跟进条件已更新，建议重新核对',
+            new Set(mutations.filter(m => m.kind === 'artifact').map(m => m.id)),
+            meta,
+            command.confirmedAt,
+          );
           const latest = await collect(tx.objectStore('records').index('byTime'), rangeFor('work', 'event'), 1);
           const event = { id: closure.eventId, proposalId: p.id, mode: 'work', sourceMessageId: p.sourceMessageId, sourceText: p.sourceText,
             mutations, createdAt: Math.max(command.confirmedAt, (latest[0]?.at || 0) + 1) };
@@ -283,8 +324,12 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
           }
           const existing = new Map<string, any>();
           if (!Array.isArray(command.mutations)) throw new Error('变更批次格式无效。');
-          const targets = command.mutations.flatMap(mutation => [[mutation.kind, mutation.id], ...(mutation.after?.engagementId ? [['engagement', mutation.after.engagementId]] : []), ...(mutation.after?.followUpId ? [['followup', mutation.after.followUpId]] : [])]);
+          const targets = command.mutations.flatMap(mutation => [[mutation.kind, mutation.id], ...(mutation.after?.engagementId ? [['engagement', mutation.after.engagementId]] : []), ...(mutation.after?.projectId ? [['engagement', mutation.after.projectId]] : []), ...(mutation.after?.followUpId ? [['followup', mutation.after.followUpId]] : [])]);
           await Promise.all(targets.map(async ([kind, id]) => { const row: any = await wrap(tx.objectStore('records').get(key(command.space, kind, id))); existing.set(`${kind}:${id}`, row?.data || null); }));
+          const preRetired = command.mutations.filter(m => m.kind === 'memory' && m.after?.status === 'retracted').map(m => m.id);
+          const redactedProjects = command.space === 'work' && (command.redactSourceIds?.length || preRetired.length)
+            ? await redactedProjectIds(tx, command.redactSourceIds || [], preRetired)
+            : new Set<string>();
           const errors = validateTransaction(command, meta.revisions[command.space], (kind, id) => existing.get(`${kind}:${id}`) || null);
           if (errors.length) { result = { ok: false, error: errors.join(' ') }; break; }
           for (const mutation of command.mutations) await writeRow(tx, { space: command.space, kind: mutation.kind, id: mutation.id, data: mutation.after, at: mutation.after ? recordAt(mutation.after) : 0 }, mutation.before, meta);
@@ -302,6 +347,12 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
               for (const row of events) { const data = redactEvent(row.data, command.redactSourceIds, retired); if (data) await writeRow(tx, { ...row, data }, row.data, meta); }
               cursor = events.length === 200 ? JSON.stringify({ at: events.at(-1).at, id: events.at(-1).id }) : undefined;
             } while (cursor);
+          }
+          if (command.space === 'work') {
+            const explicitArtifacts = new Set<string>(command.mutations.filter((m: any) => m.kind === 'artifact').map((m: any) => m.id));
+            const ts = Date.now();
+            await invalidateArtifacts(tx, collectAffectedWorkProjects(command.mutations), '关联项目资料、行动或跟进条件已更新，建议重新核对', explicitArtifacts, meta, ts);
+            await invalidateArtifacts(tx, redactedProjects, '关联来源原文或记忆已清理，原草稿正文已保留，请重新核对', explicitArtifacts, meta, ts);
           }
           const business = command.mutations.some(mutation => isBusinessKind(mutation.kind));
           if (command.event) {
@@ -329,6 +380,9 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
           for (const mutation of [...mutations].reverse()) await writeRow(tx, { space: command.space, kind: mutation.kind, id: mutation.id, data: mutation.before, at: mutation.before ? recordAt(mutation.before) : 0 }, mutation.after, meta);
           await checkRemovedProjectLinks(tx, command.space, mutations.map(m => ({ ...m, after: m.before })));
           const changed = { ...eventRow.data, revertedAt: Date.now() };
+          if (command.space === 'work') {
+            await invalidateArtifacts(tx, collectAffectedWorkProjects(mutations), '最近工作变更已撤销，建议重新核对草稿内容', new Set(mutations.filter(m => m.kind === 'artifact').map(m => m.id)), meta, changed.revertedAt);
+          }
           await writeRow(tx, { ...eventRow, data: changed }, eventRow.data, meta);
           const closure: any = await wrap(tx.objectStore('records').get(key(command.space, 'closure', `closure-${eventRow.data.proposalId}`)));
           if (closure) await writeRow(tx, { ...closure, data: { ...closure.data, revertedAt: changed.revertedAt } }, closure.data, meta);
@@ -390,6 +444,7 @@ export function createIndexedDbBackend(name = DB_NAME): PersistenceBackend {
             ids.add(identifier); if (row.kind === 'engagement') engagements.add(row.id); if (row.kind === 'followup') followups.add(row.id);
           }
           if (command.records.some(row => ['task', 'followup', 'condition'].includes(row.kind) && row.data.engagementId && !engagements.has(row.data.engagementId))) throw new Error('备份待办关联项目缺失。');
+          if (command.records.some(row => row.kind === 'artifact' && !engagements.has(row.data.projectId))) throw new Error('备份成品草稿关联项目缺失。');
           if (command.records.some(row => row.kind === 'condition' && row.data.followUpId && !followups.has(row.data.followUpId))) throw new Error('备份条件关联等待项缺失。');
           if (command.applied !== undefined && !Array.isArray(command.applied)) throw new Error('备份批次标记无效。');
           const applied = (command.applied || []).map(normalizeApplied), appliedKeys = new Set();

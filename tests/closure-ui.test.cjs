@@ -14,7 +14,7 @@ function load(name, react = React, repository = { query: async () => ({ items: [
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true,
   }, fileName: filename }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(compiled, { module, exports: module.exports, Date, Intl, console, crypto,
+  vm.runInNewContext(compiled, { module, exports: module.exports, Date, Intl, console, crypto, get window() { return globalThis.window; },
     require(dependency) {
       if (dependency === 'react') return react;
       // Icons are decorative here; Node's CJS runner cannot load this package's mixed ESM entry.
@@ -34,6 +34,16 @@ function load(name, react = React, repository = { query: async () => ({ items: [
         } });
         return m.exports;
       }
+      if (dependency === '../services/artifacts') {
+        const file = path.join(process.cwd(), 'src/services/artifacts.ts');
+        const compiledService = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: file }).outputText;
+        const m = { exports: {} };
+        vm.runInNewContext(compiledService, { module: m, exports: m.exports, Date, console, crypto, require(dep) {
+          if (dep === './storage') return { newId: prefix => `${prefix}-${crypto.randomUUID()}` };
+          return require(dep);
+        } });
+        return m.exports;
+      }
       if (dependency === '../services/conditionIntents') {
         const file = path.join(process.cwd(), 'src/services/conditionIntents.ts');
         const compiledService = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: file }).outputText;
@@ -46,6 +56,8 @@ function load(name, react = React, repository = { query: async () => ({ items: [
         return m.exports;
       }
       if (dependency === '../services/aiService') return { chinaTime: value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }), getDueTasks: tasks => tasks.filter(t => !t.done && Date.parse(t.dueAt) <= Date.now()) };
+      if (dependency === '../services/legacyConnection') return { clearLegacyCredential: () => true };
+      if (dependency === '../services/todos') return { TodoService: { capabilities: async () => ({ background: false, notifications: 'unsupported', exactAlarms: 'unsupported', enabled: false }), requestPermissions: async () => ({ background: false, notifications: 'unsupported', exactAlarms: 'unsupported', enabled: false }) } };
       if (dependency.endsWith('persistence-core.mjs')) return { eventMutations: event => event.mutations || (event.operations || []).map(op => ({ kind: op.target, id: op.entityId, before: op.before, after: op.after })) };
       return require(dependency);
     },
@@ -355,4 +367,152 @@ test('ProposalReview and WorkBench render and manage M2 ConditionIntent candidat
   assert.ok(convertBtn);
   await convertBtn.props.onClick();
   assert.deepEqual(actionsCalled, [{ id: 'cond-1', action: 'convert_to_task' }]);
+});
+
+test('US09 hides proactive ready-condition banners when workSuggestionsEnabled is false without deleting conditions and supports prepare-artifact CTA when enabled', async () => {
+  const readyCond = {
+    id: 'cond-ready',
+    space: 'work',
+    conditionText: '陈总确认预算方向',
+    actionTitle: '准备正式报价方案',
+    conditionKind: 'manual_confirm',
+    status: 'ready',
+    engagementId: project.id,
+    sourceMessageId: 'msg-1',
+    revision: 2,
+    triggeredAt: 2,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const home = {
+    draft: null,
+    today: [],
+    overdue: [],
+    waiting: [],
+    questions: [],
+    conditions: [readyCond],
+    recent: [],
+    counts: { today: 0, overdue: 0, waiting: 0, questions: 0 },
+  };
+  let prepared = null;
+  const ui = harness('WorkBench', {
+    get: async () => project,
+    query: async (_space, kind) => ({ items: kind === 'condition' ? [readyCond] : kind === 'engagement' ? [project] : [], nextCursor: null }),
+  });
+
+  // When disabled, ready-condition highlight section is hidden on home, and CTA is absent there.
+  let tree = ui.render(props({ home, draft: null, workSuggestionsEnabled: false }));
+  assert.equal(find(tree, node => node.type === 'section' && node.props['aria-label'] === '条件已就绪'), undefined);
+  assert.doesNotMatch(text(tree), /准备交付草稿/);
+
+  // Opening project continuation still keeps the underlying ConditionIntent visible under 条件跟进.
+  find(tree, node => node.type === 'button' && text(node) === '项目').props.onClick();
+  tree = ui.render(props({ home, draft: null, workSuggestionsEnabled: false }));
+  await ui.effects();
+  tree = ui.render(props({ home, draft: null, workSuggestionsEnabled: false }));
+  find(tree, node => node.type === 'button' && text(node) === '详情').props.onClick();
+  tree = ui.render(props({ home, draft: null, workSuggestionsEnabled: false }));
+  const embeddedContinuation = find(tree, node => node.type?.name === 'ProjectContinuation');
+  assert.ok(embeddedContinuation);
+  assert.equal(embeddedContinuation.props.workSuggestionsEnabled, false);
+
+  const contUi = harness('ProjectContinuation', {
+    getReadIdentity: () => 'stable:1',
+    subscribe: () => () => {},
+    get: async () => project,
+    query: async (_space, kind) => ({ items: kind === 'condition' ? [readyCond] : [], nextCursor: null }),
+  });
+  let contTree = contUi.render({
+    projectId: project.id,
+    revision: 1,
+    draft: null,
+    busy: false,
+    workSuggestionsEnabled: false,
+    onContinueProject: noop,
+    onResumeDraft: noop,
+    onEdit: noop,
+    onClose: noop,
+    onOpenClosure: noop,
+    renderTask: item => React.createElement('div', { key: item.id }, item.title),
+    renderFollowUp: item => React.createElement('div', { key: item.id }, item.title),
+  });
+  await contUi.effects();
+  contTree = contUi.render({
+    projectId: project.id,
+    revision: 1,
+    draft: null,
+    busy: false,
+    workSuggestionsEnabled: false,
+    onContinueProject: noop,
+    onResumeDraft: noop,
+    onEdit: noop,
+    onClose: noop,
+    onOpenClosure: noop,
+    renderTask: item => React.createElement('div', { key: item.id }, item.title),
+    renderFollowUp: item => React.createElement('div', { key: item.id }, item.title),
+  });
+  assert.doesNotMatch(text(contTree), /条件已就绪，可推进/);
+  assert.match(text(contTree), /条件跟进/);
+  assert.match(text(contTree), /陈总确认预算方向/);
+
+  // When enabled, ready condition exposes 准备交付草稿 bridge action.
+  const uiEnabled = harness('WorkBench', {
+    get: async () => project,
+    query: async (_space, kind) => ({ items: kind === 'condition' ? [readyCond] : kind === 'engagement' ? [project] : [], nextCursor: null }),
+  });
+  let enabledTree = uiEnabled.render(props({
+    home,
+    draft: null,
+    workSuggestionsEnabled: true,
+    onPrepareArtifactFromCondition: cond => { prepared = cond; },
+  }));
+  const prepBtn = find(enabledTree, node => node.type === 'button' && text(node) === '准备交付草稿');
+  assert.ok(prepBtn, '就绪条件开启主动建议时应显示准备交付草稿入口');
+  prepBtn.props.onClick();
+  assert.equal(prepared?.id, 'cond-ready');
+});
+
+test('US09 SettingsModal manages workSuggestionsEnabled independently of remindersEnabled', async () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
+  try {
+    let saved = null;
+    const ui = harness('SettingsModal');
+    const baseSettings = {
+      apiBaseUrl: 'https://api.deepseek.com/v1',
+      modelName: 'deepseek-chat',
+      personaName: 'Looma',
+      personaAvatar: '✨',
+      personaGreeting: 'hi',
+      systemPrompt: 'prompt',
+      alwaysOnTop: false,
+      remindersEnabled: true,
+    };
+    let tree = ui.render({
+      isOpen: true,
+      settings: baseSettings,
+      onClose: noop,
+      onSaveSettings: async s => { saved = s; },
+      onDataImported: noop,
+    });
+    const suggestionLabel = find(tree, node => node.type === 'label' && /工作台主动建议/.test(text(node)));
+    assert.ok(suggestionLabel, 'SettingsModal 应包含工作台主动建议独立开关');
+    const checkbox = find(suggestionLabel, node => node.type === 'input' && node.props.type === 'checkbox');
+    assert.equal(checkbox.props.checked, true);
+    checkbox.props.onChange({ target: { checked: false } });
+    tree = ui.render({
+      isOpen: true,
+      settings: baseSettings,
+      onClose: noop,
+      onSaveSettings: async s => { saved = s; },
+      onDataImported: noop,
+    });
+    const saveBtn = find(tree, node => node.type === 'button' && text(node) === '保存设置');
+    await saveBtn.props.onClick();
+    assert.equal(saved.workSuggestionsEnabled, false);
+    assert.equal(saved.remindersEnabled, true);
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else delete globalThis.window;
+  }
 });

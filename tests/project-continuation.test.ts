@@ -107,3 +107,25 @@ test('continuing a project never silently replaces another draft or new-project 
     assert.equal(canContinueProject(draft as any, 'p'), false);
   }
 });
+
+test('loadProjectContinuation and loadContinuationPage load and isolate project artifacts by projectId', async () => {
+  const artMine: any = { id: 'a1', space: 'work', projectId: 'p', type: 'proposal_brief', title: '陈总方案', content: '正文', sourceSnapshot: { projectUpdatedAt: 10, tasksCount: 1, followUpsCount: 0, conditionsCount: 0 }, version: 1, status: 'draft', createdAt: 10, updatedAt: 10 };
+  const artOther: any = { ...artMine, id: 'a2', projectId: 'other' };
+  const calls: any[] = [];
+  const { reader } = fixture({
+    query: async (space: string, kind: string, options: any) => {
+      calls.push({ space, kind, ...options });
+      if (kind === 'artifact') return { items: [artMine, artOther], nextCursor: options.cursor ? null : 'art-cursor' };
+      return { items: [], nextCursor: null };
+    },
+  });
+  const loaded = await loadProjectContinuation(reader, 'p');
+  assert.equal(loaded.artifacts?.items.length, 1);
+  assert.equal(loaded.artifacts?.items[0].id, 'a1');
+  assert.equal(loaded.artifacts?.nextCursor, 'art-cursor');
+
+  const paged = await loadContinuationPage(reader, 'p', 'artifact', 'art-cursor');
+  assert.equal(paged.items.length, 1);
+  assert.equal(paged.nextCursor, null);
+  assert.ok(calls.some(c => c.kind === 'artifact' && c.cursor === 'art-cursor'));
+});
