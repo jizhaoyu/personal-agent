@@ -5,6 +5,7 @@ import type {
 import { StorageService, newId, validateProposal } from './storage';
 import { resolveDeadline, shanghaiDateKey } from './dates';
 import { routeLifeInput } from './lifeRouting';
+import { tryApplySpokenCheckin } from './checkins';
 import { evaluateFollowUpTransition, reviseConditionIntent, transitionConditionIntent } from './conditionIntents';
 import { validateTransaction } from '../../shared/persistence-core.mjs';
 
@@ -832,19 +833,29 @@ export const StateEngine = {
 
     const bookedClauses = new Set<string>();
 
-    // 1. 自定义卡片新建与打卡推进（支持带或不带《》书名号）
-    const customMatch = clean.match(/(?:建一?张|建一?个|新建|创建|生成一?张|加一?个)\s*(?:《([^》]{1,20})》|「([^」]{1,20})」|“([^”]{1,20})”|"([^"]{1,20})"|([^\s，,。；《》「」“”"]{1,16}?)(?:的)?\s*(?:卡|看板|面板|打卡))/);
-    const customTitle = customMatch ? (customMatch[1] || customMatch[2] || customMatch[3] || customMatch[4] || customMatch[5] || '').trim() : '';
-    if (customTitle) {
-      const target = +(clean.match(/目标\s*(\d+)/)?.[1] || 100);
-      if (target > 0) {
-        const cards = life.customCards;
-        cards.push({ id: newId('custom'), mode: 'life', title: customTitle, icon: '🌱', metricLabel: '进度', metricValue: 0,
-          metricTarget: target, unit: '次', checklist: [] });
-        receipt('custom', `已创建「${customTitle}」生活卡`);
-        for (const f of facts) {
-          if (/(?:建一?张|建一?个|新建|创建|生成一?张|加一?个|目标\s*\d+)/.test(f)) bookedClauses.add(f);
-        }
+    // 0. 极简多天习惯打卡识别（不干扰旧版《...》卡 + 目标N 的统计型自定义卡片）
+    const checkinResult = tryApplySpokenCheckin(clean, life.customCards);
+    if (checkinResult.handled) {
+      if ((checkinResult.kind === 'created' || checkinResult.kind === 'checked') && checkinResult.card) {
+        receipt('custom', checkinResult.message || `已记录「${checkinResult.card.title}」打卡`);
+      }
+      for (const f of facts) {
+        if (/打卡/.test(f)) bookedClauses.add(f);
+      }
+    } else {
+      // 1. 自定义卡片新建与打卡推进（支持带或不带《》书名号）
+      const customMatch = clean.match(/(?:建一?张|建一?个|新建|创建|生成一?张|加一?个)\s*(?:《([^》]{1,20})》|「([^」]{1,20})」|“([^”]{1,20})”|"([^"]{1,20})"|([^\s，,。；《》「」“”"]{1,16}?)(?:的)?\s*(?:卡|看板|面板|打卡))/);
+      const customTitle = customMatch ? (customMatch[1] || customMatch[2] || customMatch[3] || customMatch[4] || customMatch[5] || '').trim() : '';
+      if (customTitle) {
+        const target = +(clean.match(/目标\s*(\d+)/)?.[1] || 100);
+        if (target > 0) {
+          const cards = life.customCards;
+          cards.push({ id: newId('custom'), mode: 'life', title: customTitle, icon: '🌱', metricLabel: '进度', metricValue: 0,
+            metricTarget: target, unit: '次', checklist: [] });
+          receipt('custom', `已创建「${customTitle}」生活卡`);
+          for (const f of facts) {
+            if (/(?:建一?张|建一?个|新建|创建|生成一?张|加一?个|目标\s*\d+)/.test(f)) bookedClauses.add(f);
+          }
         }
       } else if (life.customCards?.length) {
         for (const card of life.customCards) {
@@ -1100,10 +1111,11 @@ export const StateEngine = {
 
     // 5. 体重、疲劳与运动恢复。饮水字段仅保留旧数据兼容。
     const rpg = life.rpg;
+    const unbookedClean = facts.filter(f => !bookedClauses.has(f)).join('，');
 
     // 体重：支持 "体重65"、"体重130斤"、"体重130"(>=95自动按斤折算)、"今天65kg"、"128斤"
-    const weightExplicit = clean.match(/(?:体重|称重|上称|重了?|瘦到|涨到|降到)\s*(?:是|为|到了?)?\s*(\d{2,3}(?:\.\d+)?)\s*(kg|公斤|千克|斤)?/i);
-    const weightUnitOnly = !weightExplicit ? clean.match(/(?:^|[，,。；\s]|今天|现在|目前|早上|晚上)(\d{2,3}(?:\.\d+)?)\s*(kg|公斤|千克|斤)/i) : null;
+    const weightExplicit = unbookedClean.match(/(?:体重|称重|上称|重了?|瘦到|涨到|降到)\s*(?:是|为|到了?)?\s*(\d{2,3}(?:\.\d+)?)\s*(kg|公斤|千克|斤)?/i);
+    const weightUnitOnly = !weightExplicit ? unbookedClean.match(/(?:^|[，,。；\s]|今天|现在|目前|早上|晚上)(\d{2,3}(?:\.\d+)?)\s*(kg|公斤|千克|斤)/i) : null;
     const weightMatch = weightExplicit || weightUnitOnly;
     if (weightMatch) {
       const rawVal = +weightMatch[1];
@@ -1116,14 +1128,14 @@ export const StateEngine = {
     }
 
     // 疲惫与精力下降
-    if (/熬夜|失眠|好累|太累|累死|累趴|没睡好|没睡醒|疲惫|困死|好困|犯困|加班|内耗|心累|头疼|头痛|不舒服|生病|感冒|发烧|烦躁|焦虑/.test(clean)) {
+    if (/熬夜|失眠|好累|太累|累死|累趴|没睡好|没睡醒|疲惫|困死|好困|犯困|加班|内耗|心累|头疼|头痛|不舒服|生病|感冒|发烧|烦躁|焦虑/.test(unbookedClean)) {
       rpg.energy = Math.max(0, rpg.energy - 18);
       rpg.moodBuff = '用户自报疲惫';
       receipt('rpg_status', '已记录自报状态：疲惫');
     }
 
     // 运动与睡眠恢复
-    if (/跑步|夜跑|晨跑|健身|举铁|撸铁|运动|锻炼|散步|走路|遛弯|骑行|骑车|游泳|打球|羽毛球|篮球|网球|乒乓球|踢球|瑜伽|普拉提|帕梅拉|跳绳|八段锦|爬山|徒步|冥想|早睡|早起|睡了个?好觉|睡饱|睡足|睡了\s*(?:[789]|10|[七八九十])\s*个?小时|满血复活|精神不错|元气满满/.test(clean)) {
+    if (/跑步|夜跑|晨跑|健身|举铁|撸铁|运动|锻炼|散步|走路|遛弯|骑行|骑车|游泳|打球|羽毛球|篮球|网球|乒乓球|踢球|瑜伽|普拉提|帕梅拉|跳绳|八段锦|爬山|徒步|冥想|早睡|早起|睡了个?好觉|睡饱|睡足|睡了\s*(?:[789]|10|[七八九十])\s*个?小时|满血复活|精神不错|元气满满/.test(unbookedClean)) {
       const today = shanghaiDateKey();
       if (rpg.lastActivityDate !== today) {
         const yesterday = shanghaiDateKey(Date.now() - 86400000);

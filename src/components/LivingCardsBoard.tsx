@@ -93,9 +93,9 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   const [tasks, setTasks] = useState<ProjectTaskItem[]>(() => mode === 'work' ? StorageService.getProjectTasks() : []);
   const [selectedDealForPoster, setSelectedDealForPoster] = useState<CrmDealItem | null>(null);
 
-  // 自定义卡
+  // 自定义卡（极简每日打卡卡归属独立「打卡」面板展示）
   const [customCards, setCustomCards] = useState<CustomLivingCard[]>(() =>
-    cachedPartition.customCards
+    cachedPartition.customCards.filter(c => c.cardKind !== 'checkin')
   );
   const [activeSubTab, setActiveSubTab] = useState<string>(
     mode === 'work' ? 'crm' : 'wallet'
@@ -116,7 +116,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
     const syncCurrentSpace = () => {
       if (!mountedRef.current || activeModeRef.current !== mode) return;
       const partition = Repository.getCurrent().partitions[mode];
-      setCustomCards(partition.customCards);
+      setCustomCards(partition.customCards.filter(c => c.cardKind !== 'checkin'));
       if (mode === 'life') {
         const life = Repository.getCurrent().partitions.life;
         setWallet(normalizeWallet(life.wallet));

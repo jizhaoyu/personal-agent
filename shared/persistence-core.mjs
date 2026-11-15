@@ -26,6 +26,7 @@ export function stableJson(value) {
 }
 export const sameValue = (a, b) => stableJson(a) === stableJson(b);
 const day = value => str(value) && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+const hhmm = value => str(value) && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
 const iso = value => str(value) && /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value) && day(value.slice(0, 10)) && Number.isFinite(Date.parse(value));
 export const isBusinessKind = kind => !['message', 'summary', 'capture_draft', 'closure'].includes(kind);
 export function validateCaptureProposal(proposal) {
@@ -182,8 +183,13 @@ export function validateRecord(space, kind, x) {
     case 'journal': return base(x) && only(x, ['id', 'mode', 'date', 'title', 'mood', 'userGoldenQuote', 'aiReflection', 'photoUrl', 'stickers', 'createdAt']) &&
       x.mode === space && ['date', 'title', 'mood', 'userGoldenQuote', 'aiReflection'].every(k => str(x[k])) && strings(x.stickers) &&
       finite(x.createdAt) && optional(x, 'photoUrl', str);
-    case 'custom': return base(x) && only(x, ['id', 'mode', 'title', 'icon', 'metricLabel', 'metricValue', 'metricTarget', 'unit', 'checklist']) &&
+    case 'custom': return base(x) && only(x, ['id', 'mode', 'title', 'icon', 'metricLabel', 'metricValue', 'metricTarget', 'unit', 'checklist', 'cardKind', 'checkedDates', 'dailyReminderTime', 'archived', 'createdAt']) &&
       x.mode === space && ['title', 'icon', 'metricLabel', 'unit'].every(k => str(x[k])) && finite(x.metricValue) && finite(x.metricTarget) && x.metricTarget > 0 &&
+      optional(x, 'cardKind', v => v === 'metric' || v === 'checkin') &&
+      optional(x, 'checkedDates', xs => Array.isArray(xs) && xs.every(day) && new Set(xs).size === xs.length) &&
+      optional(x, 'dailyReminderTime', hhmm) &&
+      optional(x, 'archived', v => typeof v === 'boolean') &&
+      optional(x, 'createdAt', finite) &&
       Array.isArray(x.checklist) && unique(x.checklist) && x.checklist.every(item => base(item) && only(item, ['id', 'text', 'done']) && str(item.text) && typeof item.done === 'boolean');
     case 'expense': return base(x) && only(x, ['id', 'title', 'amount', 'type', 'category', 'timestamp']) && str(x.title) && finite(x.amount) && x.amount >= 0 &&
       ['expense', 'income', 'saving'].includes(x.type) && ['餐饮☕', '购物🛍️', '出行🚕', '娱乐🎮', '生活🏠', '金库✨'].includes(x.category) && finite(x.timestamp);

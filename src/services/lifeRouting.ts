@@ -82,6 +82,9 @@ export function routeLifeInput(raw:string):LifeFragment[] {
     if(previous?.route==='fact'&&!hardStop&&/^(?:目标)\s*\d+/.test(text.trim())&&/(?:建|创建).*(?:卡|看板)/.test(previous.text)){
       previous.end=slice.end;previous.text=raw.slice(previous.start,previous.end);continue;
     }
+    if(previous?.route==='fact'&&!hardStop&&/(?:开启|开始|启动|新建|创建|加一?个|建一?个|完成|连续|坚持).{0,10}天.{1,20}打卡/.test(previous.text)&&/^(?:每天|每日|每晚|最晚).{0,12}(?:\d{1,2}|[零一二两三四五六七八九十]+).{0,6}提醒(?:我|一下)?[。！!\s]*$/.test(text.trim())){
+      previous.end=slice.end;previous.text=raw.slice(previous.start,previous.end);continue;
+    }
     if(previous&&!hardStop&&(correctionTail.test(text.trim())&&previous.route==='fact'||(qualifier.test(text.trim())||bareClock.test(text.trim()))&&previous.route==='action')){
       previous.end=slice.end;previous.text=raw.slice(previous.start,previous.end);
       if(correctionTail.test(text.trim()))previous.route='original';

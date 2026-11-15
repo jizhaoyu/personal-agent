@@ -152,6 +152,11 @@ export interface CustomLivingCard {
   metricTarget: number;
   unit: string;
   checklist: { id: string; text: string; done: boolean }[];
+  cardKind?: 'metric' | 'checkin';
+  checkedDates?: string[];
+  dailyReminderTime?: string;
+  archived?: boolean;
+  createdAt?: number;
 }
 
 export type GomokuPiece = 'black' | 'white' | null;

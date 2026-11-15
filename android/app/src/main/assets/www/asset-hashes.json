@@ -1,21 +1,22 @@
 {
-  "generatedAt": "2026-11-02T13:09:29.404Z",
-  "fileCount": 14,
+  "generatedAt": "2026-11-15T11:13:02.707Z",
+  "fileCount": 15,
   "algorithm": "SHA-256",
   "files": {
-    ".vite/manifest.json": "4da1534de0c20ddb9bdd54f5eb27f5f4b389f57d8fbd6665e92e2a8706081bda",
-    "assets/ChatPill-Vwqppe-l.js": "4bcd105372176bd109a67e7694207db00f54fc9c9811b17d45d97a102dfef3cd",
+    ".vite/manifest.json": "fe94b7b6bdbf62b1d6eeb34d1a60ec956cee353f9db511cdb0f220de46947563",
+    "assets/ChatPill-BY9j1HHZ.js": "4519f1a44be29eebe5e9b71c0f2077e988070d3ab5f85977de53b6f763cf4bed",
+    "assets/CheckinBoard-BiFAVhKp.js": "0ac16066677d34b185f7df8479e1d055af4f5df0e460a86beefd9ae344207d11",
+    "assets/CheckinBoard-DCs39V25.css": "995f51e97468396ccba5f3e3a73ab8b530656cd38d28a5afa8a25b858cb6dd13",
     "assets/html2canvas.esm-QH1iLAAe.js": "061c08e50c0dc57b8d5e6531f0b8237a52a68b233260d49ab2f2c2906ad112c4",
-    "assets/index-C8-i7_Mb.css": "935f743fb7e7d15e9898517b028fd3d6430494d65cfd5aed0acb68a60962aeb2",
-    "assets/index-XllBeriB.js": "16845b53bbe79afb01e256d74ec84a864dc31e1693d6e9832bd0214917e2dde0",
-    "assets/LivingCardsBoard-BX138M5k.js": "a3b26d2615cfa6bdac7db35448a60909d9a1c4eec9c296e8b32e297172202f9d",
-    "assets/MemoryCenter-CvO3jiR5.js": "bf68da9cadf301039a6e5f0fdbd430d50fe450e35403f6d60c2a4d6dfaa28eb2",
+    "assets/index-BYIDnLuX.css": "3e8ef8916d2e4577f8fc4792c396546480869e5b8a32ae5b7ac3d17d39440900",
+    "assets/index-DNUojb1D.js": "e78707f1673d010b48e6d21d000695eb875ce3ea8a0fa5759dc09450d250d44f",
+    "assets/LivingCardsBoard-Fu683xLl.js": "fc3af2f4988073abfdff608519e860454f4941ea4a67bfe59e74f5247cbc7f6e",
+    "assets/MemoryCenter-BKbIthOy.js": "b5273840a00b5ab06498155da2d59726d018dd8b195124850c7fdeb48933e6f1",
     "assets/MemoryCenter-jizYsCl6.css": "ca5b89d10e6ff6423e44e5ec3330fa70513684396e690401860dcebc099a95b6",
     "assets/PracticeModal-BKLHpFJD.css": "8258306ddf4eae02f7579101608a7303b6d853e27b5b2b7b7bf5271b9d5cc1ba",
-    "assets/PracticeModal-DfnffXId.js": "0ef3181d1a608898bc74e2c292c968f7264b610a2eaf21f33d09d8140d255f21",
-    "assets/zap-CrEmr2bg.js": "5182282b18e0fd28b39b3b98de1574ebdb226bf76da68bb22bd72ceb03278cbf",
-    "build-info.json": "ea6a0364c2b41e6ffc6a70168b5d944f340695fcdc3b7533c83ce4788ff7e6ea",
-    "build-manifest.json": "0d875ec968a13dfb5faf0a0b616bd6629054530a875ef423f3218e042d42e801",
-    "index.html": "9879d0349237e51558cd3d726d42369949da0f2b4297263199ba48b79302e1ad"
+    "assets/PracticeModal-DcSaXheh.js": "c960825190ed031d15491a0a4aadce638cad6b3e9d523ac824f75e258abe6c82",
+    "build-info.json": "974588633832986f24907df4887dc66ecb025932141bfb6cfbe68a2d3441dbd7",
+    "build-manifest.json": "ca25b0c90c144e0f0e99ab50de4add7f1efae90a260e360a84b4d29a8734a14d",
+    "index.html": "675b88c5a41f646614b11b13e9def127098da821d91f0aa41dc69c2095fc02ef"
   }
 }

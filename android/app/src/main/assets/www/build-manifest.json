@@ -1,33 +1,41 @@
 {
-  "buildId": "trial-20261102T130923Z-a337eb0d2b",
+  "buildId": "trial-20261115T111257Z-a8b6d9616a",
   "files": [
     {
       "file": ".vite/manifest.json",
-      "sha256": "4da1534de0c20ddb9bdd54f5eb27f5f4b389f57d8fbd6665e92e2a8706081bda"
+      "sha256": "fe94b7b6bdbf62b1d6eeb34d1a60ec956cee353f9db511cdb0f220de46947563"
     },
     {
-      "file": "assets/ChatPill-Vwqppe-l.js",
-      "sha256": "4bcd105372176bd109a67e7694207db00f54fc9c9811b17d45d97a102dfef3cd"
+      "file": "assets/ChatPill-BY9j1HHZ.js",
+      "sha256": "4519f1a44be29eebe5e9b71c0f2077e988070d3ab5f85977de53b6f763cf4bed"
+    },
+    {
+      "file": "assets/CheckinBoard-BiFAVhKp.js",
+      "sha256": "0ac16066677d34b185f7df8479e1d055af4f5df0e460a86beefd9ae344207d11"
+    },
+    {
+      "file": "assets/CheckinBoard-DCs39V25.css",
+      "sha256": "995f51e97468396ccba5f3e3a73ab8b530656cd38d28a5afa8a25b858cb6dd13"
     },
     {
       "file": "assets/html2canvas.esm-QH1iLAAe.js",
       "sha256": "061c08e50c0dc57b8d5e6531f0b8237a52a68b233260d49ab2f2c2906ad112c4"
     },
     {
-      "file": "assets/index-C8-i7_Mb.css",
-      "sha256": "935f743fb7e7d15e9898517b028fd3d6430494d65cfd5aed0acb68a60962aeb2"
+      "file": "assets/index-BYIDnLuX.css",
+      "sha256": "3e8ef8916d2e4577f8fc4792c396546480869e5b8a32ae5b7ac3d17d39440900"
     },
     {
-      "file": "assets/index-XllBeriB.js",
-      "sha256": "16845b53bbe79afb01e256d74ec84a864dc31e1693d6e9832bd0214917e2dde0"
+      "file": "assets/index-DNUojb1D.js",
+      "sha256": "e78707f1673d010b48e6d21d000695eb875ce3ea8a0fa5759dc09450d250d44f"
     },
     {
-      "file": "assets/LivingCardsBoard-BX138M5k.js",
-      "sha256": "a3b26d2615cfa6bdac7db35448a60909d9a1c4eec9c296e8b32e297172202f9d"
+      "file": "assets/LivingCardsBoard-Fu683xLl.js",
+      "sha256": "fc3af2f4988073abfdff608519e860454f4941ea4a67bfe59e74f5247cbc7f6e"
     },
     {
-      "file": "assets/MemoryCenter-CvO3jiR5.js",
-      "sha256": "bf68da9cadf301039a6e5f0fdbd430d50fe450e35403f6d60c2a4d6dfaa28eb2"
+      "file": "assets/MemoryCenter-BKbIthOy.js",
+      "sha256": "b5273840a00b5ab06498155da2d59726d018dd8b195124850c7fdeb48933e6f1"
     },
     {
       "file": "assets/MemoryCenter-jizYsCl6.css",
@@ -38,20 +46,16 @@
       "sha256": "8258306ddf4eae02f7579101608a7303b6d853e27b5b2b7b7bf5271b9d5cc1ba"
     },
     {
-      "file": "assets/PracticeModal-DfnffXId.js",
-      "sha256": "0ef3181d1a608898bc74e2c292c968f7264b610a2eaf21f33d09d8140d255f21"
-    },
-    {
-      "file": "assets/zap-CrEmr2bg.js",
-      "sha256": "5182282b18e0fd28b39b3b98de1574ebdb226bf76da68bb22bd72ceb03278cbf"
+      "file": "assets/PracticeModal-DcSaXheh.js",
+      "sha256": "c960825190ed031d15491a0a4aadce638cad6b3e9d523ac824f75e258abe6c82"
     },
     {
       "file": "build-info.json",
-      "sha256": "ea6a0364c2b41e6ffc6a70168b5d944f340695fcdc3b7533c83ce4788ff7e6ea"
+      "sha256": "974588633832986f24907df4887dc66ecb025932141bfb6cfbe68a2d3441dbd7"
     },
     {
       "file": "index.html",
-      "sha256": "9879d0349237e51558cd3d726d42369949da0f2b4297263199ba48b79302e1ad"
+      "sha256": "675b88c5a41f646614b11b13e9def127098da821d91f0aa41dc69c2095fc02ef"
     }
   ],
   "runtime": [

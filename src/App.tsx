@@ -10,6 +10,7 @@ import { deriveCompanionState } from './services/companionState';
 import { createCaptureDraft, reviseCaptureDraft, rebaseProposal, resolveProposalConflict } from './services/capture';
 import { createDraftController } from './services/draftController';
 import { TodoService } from './services/todos';
+import { CHECKIN_REMINDER_PREFIX, syncCheckinReminders } from './services/checkins';
 import { capturePersonalText, clearLifeCaptureFocus, invalidateAgentCaptures } from './services/agentCapture';
 import { lifeActionText, routeLifeInput } from './services/lifeRouting';
 import type { DraftController, DraftState } from './services/draftController';
@@ -25,6 +26,7 @@ import buildInfo from '../shared/build-info.json';
 const PracticeModal = lazy(() => import('./components/PracticeModal').then(m => ({ default: m.PracticeModal })));
 const ChatPill = lazy(() => import('./components/ChatPill').then(m => ({ default: m.ChatPill })));
 const LivingCardsBoard = lazy(() => import('./components/LivingCardsBoard').then(m => ({ default: m.LivingCardsBoard })));
+const CheckinBoard = lazy(() => import('./components/CheckinBoard').then(m => ({ default: m.CheckinBoard })));
 const MemoryCenter = lazy(() => import('./components/MemoryCenter').then(m => ({ default: m.MemoryCenter })));
 const id = () => crypto.randomUUID();
 
@@ -104,7 +106,13 @@ export function App() {
       await Repository.saveWorkspaceMode('life');
       if (boot.snapshot.activeMode === 'work') { const stored = await Repository.getCaptureDraft(); if (active) installDraft(stored || createCaptureDraft()); }
       if (active) { ready = true; setSnapshot(Repository.getCurrent()); }
-      try { await TodoService.configure(Repository.getCurrent().settings.remindersEnabled); await TodoService.syncLegacy(); }
+      try {
+        const currentSettings = Repository.getCurrent().settings;
+        const hasCheckinReminder = Repository.getCurrent().partitions.life.customCards.some(c => c.cardKind === 'checkin' && Boolean(c.dailyReminderTime) && !c.archived);
+        await TodoService.configure(Boolean(currentSettings.remindersEnabled || hasCheckinReminder));
+        await TodoService.syncLegacy();
+        await syncCheckinReminders(Repository.getCurrent().partitions.life.customCards, TodoService);
+      }
       catch { if (active) setIssue('待办提醒暂未同步，请重新读取；已有记录仍保留。'); }
     } catch { if (active) setStartupError('本地数据库读取或迁移失败，旧资料已保留。'); } })();
     return () => { active = false; unsubscribe(); controllerSubscription.current?.(); controller.current?.dispose(); controller.current = null; };
@@ -161,7 +169,7 @@ export function App() {
       if (!target || !['work', 'life'].includes(target.space) || typeof target.id !== 'string') return;
       void (async () => {
         if (!await switchMode(target.space)) return;
-        if (target.space === 'life') setLifeTab('todos');
+        if (target.space === 'life') setLifeTab(target.id.startsWith(CHECKIN_REMINDER_PREFIX) ? 'checkins' : 'todos');
         setTodoFocus({ space: target.space, id: target.id, requestId: id() });
         await toggleCompact(false);
       })();
@@ -380,7 +388,10 @@ export function App() {
     controllerSubscription.current?.(); controller.current?.dispose(); controller.current = null; setDraftState(null);
     try {
       installDraft(await Repository.getCaptureDraft() || createCaptureDraft());
-      await TodoService.configure(Repository.getCurrent().settings.remindersEnabled);
+      const importedSettings = Repository.getCurrent().settings;
+      const importedHasCheckinReminder = Repository.getCurrent().partitions.life.customCards.some(c => c.cardKind === 'checkin' && Boolean(c.dailyReminderTime) && !c.archived);
+      await TodoService.configure(Boolean(importedSettings.remindersEnabled || importedHasCheckinReminder));
+      await syncCheckinReminders(Repository.getCurrent().partitions.life.customCards, TodoService).catch(() => {});
       setSnapshot(Repository.getCurrent()); setRestoreNeedsRead(false); setIssue(Repository.getRestoreWarning() || ''); TodoService.refresh(); await refreshHome();
     } catch {
       setRestoreNeedsRead(true); setSnapshot(Repository.getCurrent());
@@ -431,6 +442,13 @@ export function App() {
       failureStage='life-mutation';
       const mutations = await Repository.updateLifeAtomically(life => StateEngine.mutateLifeDraft(text, life), sourceId, text);
       if(!mutations.length)return;
+      const lifeCards = Repository.getCurrent().partitions.life.customCards;
+      if (lifeCards.some(c => c.cardKind === 'checkin')) {
+        if (lifeCards.some(c => c.cardKind === 'checkin' && Boolean(c.dailyReminderTime) && !c.archived)) {
+          await TodoService.configure(true).catch(() => {});
+        }
+        await syncCheckinReminders(lifeCards, TodoService).catch(() => {});
+      }
       const reply = mutations.map(m => m.summaryText).join('\n');
       try { await Repository.saveMessages([{ id: id(), role: 'assistant', content: reply, timestamp: Date.now(), mutations }], 'life'); }
       catch { if (modeRef.current === 'life') setIssue('生活记录已保存，但回复未保存，请查看生活卡片，勿重复提交。'); }
@@ -498,9 +516,10 @@ export function App() {
     <header className="app-header drag-region"><div className="app-header-left no-drag"><a className="wordmark" href="#" onClick={e => e.preventDefault()}>looma</a><div className={`space-switch ${mode === 'work' ? 'space-switch--work' : ''}`} aria-label="工作空间"><button className={mode === 'work' ? 'active' : ''} onClick={() => void switchMode('work')}><Briefcase size={11}/>工作态</button><button className={mode === 'life' ? 'active' : ''} onClick={() => void switchMode('life')}><Moon size={11}/>生活态</button></div></div><div className="header-tools no-drag"><button className="icon-btn" onClick={() => void openMemory()} aria-label="打开记忆中心"><BookOpen size={16}/></button><button className="icon-btn" onClick={() => void openSettings()} aria-label="打开设置"><Settings size={16}/></button>{window.electronAPI && !isMobileOrAndroid && <button className="icon-btn" onClick={() => void window.electronAPI!.minimizeWindow()} aria-label="最小化"><Minus size={16}/></button>}{window.electronAPI && <button className="icon-btn" onClick={() => void window.electronAPI!.closeWindow()} aria-label="退出应用"><X size={16}/></button>}</div></header>
     <main>{issue && <div className="app-alert" role="alert">{issue}{unknownCapture ? <button className="text-btn" disabled={committing} onClick={() => void saveCapture(unknownOriginalOnly.current)}>核查本次保存结果</button> : <button className="text-btn" onClick={async () => { try { if (restoreNeedsRead) { await dataImported(); } else { await Repository.refresh(mode); await refreshHome(); setIssue(''); } } catch { setIssue('暂未读取成功，资料仍保留。'); } }}>重新读取</button>}<button className="text-btn" disabled={unknownCapture} onClick={() => setIssue('')}>收起</button></div>}
       {memoryOpen ? <><button className="text-btn" onClick={() => void closeMemory()}>← 返回当前空间</button><Suspense fallback={<p>正在打开记忆中心…</p>}><MemoryCenter key={mode} mode={mode} onNotice={setToast} modelEnabled={!!settings.memoryModelEnabled && !!connection?.enabled} onModelRecall={modelRecall} onEditBusiness={mode === 'work' ? editBusiness : undefined}/></Suspense></> : mode === 'work' ? <WorkBench onPractice={() => void openPractice()} onRetryDraft={() => { void flushDraft().then(() => setIssue('')).catch(() => setIssue('草稿暂未保存，原文仍在输入框中。')); }} projectLookup={projectLookup} draft={draftState?.draft || null} draftSaveState={draftState?.status || 'idle'} home={home} closure={closure} onDraftChange={patch => { stopModelRequest(); changeDraft(patch); }} onContinue={continueCapture} onResume={() => setClosure(null)} onOriginalOnly={() => saveCapture(true)} onRebase={() => void reparse()} onResolveConflict={resolveConflict} onSetItemState={setItemState} onSetConditionState={setConditionState} onUndoEvent={eventId => void undo(eventId)} onOpenMemory={() => void openMemory()} onOpenClosure={setClosure} modelBusy={busy && !!requestRef.current} work={work} stats={stats} companion={companion} pending={pending} busy={committing || unknownCapture || restoreNeedsRead || (busy && !pending)} selectedId={selectedId} onSelect={setSelectedId} onPropose={propose} onChange={p => { stopModelRequest(); setPending(p); }} onConfirm={() => void saveCapture()} onDiscard={() => { stopModelRequest(); setPending(null); setIssue(''); }} onReparse={() => void reparse()} onManual={(ops, text) => void manual(ops, text)} onUndo={() => void undo()} onExport={async project => { try { const tasks: ProjectTaskItem[] = []; let cursor: string | undefined; do { const page = await Repository.query<ProjectTaskItem>('work', 'task', { relatedId: project.id, limit: 200, cursor }); tasks.push(...page.items); cursor = page.nextCursor || undefined; } while (cursor); if (modeRef.current === 'work') { setExportProject(project); setExportTasks(tasks); } } catch { setIssue('关联行动读取失败，请重试。'); } }} modelEnabled={!!connection?.enabled && !!connection?.configured} workSuggestionsEnabled={settings.workSuggestionsEnabled ?? true} onCancel={() => { stopModelRequest(); setIssue('模型请求已取消，本地候选与原文已保留。'); }}/>
-        : <section className="life-workspace"><div className="life-tabs-wrapper"><nav className="life-tabs" aria-label="生活导航">{[['chat', '随口说'], ['todos', '待办'], ['cards', '生活卡片'], ['memory', '记忆']].map(([tab, label]) => <button key={tab} className={lifeTab === tab ? 'active' : ''} onClick={() => setLifeTab(tab)}>{label}</button>)}</nav></div><div className="life-panel" key={lifeTab}><Suspense fallback={<p className="muted small">正在打开生活空间…</p>}>
+        : <section className="life-workspace"><div className="life-tabs-wrapper"><nav className="life-tabs" aria-label="生活导航">{[['chat', '随口说'], ['todos', '待办'], ['checkins', '打卡'], ['cards', '生活卡片'], ['memory', '记忆']].map(([tab, label]) => <button key={tab} className={lifeTab === tab ? 'active' : ''} onClick={() => setLifeTab(tab)}>{label}</button>)}</nav></div><div className="life-panel" key={lifeTab}><Suspense fallback={<p className="muted small">正在打开生活空间…</p>}>
           {lifeTab === 'chat' && <ChatPill messages={life.messages} settings={settings} mode="life" isLoading={busy} onSendMessage={sendLife} draftText={lifeDraft} onDraftTextChange={(text, expected) => setLifeDraft(current => expected === undefined || current === expected ? text : current)} onInspectMutation={() => setLifeTab('cards')} onOpenCards={() => setLifeTab('cards')} pendingTodo={pendingTodoFloat} onApproveTodo={approveLifeTodo} onDismissPendingTodo={() => setPendingTodoFloat(null)} onOpenTodos={() => setLifeTab('todos')}/>}
           {lifeTab === 'todos' && <TodoPanel key="life" space="life" focusId={todoFocus?.space === 'life' ? todoFocus.id : undefined} focusRequestId={todoFocus?.requestId} choices={todoChoices.filter(todo => todo.space === 'life')} choiceAction={todoChoiceAction} onChoiceDone={() => setTodoChoices([])} onError={setIssue}/>}
+          {lifeTab === 'checkins' && <CheckinBoard onCompanionToast={recorded}/>}
           {lifeTab === 'cards' && <LivingCardsBoard mode="life" onCompanionToast={recorded}/>}
           {lifeTab === 'memory' && <MemoryCenter mode="life" onNotice={setToast} modelEnabled={!!settings.memoryModelEnabled && !!connection?.enabled} onModelRecall={modelRecall}/>}
         </Suspense></div></section>}

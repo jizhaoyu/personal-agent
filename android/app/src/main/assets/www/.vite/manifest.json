@@ -1,13 +1,6 @@
 {
-  "_zap-CrEmr2bg.js": {
-    "file": "assets/zap-CrEmr2bg.js",
-    "name": "zap",
-    "imports": [
-      "index.html"
-    ]
-  },
   "index.html": {
-    "file": "assets/index-XllBeriB.js",
+    "file": "assets/index-DNUojb1D.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -17,10 +10,11 @@
       "src/components/PracticeModal.tsx",
       "src/components/ChatPill.tsx",
       "src/components/LivingCardsBoard.tsx",
+      "src/components/CheckinBoard.tsx",
       "src/components/MemoryCenter.tsx"
     ],
     "css": [
-      "assets/index-C8-i7_Mb.css"
+      "assets/index-BYIDnLuX.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -30,30 +24,40 @@
     "isDynamicEntry": true
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-Vwqppe-l.js",
+    "file": "assets/ChatPill-BY9j1HHZ.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "index.html",
-      "_zap-CrEmr2bg.js"
+      "index.html"
+    ]
+  },
+  "src/components/CheckinBoard.tsx": {
+    "file": "assets/CheckinBoard-BiFAVhKp.js",
+    "name": "CheckinBoard",
+    "src": "src/components/CheckinBoard.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html"
+    ],
+    "css": [
+      "assets/CheckinBoard-DCs39V25.css"
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-BX138M5k.js",
+    "file": "assets/LivingCardsBoard-Fu683xLl.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "index.html",
-      "_zap-CrEmr2bg.js"
+      "index.html"
     ],
     "dynamicImports": [
       "node_modules/html2canvas/dist/html2canvas.esm.js"
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-CvO3jiR5.js",
+    "file": "assets/MemoryCenter-BKbIthOy.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
@@ -68,7 +72,7 @@
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-DfnffXId.js",
+    "file": "assets/PracticeModal-DcSaXheh.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,
