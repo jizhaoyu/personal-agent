@@ -3,7 +3,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { checkedFile, digest, runtimeInventory } = require('./trial-files.cjs');
 
-const PRODUCT_VERSION = '5.2.1-trial';
+const PRODUCT_VERSION = '5.2.2-trial';
 const CHANNEL = 'internal-trial';
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.css', '.js', '.cjs', '.mjs', '.json']);
 function walk(directory, accept, prefix = '') {

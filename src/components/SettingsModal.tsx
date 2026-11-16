@@ -15,6 +15,7 @@ interface Props {
   onDataImported(): void | Promise<void>;
   onConnectionChange?(status: ModelConnectionStatus): void;
   buildInfo?: { productVersion: string; buildId: string; builtAt: string; channel: string; androidVersionCode?: number };
+  initialTab?: SettingsTab;
   updateCheck?: { checking: boolean; result: UpdateCheckResult | null };
   onCheckForUpdates?(): void | Promise<void>;
   onOpenUpdateUrl?(url: string): Promise<boolean> | boolean | void;
@@ -31,6 +32,7 @@ export function SettingsModal({
   onDataImported,
   onConnectionChange,
   buildInfo,
+  initialTab = 'general',
   updateCheck,
   onCheckForUpdates,
   onOpenUpdateUrl,
@@ -38,7 +40,7 @@ export function SettingsModal({
 }: Props) {
   const { lang, t } = useI18n();
   const initialLanguage: AppLanguage = settings.language || lang;
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [form, setForm] = useState<AppSettings>({ ...settings, language: initialLanguage });
   const [savedBaseline, setSavedBaseline] = useState<AppSettings>({ ...settings, language: initialLanguage });
   const [key, setKey] = useState('');
@@ -73,7 +75,7 @@ export function SettingsModal({
   useEffect(() => {
     if (!isOpen) return;
     const initial: AppSettings = { ...settings, language: settings.language || lang };
-    setActiveTab('general');
+    setActiveTab(initialTab);
     setForm(initial);
     setSavedBaseline(initial);
     setKey('');
@@ -361,7 +363,10 @@ export function SettingsModal({
               className={activeTab === tabKey ? 'active' : ''}
               onClick={() => setActiveTab(tabKey)}
             >
-              {label}
+              <span>{label}</span>
+              {tabKey === 'updates' && updateResult?.outcome === 'update-available' && (
+                <span className="settings-tab-dot" aria-hidden="true" />
+              )}
             </button>
           ))}
         </nav>

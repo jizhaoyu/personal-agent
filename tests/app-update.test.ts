@@ -1,17 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AUTO_UPDATE_COOLDOWN_MS,
   GITHUB_RELEASES_API_URL,
   GITHUB_RELEASES_PAGE_URL,
+  UPDATE_CACHE_STORAGE_KEY,
   checkForAppUpdates,
   compareVersions,
   evaluateReleaseCheck,
   extractAndroidVersionCode,
   extractExpectedSha256,
+  isCachedUpdateStillNewer,
   openReleaseExternalUrl,
   pickPlatformDownload,
+  readUpdateCache,
   sanitizeGitHubReleasePayload,
+  shouldRunAutoUpdateCheck,
+  shouldShowUpdateBanner,
   validateReleaseExternalUrl,
+  writeUpdateCache,
 } from '../src/services/appUpdate';
 
 test('compareVersions handles semver, v-prefix, trial suffix matching, and pre-releases', () => {
@@ -157,4 +164,88 @@ test('checkForAppUpdates handles GitHub 404 no-release, 429 rate-limit, bridge u
   assert.equal(opened.length, 0);
   assert.equal(await openReleaseExternalUrl(GITHUB_RELEASES_PAGE_URL, bridge), true);
   assert.deepEqual(opened, [GITHUB_RELEASES_PAGE_URL]);
+});
+
+test('auto-update cache validates URLs, enforces 12h cooldown, respects offline/webdriver guards, and expires on upgrade', () => {
+  const store = new Map<string, string>();
+  const mockStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value); },
+  };
+
+  assert.equal(readUpdateCache(mockStorage), null);
+  store.set(UPDATE_CACHE_STORAGE_KEY, '{bad json');
+  assert.equal(readUpdateCache(mockStorage), null);
+
+  const sampleResult = evaluateReleaseCheck(
+    {
+      status: 'ok',
+      httpStatus: 200,
+      release: sanitizeGitHubReleasePayload({
+        tag_name: 'v5.3.0',
+        name: 'Looma v5.3.0',
+        published_at: '2026-11-20T08:00:00Z',
+        html_url: 'https://github.com/jizhaoyu/personal-agent/releases/tag/v5.3.0',
+        body: 'androidVersionCode: 530',
+        prerelease: false,
+        assets: [],
+      }),
+    },
+    { platform: 'android', currentVersion: '5.2.1', currentAndroidVersionCode: 521 },
+  );
+
+  const t0 = 1_700_000_000_000;
+  writeUpdateCache({ lastCheckedAt: t0, dismissedVersion: 'v5.2.9', latestAvailable: sampleResult }, mockStorage);
+  const loaded = readUpdateCache(mockStorage);
+  assert.equal(loaded?.lastCheckedAt, t0);
+  assert.equal(loaded?.dismissedVersion, 'v5.2.9');
+  assert.equal(loaded?.latestAvailable?.latestVersion, 'v5.3.0');
+
+  assert.equal(shouldRunAutoUpdateCheck({ now: t0 + 1000, cache: loaded, isAutomation: false, online: true }), false);
+  assert.equal(
+    shouldRunAutoUpdateCheck({ now: t0 + AUTO_UPDATE_COOLDOWN_MS - 1, cache: loaded, isAutomation: false, online: true }),
+    false,
+  );
+  assert.equal(
+    shouldRunAutoUpdateCheck({ now: t0 + AUTO_UPDATE_COOLDOWN_MS, cache: loaded, isAutomation: false, online: true }),
+    true,
+  );
+  assert.equal(
+    shouldRunAutoUpdateCheck({ now: t0 + AUTO_UPDATE_COOLDOWN_MS, cache: null, isAutomation: true, online: true }),
+    false,
+  );
+  assert.equal(
+    shouldRunAutoUpdateCheck({ now: t0 + AUTO_UPDATE_COOLDOWN_MS, cache: null, isAutomation: false, online: false }),
+    false,
+  );
+
+  assert.equal(shouldShowUpdateBanner(sampleResult, 'v5.2.9'), true);
+  assert.equal(shouldShowUpdateBanner(sampleResult, 'v5.3.0'), false);
+
+  assert.equal(
+    isCachedUpdateStillNewer(loaded?.latestAvailable, {
+      platform: 'android',
+      currentVersion: '5.2.1',
+      currentAndroidVersionCode: 521,
+    }),
+    true,
+  );
+  assert.equal(
+    isCachedUpdateStillNewer(loaded?.latestAvailable, {
+      platform: 'android',
+      currentVersion: '5.3.0',
+      currentAndroidVersionCode: 530,
+    }),
+    false,
+  );
+
+  store.set(UPDATE_CACHE_STORAGE_KEY, JSON.stringify({
+    lastCheckedAt: t0,
+    latestAvailable: {
+      ...sampleResult,
+      releaseUrl: 'https://evil.example/phish',
+      downloadUrl: 'https://evil.example/payload.exe',
+    },
+  }));
+  assert.equal(readUpdateCache(mockStorage)?.latestAvailable, null);
 });

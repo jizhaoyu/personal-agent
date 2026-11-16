@@ -34,6 +34,15 @@ export interface RawReleaseFetchResult {
   release?: SanitizedGitHubRelease;
 }
 
+export const AUTO_UPDATE_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+export const UPDATE_CACHE_STORAGE_KEY = 'looma.updateCache.v1';
+
+export interface StoredUpdateCache {
+  lastCheckedAt: number;
+  dismissedVersion?: string;
+  latestAvailable?: UpdateCheckResult | null;
+}
+
 export interface UpdateCheckResult {
   outcome: 'up-to-date' | 'update-available' | 'no-release' | 'rate-limited' | 'error';
   platform: UpdatePlatform;
@@ -236,6 +245,27 @@ export function pickPlatformDownload(
   };
 }
 
+function isReleaseNewerThanCurrent(options: {
+  latestVersion?: string;
+  latestVersionCode?: number;
+  prerelease?: boolean;
+  platform: UpdatePlatform;
+  currentVersion: string;
+  currentAndroidVersionCode?: number;
+}): boolean {
+  if (options.prerelease || !options.latestVersion) return false;
+  const cmp = compareVersions(options.latestVersion, options.currentVersion);
+  if (cmp !== null && cmp > 0) return true;
+  return (
+    options.platform === 'android'
+    && typeof options.currentAndroidVersionCode === 'number'
+    && options.currentAndroidVersionCode > 0
+    && typeof options.latestVersionCode === 'number'
+    && options.latestVersionCode > options.currentAndroidVersionCode
+    && (cmp === null || cmp >= 0)
+  );
+}
+
 export function evaluateReleaseCheck(
   fetchResult: RawReleaseFetchResult,
   context: {
@@ -273,22 +303,14 @@ export function evaluateReleaseCheck(
   const expectedSha256 = extractExpectedSha256(release.body, assetName, context.platform);
   const notesSummary = summarizeReleaseNotes(release.body);
 
-  let isNewer = false;
-  if (!release.prerelease) {
-    const cmp = compareVersions(release.tagName, context.currentVersion);
-    if (cmp !== null && cmp > 0) {
-      isNewer = true;
-    } else if (
-      context.platform === 'android'
-      && typeof context.currentAndroidVersionCode === 'number'
-      && context.currentAndroidVersionCode > 0
-      && typeof latestVersionCode === 'number'
-      && latestVersionCode > context.currentAndroidVersionCode
-      && (cmp === null || cmp >= 0)
-    ) {
-      isNewer = true;
-    }
-  }
+  const isNewer = isReleaseNewerThanCurrent({
+    latestVersion: release.tagName,
+    latestVersionCode,
+    prerelease: release.prerelease,
+    platform: context.platform,
+    currentVersion: context.currentVersion,
+    currentAndroidVersionCode: context.currentAndroidVersionCode,
+  });
 
   return {
     ...base,
@@ -393,4 +415,100 @@ export async function openReleaseExternalUrl(
     return true;
   }
   return false;
+}
+
+export function readUpdateCache(
+  storage: Pick<Storage, 'getItem'> | null = typeof localStorage !== 'undefined' ? localStorage : null,
+): StoredUpdateCache | null {
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(UPDATE_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const lastCheckedAt = typeof parsed.lastCheckedAt === 'number' && Number.isFinite(parsed.lastCheckedAt) && parsed.lastCheckedAt >= 0
+      ? parsed.lastCheckedAt
+      : 0;
+    const dismissedVersion = typeof parsed.dismissedVersion === 'string' && parsed.dismissedVersion.trim()
+      ? parsed.dismissedVersion.trim().slice(0, 80)
+      : undefined;
+    const rawLatest = parsed.latestAvailable;
+    let latestAvailable: UpdateCheckResult | null = null;
+    if (rawLatest && typeof rawLatest === 'object' && !Array.isArray(rawLatest)) {
+      const candidate = rawLatest as UpdateCheckResult;
+      const safeDownload = candidate.downloadUrl ? validateReleaseExternalUrl(candidate.downloadUrl) : undefined;
+      const safeRelease = validateReleaseExternalUrl(candidate.releaseUrl);
+      if (candidate.outcome === 'update-available' && typeof candidate.latestVersion === 'string' && safeRelease) {
+        latestAvailable = {
+          ...candidate,
+          releaseUrl: safeRelease,
+          downloadUrl: safeDownload || safeRelease,
+        };
+      }
+    }
+    return { lastCheckedAt, ...(dismissedVersion ? { dismissedVersion } : {}), latestAvailable };
+  } catch {
+    return null;
+  }
+}
+
+export function writeUpdateCache(
+  cache: StoredUpdateCache,
+  storage: Pick<Storage, 'setItem'> | null = typeof localStorage !== 'undefined' ? localStorage : null,
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(UPDATE_CACHE_STORAGE_KEY, JSON.stringify({
+      lastCheckedAt: cache.lastCheckedAt,
+      ...(cache.dismissedVersion ? { dismissedVersion: cache.dismissedVersion } : {}),
+      ...(cache.latestAvailable ? { latestAvailable: cache.latestAvailable } : {}),
+    }));
+  } catch {
+    /* ignore quota/restricted webview storage errors */
+  }
+}
+
+export function isCachedUpdateStillNewer(
+  cached: UpdateCheckResult | null | undefined,
+  context: {
+    platform: UpdatePlatform;
+    currentVersion: string;
+    currentAndroidVersionCode?: number;
+  },
+): boolean {
+  if (!cached || cached.outcome !== 'update-available' || !cached.latestVersion) return false;
+  return isReleaseNewerThanCurrent({
+    latestVersion: cached.latestVersion,
+    latestVersionCode: cached.latestVersionCode,
+    platform: context.platform,
+    currentVersion: context.currentVersion,
+    currentAndroidVersionCode: context.currentAndroidVersionCode,
+  });
+}
+
+export function shouldRunAutoUpdateCheck(options: {
+  now?: number;
+  cooldownMs?: number;
+  cache?: StoredUpdateCache | null;
+  isAutomation?: boolean;
+  online?: boolean;
+} = {}): boolean {
+  const isAutomation = options.isAutomation ?? (typeof navigator !== 'undefined' && navigator.webdriver === true);
+  if (isAutomation) return false;
+  const online = options.online ?? (typeof navigator !== 'undefined' ? navigator.onLine !== false : true);
+  if (!online) return false;
+  const now = options.now ?? Date.now();
+  const cooldownMs = options.cooldownMs ?? AUTO_UPDATE_COOLDOWN_MS;
+  const lastCheckedAt = options.cache?.lastCheckedAt ?? 0;
+  if (!lastCheckedAt) return true;
+  return now - lastCheckedAt >= cooldownMs;
+}
+
+export function shouldShowUpdateBanner(
+  result: UpdateCheckResult | null | undefined,
+  dismissedVersion?: string,
+): boolean {
+  return result?.outcome === 'update-available'
+    && Boolean(result.latestVersion)
+    && result!.latestVersion !== dismissedVersion;
 }

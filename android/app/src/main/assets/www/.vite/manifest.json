@@ -1,6 +1,6 @@
 {
-  "_ClosureReceipt-DdhdyxDR.js": {
-    "file": "assets/ClosureReceipt-DdhdyxDR.js",
+  "_ClosureReceipt-BGRoH9El.js": {
+    "file": "assets/ClosureReceipt-BGRoH9El.js",
     "name": "ClosureReceipt",
     "imports": [
       "_vendor-react-CAH2-Xdv.js",
@@ -20,7 +20,7 @@
     "name": "vendor-react"
   },
   "index.html": {
-    "file": "assets/index-dz_aCbCP.js",
+    "file": "assets/index-DutpE7p1.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -41,10 +41,13 @@
       "src/components/CheckinBoard.tsx",
       "src/components/MemoryCenter.tsx",
       "src/services/appUpdate.ts",
+      "src/services/appUpdate.ts",
+      "src/services/appUpdate.ts",
+      "src/services/appUpdate.ts",
       "src/services/appUpdate.ts"
     ],
     "css": [
-      "assets/index-d0Q7WNuq.css"
+      "assets/index-j4sqUyEF.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -54,7 +57,7 @@
     "isDynamicEntry": true
   },
   "src/components/AlignmentModal.tsx": {
-    "file": "assets/AlignmentModal-CD56DjMX.js",
+    "file": "assets/AlignmentModal-C1F1VmD0.js",
     "name": "AlignmentModal",
     "src": "src/components/AlignmentModal.tsx",
     "isDynamicEntry": true,
@@ -68,7 +71,7 @@
     ]
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-B8QzZGAD.js",
+    "file": "assets/ChatPill-tdPxeO_-.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
@@ -79,7 +82,7 @@
     ]
   },
   "src/components/CheckinBoard.tsx": {
-    "file": "assets/CheckinBoard-Dy2_gvFO.js",
+    "file": "assets/CheckinBoard-C5R4s_MN.js",
     "name": "CheckinBoard",
     "src": "src/components/CheckinBoard.tsx",
     "isDynamicEntry": true,
@@ -93,7 +96,7 @@
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-oq4az-th.js",
+    "file": "assets/LivingCardsBoard-Cy9hZJty.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
@@ -104,7 +107,7 @@
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-BB0fmpzY.js",
+    "file": "assets/MemoryCenter-gcgZLfqx.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
@@ -121,14 +124,14 @@
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-OrDXNi_V.js",
+    "file": "assets/PracticeModal-C_De91BU.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,
     "imports": [
       "_vendor-react-CAH2-Xdv.js",
       "index.html",
-      "_ClosureReceipt-DdhdyxDR.js",
+      "_ClosureReceipt-BGRoH9El.js",
       "_vendor-icons-BwHIlTls.js"
     ],
     "css": [
@@ -136,7 +139,7 @@
     ]
   },
   "src/components/SettingsModal.tsx": {
-    "file": "assets/SettingsModal-C8P4nIaA.js",
+    "file": "assets/SettingsModal-JX5qKss4.js",
     "name": "SettingsModal",
     "src": "src/components/SettingsModal.tsx",
     "isDynamicEntry": true,
@@ -147,7 +150,7 @@
     ]
   },
   "src/components/TrialInfoModal.tsx": {
-    "file": "assets/TrialInfoModal-CFdEQMFA.js",
+    "file": "assets/TrialInfoModal-MiaLz4r7.js",
     "name": "TrialInfoModal",
     "src": "src/components/TrialInfoModal.tsx",
     "isDynamicEntry": true,
@@ -161,14 +164,14 @@
     ]
   },
   "src/components/WorkBench.tsx": {
-    "file": "assets/WorkBench-CzBGyP2U.js",
+    "file": "assets/WorkBench-fHw8UjDG.js",
     "name": "WorkBench",
     "src": "src/components/WorkBench.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
       "_vendor-react-CAH2-Xdv.js",
-      "_ClosureReceipt-DdhdyxDR.js",
+      "_ClosureReceipt-BGRoH9El.js",
       "_vendor-icons-BwHIlTls.js"
     ],
     "dynamicImports": [
@@ -179,7 +182,7 @@
     ]
   },
   "src/persistence/indexedDb.ts": {
-    "file": "assets/indexedDb-cXiwcNrh.js",
+    "file": "assets/indexedDb-B4qANcZs.js",
     "name": "indexedDb",
     "src": "src/persistence/indexedDb.ts",
     "isDynamicEntry": true,
@@ -190,7 +193,7 @@
     ]
   },
   "src/services/appUpdate.ts": {
-    "file": "assets/appUpdate-FFdlI2dB.js",
+    "file": "assets/appUpdate-BqtcTrw1.js",
     "name": "appUpdate",
     "src": "src/services/appUpdate.ts",
     "isDynamicEntry": true

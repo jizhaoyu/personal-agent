@@ -64,6 +64,7 @@ export function App() {
   const [compact, setCompact] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [isSettingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'general' | 'updates'>('general');
   const [practiceOpen, setPracticeOpen] = useState(false);
   const [trialInfoOpen, setTrialInfoOpen] = useState(false);
   const [connection, setConnection] = useState<ModelConnectionStatus | null>(null);
@@ -80,6 +81,9 @@ export function App() {
   const [todoChoiceAction, setTodoChoiceAction] = useState<'complete' | 'cancel' | 'time'>('complete');
   const [androidVersionInfo, setAndroidVersionInfo] = useState<{ versionCode?: number; versionName?: string }>({});
   const [updateCheck, setUpdateCheck] = useState<{ checking: boolean; result: UpdateCheckResult | null }>({ checking: false, result: null });
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState('');
+  const androidVersionRef = useRef<{ versionCode?: number; versionName?: string }>({});
+  const updateCheckInFlightRef = useRef(false);
   const modeRef = useRef<WorkspaceMode>('life');
   const operation = useRef(0);
   const requestRef = useRef<string | null>(null);
@@ -194,8 +198,22 @@ export function App() {
   useEffect(() => {
     let active = true;
     let ready = false;
+    let autoUpdateTimer: number | undefined;
     const update = () => { if (active && ready) setSnapshot(Repository.getCurrent()); };
     const unsubscribe = Repository.subscribe(update);
+    const versionInfoPromise = window.electronAPI?.getAppVersionInfo?.()
+      .then(info => {
+        if (active && info?.platform === 'android') {
+          const next = { versionCode: info.versionCode, versionName: info.versionName };
+          androidVersionRef.current = next;
+          setAndroidVersionInfo(next);
+          return next;
+        }
+        return androidVersionRef.current;
+      })
+      .catch(() => androidVersionRef.current)
+      ?? Promise.resolve(androidVersionRef.current);
+
     void (async () => {
       try {
         const boot = await Repository.initialize();
@@ -215,11 +233,45 @@ export function App() {
           ready = true;
           setSnapshot(Repository.getCurrent());
         }
-        void window.electronAPI?.getAppVersionInfo?.().then(info => {
-          if (active && info?.platform === 'android') {
-            setAndroidVersionInfo({ versionCode: info.versionCode, versionName: info.versionName });
+        void versionInfoPromise.then(async resolvedAndroid => {
+          if (!active) return;
+          try {
+            const mod = await import('./services/appUpdate');
+            if (!active) return;
+            const runtimePlatform: UpdatePlatform = typeof window !== 'undefined' && 'LoomaAndroid' in window
+              ? 'android'
+              : typeof window !== 'undefined' && window.electronAPI
+                ? 'desktop'
+                : 'web';
+            const currentVer = resolvedAndroid?.versionName || buildInfo.productVersion;
+            const currentCode = resolvedAndroid?.versionCode;
+            const existingCache = mod.readUpdateCache();
+            let usableCache = existingCache;
+            if (existingCache?.dismissedVersion) {
+              setDismissedUpdateVersion(existingCache.dismissedVersion);
+            }
+            if (existingCache?.latestAvailable) {
+              if (mod.isCachedUpdateStillNewer(existingCache.latestAvailable, {
+                platform: runtimePlatform,
+                currentVersion: currentVer,
+                currentAndroidVersionCode: currentCode,
+              })) {
+                setUpdateCheck({ checking: false, result: existingCache.latestAvailable });
+              } else {
+                usableCache = { lastCheckedAt: 0, latestAvailable: null };
+                mod.writeUpdateCache(usableCache);
+                setDismissedUpdateVersion('');
+              }
+            }
+            if (mod.shouldRunAutoUpdateCheck({ cache: usableCache })) {
+              autoUpdateTimer = window.setTimeout(() => {
+                if (active) void runUpdateCheck({ silent: true });
+              }, 2500);
+            }
+          } catch {
+            /* silent update hydration failures never impact startup */
           }
-        }).catch(() => {});
+        });
         try {
           const currentSettings = Repository.getCurrent().settings;
           await TodoService.configure(Boolean(currentSettings.remindersEnabled || hasActiveCheckinReminder()));
@@ -234,11 +286,26 @@ export function App() {
     })();
     return () => {
       active = false;
+      if (autoUpdateTimer !== undefined) window.clearTimeout(autoUpdateTimer);
       unsubscribe();
       controllerSubscription.current?.();
       controller.current?.dispose();
       controller.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      void import('./services/appUpdate').then(mod => {
+        if (mod.shouldRunAutoUpdateCheck({ cache: mod.readUpdateCache() })) {
+          void runUpdateCheck({ silent: true });
+        }
+      }).catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, []);
 
   useEffect(() => { if (snapshot && mode === 'work') void refreshHome(); }, [mode, snapshot?.partitions.work.revision, !!snapshot]);
@@ -400,47 +467,92 @@ export function App() {
     void openMemory();
   }
 
-  async function handleCheckForUpdates() {
-    if (updateCheck.checking) return;
+  async function runUpdateCheck(options?: { silent?: boolean }) {
+    const silent = !!options?.silent;
+    if (updateCheckInFlightRef.current) return;
+    updateCheckInFlightRef.current = true;
     const runtimePlatform: UpdatePlatform = typeof window !== 'undefined' && 'LoomaAndroid' in window
       ? 'android'
       : typeof window !== 'undefined' && window.electronAPI
         ? 'desktop'
         : 'web';
-    setUpdateCheck(prev => ({ ...prev, checking: true }));
-    let currentCode = androidVersionInfo.versionCode;
-    let currentVer = androidVersionInfo.versionName || buildInfo.productVersion;
-    const { GITHUB_RELEASES_PAGE_URL, checkForAppUpdates } = await import('./services/appUpdate');
+    if (!silent) setUpdateCheck(prev => ({ ...prev, checking: true }));
+    let currentCode = androidVersionRef.current.versionCode ?? androidVersionInfo.versionCode;
+    let currentVer = androidVersionRef.current.versionName || androidVersionInfo.versionName || buildInfo.productVersion;
+    const mod = await import('./services/appUpdate');
     try {
       if (runtimePlatform === 'android' && !currentCode && window.electronAPI?.getAppVersionInfo) {
         try {
           const nativeInfo = await window.electronAPI.getAppVersionInfo();
           if (nativeInfo?.versionCode) currentCode = nativeInfo.versionCode;
           if (nativeInfo?.versionName) currentVer = nativeInfo.versionName;
-          setAndroidVersionInfo({ versionCode: currentCode, versionName: nativeInfo?.versionName });
+          const nextInfo = { versionCode: currentCode, versionName: nativeInfo?.versionName };
+          androidVersionRef.current = nextInfo;
+          setAndroidVersionInfo(nextInfo);
         } catch { /* fallback to buildInfo.productVersion */ }
       }
-      const result = await checkForAppUpdates({
+      const result = await mod.checkForAppUpdates({
         platform: runtimePlatform,
         currentVersion: currentVer,
         currentAndroidVersionCode: currentCode,
         electronAPI: typeof window !== 'undefined' ? window.electronAPI : undefined,
       });
-      setUpdateCheck({ checking: false, result });
+      const existingCache = mod.readUpdateCache();
+      if (result.outcome === 'update-available') {
+        mod.writeUpdateCache({
+          lastCheckedAt: Date.now(),
+          dismissedVersion: existingCache?.dismissedVersion,
+          latestAvailable: result,
+        });
+        setUpdateCheck({ checking: false, result });
+      } else if (result.outcome === 'up-to-date') {
+        mod.writeUpdateCache({
+          lastCheckedAt: Date.now(),
+          dismissedVersion: existingCache?.dismissedVersion,
+          latestAvailable: null,
+        });
+        setUpdateCheck({ checking: false, result });
+      } else if (result.outcome === 'no-release' || result.outcome === 'rate-limited') {
+        mod.writeUpdateCache({
+          lastCheckedAt: Date.now(),
+          dismissedVersion: existingCache?.dismissedVersion,
+          latestAvailable: existingCache?.latestAvailable ?? null,
+        });
+        if (!silent) setUpdateCheck({ checking: false, result });
+      } else if (!silent) {
+        setUpdateCheck({ checking: false, result });
+      }
     } catch (error) {
-      setUpdateCheck({
-        checking: false,
-        result: {
-          outcome: 'error',
-          platform: runtimePlatform,
-          checkedAt: new Date().toISOString(),
-          currentVersion: currentVer,
-          ...(currentCode ? { currentVersionCode: currentCode } : {}),
-          releaseUrl: GITHUB_RELEASES_PAGE_URL,
-          errorMessage: error instanceof Error ? error.message : undefined,
-        },
-      });
+      if (!silent) {
+        setUpdateCheck({
+          checking: false,
+          result: {
+            outcome: 'error',
+            platform: runtimePlatform,
+            checkedAt: new Date().toISOString(),
+            currentVersion: currentVer,
+            ...(currentCode ? { currentVersionCode: currentCode } : {}),
+            releaseUrl: mod.GITHUB_RELEASES_PAGE_URL,
+            errorMessage: error instanceof Error ? error.message : undefined,
+          },
+        });
+      }
+    } finally {
+      updateCheckInFlightRef.current = false;
     }
+  }
+
+  function dismissUpdateNotice(version?: string) {
+    const cleanVersion = version?.trim() || '';
+    setDismissedUpdateVersion(cleanVersion);
+    void import('./services/appUpdate').then(mod => {
+      const existing = mod.readUpdateCache();
+      mod.writeUpdateCache({
+        lastCheckedAt: existing?.lastCheckedAt ?? Date.now(),
+        dismissedVersion: cleanVersion || undefined,
+        latestAvailable: existing?.latestAvailable ?? null,
+      });
+    }).catch(() => {});
   }
 
   async function handleOpenUpdateUrl(url: string) {
@@ -448,11 +560,12 @@ export function App() {
     return openReleaseExternalUrl(url, typeof window !== 'undefined' ? window.electronAPI : undefined);
   }
 
-  async function openSettings() {
+  async function openSettings(initialTab: 'general' | 'updates' = 'general') {
     if (committing || unknownCapture) return;
     stopModelRequest();
     try {
       await flushDraft();
+      setSettingsInitialTab(initialTab);
       setSettingsOpen(true);
     } catch {
       setIssue(t('app.draftUnconfirmedBeforeAction'));
@@ -973,8 +1086,16 @@ export function App() {
             >
               <BookOpen size={16} />
             </button>
-            <button type="button" className="icon-btn" onClick={() => void openSettings()} aria-label={t('header.openSettings')}>
+            <button
+              type="button"
+              className="icon-btn header-settings-btn"
+              onClick={() => void openSettings('general')}
+              aria-label={updateCheck.result?.outcome === 'update-available' ? t('header.openSettingsWithUpdate') : t('header.openSettings')}
+            >
               <Settings size={16} />
+              {updateCheck.result?.outcome === 'update-available' && (
+                <span className="update-dot" aria-hidden="true" />
+              )}
             </button>
             {window.electronAPI && !isMobileOrAndroid && (
               <button type="button" className="icon-btn" onClick={() => void window.electronAPI!.minimizeWindow()} aria-label={t('header.minimize')}>
@@ -990,6 +1111,24 @@ export function App() {
         </header>
 
         <main>
+          {updateCheck.result?.outcome === 'update-available'
+            && Boolean(updateCheck.result.latestVersion)
+            && updateCheck.result.latestVersion !== dismissedUpdateVersion && (
+            <div className="notice update-banner" role="region" aria-label={t('app.updateBannerAria')}>
+              <div className="update-banner-copy">
+                <span className="update-banner-badge">{t('app.updateBannerBadge')}</span>
+                <span>{t('app.updateBannerText', { version: updateCheck.result.latestVersion || '' })}</span>
+              </div>
+              <div className="button-row update-banner-actions">
+                <button type="button" className="soft-btn" onClick={() => void openSettings('updates')}>
+                  {t('app.updateBannerAction')}
+                </button>
+                <button type="button" className="text-btn" onClick={() => dismissUpdateNotice(updateCheck.result?.latestVersion)}>
+                  {t('app.updateBannerLater')}
+                </button>
+              </div>
+            </div>
+          )}
           {(issue || agentRetry?.space === mode) && (
             <div className="app-alert" role="alert">
               <span>{issue || t('app.agentRetryNotice')}</span>
@@ -1215,8 +1354,9 @@ export function App() {
             onConnectionChange={s => { stopModelRequest(); setConnection(s); }}
             onDataImported={dataImported}
             buildInfo={effectiveBuildInfo}
+            initialTab={settingsInitialTab}
             updateCheck={updateCheck}
-            onCheckForUpdates={handleCheckForUpdates}
+            onCheckForUpdates={() => runUpdateCheck({ silent: false })}
             onOpenUpdateUrl={handleOpenUpdateUrl}
             onOpenTrialInfo={() => { setSettingsOpen(false); setTrialInfoOpen(true); }}
           />

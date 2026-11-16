@@ -319,6 +319,31 @@ button, a, input, select, textarea, summary {
   color: var(--ink-primary);
 }
 
+.header-settings-btn {
+  position: relative;
+}
+
+.update-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--amber-ink);
+  box-shadow: 0 0 0 1.5px var(--bg-canvas);
+}
+
+.settings-tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--amber-ink);
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
 /* 顶部工作/生活切换胶囊：双语宽度始终保持 <= 125px */
 .space-switch {
   display: inline-flex;
@@ -559,6 +584,43 @@ details p {
   margin-top: 3px;
 }
 
+.update-banner {
+  margin: 0 auto 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  max-width: 100%;
+}
+
+.update-banner-copy {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.update-banner-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--surface-card);
+  border: 1px solid var(--amber-line);
+  color: var(--amber-ink);
+  flex-shrink: 0;
+}
+
+.update-banner-actions {
+  flex-shrink: 0;
+  gap: 6px;
+}
+
 .empty-text {
   font-size: 13px;
   color: var(--ink-muted);
@@ -748,6 +810,31 @@ details p {
 .sheet-header .icon-btn:hover {
   background: var(--surface-hover);
   color: var(--ink-primary);
+}
+
+.header-settings-btn {
+  position: relative;
+}
+
+.update-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--amber-ink);
+  box-shadow: 0 0 0 1.5px var(--bg-canvas);
+}
+
+.settings-tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--amber-ink);
+  margin-left: 5px;
+  vertical-align: middle;
 }
 
 .sheet-body {

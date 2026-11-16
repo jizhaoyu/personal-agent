@@ -96,3 +96,79 @@ test('real browser: bilingual zh-CN / en live toggle, reload persistence, and Se
     await browser.close();
   }
 });
+
+test('real browser: update banner, settings dot badge, direct Updates tab jump, and dismiss persistence', { skip: process.env.LOOMA_UI_BROWSER !== '1', timeout: 90000 }, async () => {
+  const { chromium } = require(process.env.LOOMA_PLAYWRIGHT_MODULE || 'playwright');
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  const context = await browser.newContext({ viewport: { width: 480, height: 800 } });
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  const pageErrors = [];
+  page.on('pageerror', err => pageErrors.push(err.message));
+  const origin = process.env.LOOMA_TEST_URL || 'http://127.0.0.1:5173';
+
+  try {
+    await page.goto(origin);
+    await page.getByPlaceholder('随手记录…').waitFor();
+
+    // Seed cached update newer than 5.2.2 (safe GitHub URLs + recent lastCheckedAt)
+    await page.evaluate(() => {
+      localStorage.setItem('looma.updateCache.v1', JSON.stringify({
+        lastCheckedAt: Date.now(),
+        latestAvailable: {
+          outcome: 'update-available',
+          platform: 'desktop',
+          checkedAt: new Date().toISOString(),
+          currentVersion: '5.2.2-trial',
+          latestVersion: 'v9.9.9',
+          releaseTitle: 'Looma v9.9.9',
+          notesSummary: '新增端内轻量更新提醒与缓存校验。',
+          downloadUrl: 'https://github.com/jizhaoyu/personal-agent/releases/tag/v9.9.9',
+          releaseUrl: 'https://github.com/jizhaoyu/personal-agent/releases/tag/v9.9.9',
+          assetName: 'Looma-9.9.9-win32-x64.zip',
+          assetSizeBytes: 117000000,
+          httpStatus: 200,
+        },
+      }));
+    });
+
+    await page.reload();
+    await page.getByPlaceholder('随手记录…').waitFor();
+
+    // 1. Update banner & Settings dot badge appear cleanly without horizontal overflow at 480px
+    const banner = page.getByRole('region', { name: '新版本提醒', exact: true });
+    await banner.waitFor();
+    assert.ok(await page.getByText('发现 Looma v9.9.9，建议先导备份再更新').isVisible());
+    const settingsBtn = page.getByRole('button', { name: '打开设置（有新版本可用）', exact: true });
+    await settingsBtn.waitFor();
+    assert.equal(await settingsBtn.locator('.update-dot').count(), 1);
+    const overflow480 = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    assert.equal(overflow480, false);
+
+    // 2. Clicking "去更新" jumps straight to the Updates tab in Settings
+    await banner.getByRole('button', { name: '去更新', exact: true }).click();
+    const updatesTab = page.getByRole('tab', { name: '版本与更新', exact: true });
+    await updatesTab.waitFor();
+    assert.equal(await updatesTab.getAttribute('aria-selected'), 'true');
+    assert.equal(await updatesTab.locator('.settings-tab-dot').count(), 1);
+    await page.getByText('发现新版本：v9.9.9').waitFor();
+    await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+
+    // 3. Check 390px mobile viewport layout stays clean without overflow
+    await page.setViewportSize({ width: 390, height: 844 });
+    const overflow390 = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    assert.equal(overflow390, false);
+
+    // 4. Clicking "稍后" hides the banner persistently across reload, while keeping quiet dot on Settings
+    await banner.getByRole('button', { name: '稍后', exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector('.update-banner'));
+    await page.reload();
+    await page.getByPlaceholder('随手记录…').waitFor();
+    assert.equal(await page.locator('.update-banner').count(), 0);
+    assert.equal(await page.getByRole('button', { name: '打开设置（有新版本可用）', exact: true }).locator('.update-dot').count(), 1);
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
