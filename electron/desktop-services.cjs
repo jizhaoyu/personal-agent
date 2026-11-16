@@ -4,6 +4,54 @@ const { AGENT_PROMPT, sanitizeAgentInput, validateAgentContent } = require('../s
 
 const LOOPBACKS = new Set(['localhost', '127.0.0.1', '[::1]']);
 const STAGES = new Set(['初步接触', '需求确认', '方案报价', '商务谈判', '赢单成交']);
+const GITHUB_OWNER = 'jizhaoyu';
+const GITHUB_REPO = 'personal-agent';
+const GITHUB_RELEASES_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+const ALLOWED_RELEASE_ASSET_HOSTS = new Set([
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'github-releases.githubusercontent.com',
+]);
+
+function validateReleaseExternalUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > 2048 || /[\s\\\u0000-\u001f\u007f]/.test(trimmed)) return null;
+  let parsed;
+  try { parsed = new URL(trimmed); } catch { return null; }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null;
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'github.com') {
+    const repoPrefix = `/${GITHUB_OWNER}/${GITHUB_REPO}`.toLowerCase();
+    const pathLower = parsed.pathname.toLowerCase();
+    if (pathLower !== repoPrefix && !pathLower.startsWith(`${repoPrefix}/`)) return null;
+    return parsed.href;
+  }
+  if (ALLOWED_RELEASE_ASSET_HOSTS.has(host)) return parsed.href;
+  return null;
+}
+
+function sanitizeGitHubRelease(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('版本清单格式无效');
+  const tagName = typeof raw.tag_name === 'string' ? raw.tag_name.trim().slice(0, 80) : '';
+  if (!tagName) throw new Error('版本标签缺失');
+  const releaseName = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 160) : tagName;
+  const publishedAt = typeof raw.published_at === 'string' ? raw.published_at.slice(0, 40) : '';
+  const htmlUrl = validateReleaseExternalUrl(raw.html_url) || GITHUB_RELEASES_PAGE_URL;
+  const body = typeof raw.body === 'string' ? raw.body.slice(0, 8000) : '';
+  const prerelease = raw.prerelease === true;
+  const rawAssets = Array.isArray(raw.assets) ? raw.assets.slice(0, 20) : [];
+  const assets = [];
+  for (const item of rawAssets) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const name = typeof item.name === 'string' ? item.name.trim().slice(0, 160) : '';
+    const downloadUrl = validateReleaseExternalUrl(item.browser_download_url);
+    const size = typeof item.size === 'number' && Number.isFinite(item.size) && item.size >= 0 ? item.size : 0;
+    if (name && downloadUrl) assets.push({ name, downloadUrl, size });
+  }
+  return { tagName, releaseName, publishedAt, htmlUrl, body, prerelease, assets };
+}
 
 function getWindowTarget({ nodeEnv, isPackaged, indexPath }) {
   return nodeEnv === 'production' || isPackaged
@@ -112,7 +160,7 @@ function validateModelContent(content) {
   return JSON.stringify(data);
 }
 
-function createDesktopServices({ userDataPath, safeStorage, fetchImpl = globalThis.fetch, Notification, timeoutMs = 30000 }) {
+function createDesktopServices({ userDataPath, safeStorage, fetchImpl = globalThis.fetch, updateFetchImpl, Notification, timeoutMs = 30000, updateTimeoutMs = 8000 }) {
   const credentialPath = path.join(userDataPath, 'looma-model-connection.json');
   const legacyCredentialPath = path.join(userDataPath, 'looma-legacy-connection.json');
   let connection = { apiBaseUrl: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat', enabled: false, apiKey: '' };
@@ -322,7 +370,54 @@ function createDesktopServices({ userDataPath, safeStorage, fetchImpl = globalTh
     } catch { return { shown: false }; }
   }
 
-  return { modelStatus, saveModelConnection, clearModelConnection, migrateLegacyConnection, proposeModel, recallModel, captureAgentModel, cancelModel, notifyDue };
+  async function checkForUpdates() {
+    const fetcher = updateFetchImpl || fetchImpl;
+    if (typeof fetcher !== 'function') {
+      return { status: 'error', message: '当前环境不支持网络请求' };
+    }
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, updateTimeoutMs);
+    try {
+      const response = await fetcher(GITHUB_RELEASES_API_URL, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'Looma-Desktop',
+        },
+      });
+      if (response.url) {
+        let finalUrl;
+        try { finalUrl = new URL(response.url); } catch { finalUrl = null; }
+        if (!finalUrl || finalUrl.protocol !== 'https:' || finalUrl.hostname.toLowerCase() !== 'api.github.com') {
+          return { status: 'error', message: '更新源跳转地址不受信任' };
+        }
+      }
+      if (response.status === 404) return { status: 'no-release', httpStatus: 404 };
+      if (response.status === 403 || response.status === 429) {
+        return { status: 'rate-limited', httpStatus: Number(response.status) };
+      }
+      if (!response.ok) {
+        return { status: 'error', httpStatus: Number(response.status), message: `GitHub 返回 HTTP ${response.status}` };
+      }
+      const rawText = typeof response.text === 'function'
+        ? await response.text()
+        : JSON.stringify(await response.json());
+      if (typeof rawText !== 'string' || rawText.length > 262144) {
+        return { status: 'error', message: '版本清单响应超出安全大小限制' };
+      }
+      const release = sanitizeGitHubRelease(JSON.parse(rawText));
+      return { status: 'ok', httpStatus: 200, release };
+    } catch (error) {
+      if (timedOut) return { status: 'error', message: '检查更新超时，请稍后重试' };
+      return { status: 'error', message: error?.message || '检查更新失败，请检查网络连接' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { modelStatus, saveModelConnection, clearModelConnection, migrateLegacyConnection, proposeModel, recallModel, captureAgentModel, cancelModel, notifyDue, checkForUpdates };
 }
 
-module.exports = { getWindowTarget, validateEndpoint, isTrustedSender, publicContext, validateModelContent, createDesktopServices };
+module.exports = { getWindowTarget, validateEndpoint, isTrustedSender, publicContext, validateModelContent, createDesktopServices, GITHUB_RELEASES_API_URL, GITHUB_RELEASES_PAGE_URL, validateReleaseExternalUrl, sanitizeGitHubRelease };

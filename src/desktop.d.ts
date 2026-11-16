@@ -18,6 +18,10 @@ declare global {
       onTodoFocus?(handler: (focus: {space: 'life'|'work'; id: string}) => void): () => void;
       exportDataBackup?(): Promise<{canceled: boolean}>;
       importDataBackup?(): Promise<{canceled: boolean}>;
+      saveBackupFile?(suggestedName: string, content: string): Promise<{canceled: boolean}>;
+      getAppVersionInfo?(): Promise<{platform: 'android'|'desktop'; versionCode?: number; versionName?: string}>;
+      checkForUpdates?(): Promise<{status: 'ok'|'no-release'|'rate-limited'|'error'; httpStatus?: number; message?: string; release?: unknown}>;
+      openExternalUrl?(url: string): Promise<{opened: boolean; url?: string}>;
       modelStatus(): Promise<ModelConnectionStatus>;
       migrateLegacyConnection(config: {apiKey: string; apiBaseUrl: string; modelName: string}): Promise<{migrated: boolean}>;
       saveModelConnection(config: {apiKey?: string; apiBaseUrl: string; modelName: string; enabled: boolean}): Promise<ModelConnectionStatus>;

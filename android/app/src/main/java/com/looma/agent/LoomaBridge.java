@@ -7,6 +7,9 @@ import android.app.NotificationManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.net.Uri;
 import android.os.Build;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
@@ -15,6 +18,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -24,10 +28,22 @@ import java.util.regex.Pattern;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Set;
 
 public final class LoomaBridge {
     private static final String CHANNEL_ID = "looma_due_reminders";
+    private static final String GITHUB_OWNER = "jizhaoyu";
+    private static final String GITHUB_REPO = "personal-agent";
+    private static final String GITHUB_RELEASES_API_URL =
+            "https://api.github.com/repos/" + GITHUB_OWNER + "/" + GITHUB_REPO + "/releases/latest";
+    private static final String GITHUB_RELEASES_PAGE_URL =
+            "https://github.com/" + GITHUB_OWNER + "/" + GITHUB_REPO + "/releases";
+    private static final Set<String> ALLOWED_RELEASE_ASSET_HOSTS = new HashSet<>(Arrays.asList(
+            "objects.githubusercontent.com",
+            "release-assets.githubusercontent.com",
+            "github-releases.githubusercontent.com"
+    ));
     private static final Pattern PRIVATE_KEY_PATTERN =
             Pattern.compile("-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----", Pattern.CASE_INSENSITIVE);
 
@@ -371,6 +387,206 @@ public final class LoomaBridge {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    @JavascriptInterface
+    public void setSystemBarStyle(final boolean isLightBackground) {
+        activity.runOnUiThread(() -> {
+            if (activity.isFinishing() || activity.isDestroyed()) return;
+            if (activity instanceof MainActivity) {
+                ((MainActivity) activity).applyBarStyle(isLightBackground);
+            } else {
+                MainActivity.applySystemBarStyle(activity.getWindow(), isLightBackground);
+            }
+        });
+    }
+
+    @JavascriptInterface
+    public boolean exportBackupDocument(final String requestId, final String suggestedName, final String content) {
+        if (activity instanceof MainActivity) {
+            ((MainActivity) activity).launchExportBackup(requestId, suggestedName, content);
+            return true;
+        }
+        return false;
+    }
+
+    public static String validateReleaseExternalUrl(String rawUrl) {
+        if (rawUrl == null) return null;
+        String trimmed = rawUrl.trim();
+        if (trimmed.isEmpty() || trimmed.length() > 2048) return null;
+        for (int i = 0; i < trimmed.length(); i++) {
+            char ch = trimmed.charAt(i);
+            if (Character.isWhitespace(ch) || ch == '\\' || ch <= 0x1F || ch == 0x7F) return null;
+        }
+        try {
+            URL parsed = new URL(trimmed);
+            if (!"https".equalsIgnoreCase(parsed.getProtocol())) return null;
+            if (parsed.getUserInfo() != null && !parsed.getUserInfo().isEmpty()) return null;
+            String host = parsed.getHost() == null ? "" : parsed.getHost().toLowerCase(Locale.US);
+            if ("github.com".equals(host)) {
+                String path = parsed.getPath() == null ? "" : parsed.getPath().toLowerCase(Locale.US);
+                String repoPrefix = "/" + GITHUB_OWNER.toLowerCase(Locale.US) + "/" + GITHUB_REPO.toLowerCase(Locale.US);
+                if (!path.equals(repoPrefix) && !path.startsWith(repoPrefix + "/")) return null;
+                return trimmed;
+            }
+            if (ALLOWED_RELEASE_ASSET_HOSTS.contains(host)) {
+                return trimmed;
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    @JavascriptInterface
+    @SuppressWarnings("deprecation")
+    public String getAppVersionInfo() {
+        JSONObject out = new JSONObject();
+        try {
+            out.put("platform", "android");
+            PackageInfo pkg = activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0);
+            long versionCode = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                    ? pkg.getLongVersionCode()
+                    : pkg.versionCode;
+            out.put("versionCode", versionCode);
+            out.put("versionName", pkg.versionName != null ? pkg.versionName : "");
+        } catch (Exception ignored) {
+        }
+        return out.toString();
+    }
+
+    @JavascriptInterface
+    public boolean openExternalUrl(final String rawUrl) {
+        final String safeUrl = validateReleaseExternalUrl(rawUrl);
+        if (safeUrl == null) return false;
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(safeUrl));
+            intent.addCategory(Intent.CATEGORY_BROWSABLE);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (intent.resolveActivity(activity.getPackageManager()) != null) {
+                activity.startActivity(intent);
+                return true;
+            }
+            activity.startActivity(intent);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String truncate(String value, int maxLen) {
+        if (value == null) return "";
+        return value.length() <= maxLen ? value : value.substring(0, maxLen);
+    }
+
+    @JavascriptInterface
+    public boolean checkForUpdates(final String requestId) {
+        if (requestId == null || requestId.trim().isEmpty() || !(activity instanceof MainActivity)) {
+            return false;
+        }
+        final MainActivity hostActivity = (MainActivity) activity;
+        Thread worker = new Thread(() -> {
+            JSONObject result = new JSONObject();
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(GITHUB_RELEASES_API_URL);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("Accept", "application/vnd.github+json");
+                conn.setRequestProperty("User-Agent", "Looma-Android");
+
+                int code = conn.getResponseCode();
+                URL finalUrl = conn.getURL();
+                if (finalUrl == null
+                        || !"https".equalsIgnoreCase(finalUrl.getProtocol())
+                        || !"api.github.com".equalsIgnoreCase(finalUrl.getHost())) {
+                    result.put("status", "error");
+                    result.put("message", "更新源跳转地址不受信任");
+                    hostActivity.notifyUpdateCheckResult(requestId, result);
+                    return;
+                }
+
+                if (code == 404) {
+                    result.put("status", "no-release");
+                    result.put("httpStatus", 404);
+                } else if (code == 403 || code == 429) {
+                    result.put("status", "rate-limited");
+                    result.put("httpStatus", code);
+                } else if (code < 200 || code >= 300) {
+                    result.put("status", "error");
+                    result.put("httpStatus", code);
+                    result.put("message", "GitHub 返回 HTTP " + code);
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    try (InputStream is = conn.getInputStream();
+                         BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                        char[] buf = new char[4096];
+                        int read;
+                        while ((read = reader.read(buf)) != -1) {
+                            sb.append(buf, 0, read);
+                            if (sb.length() > 262144) {
+                                throw new IllegalArgumentException("版本清单响应超出安全大小限制");
+                            }
+                        }
+                    }
+                    JSONObject raw = new JSONObject(sb.toString());
+                    String tagName = truncate(raw.optString("tag_name", "").trim(), 80);
+                    if (tagName.isEmpty()) {
+                        throw new IllegalArgumentException("版本标签缺失");
+                    }
+                    JSONObject release = new JSONObject();
+                    release.put("tagName", tagName);
+                    String rawName = raw.optString("name", "").trim();
+                    release.put("releaseName", rawName.isEmpty() ? tagName : truncate(rawName, 160));
+                    release.put("publishedAt", truncate(raw.optString("published_at", ""), 40));
+                    String safeHtmlUrl = validateReleaseExternalUrl(raw.optString("html_url", ""));
+                    release.put("htmlUrl", safeHtmlUrl != null ? safeHtmlUrl : GITHUB_RELEASES_PAGE_URL);
+                    release.put("body", truncate(raw.optString("body", ""), 8000));
+                    release.put("prerelease", raw.optBoolean("prerelease", false));
+
+                    JSONArray assetsOut = new JSONArray();
+                    JSONArray assetsIn = raw.optJSONArray("assets");
+                    if (assetsIn != null) {
+                        int limit = Math.min(assetsIn.length(), 20);
+                        for (int i = 0; i < limit; i++) {
+                            JSONObject item = assetsIn.optJSONObject(i);
+                            if (item == null) continue;
+                            String name = truncate(item.optString("name", "").trim(), 160);
+                            String safeAssetUrl = validateReleaseExternalUrl(item.optString("browser_download_url", ""));
+                            long size = Math.max(0L, item.optLong("size", 0L));
+                            if (!name.isEmpty() && safeAssetUrl != null) {
+                                JSONObject assetOut = new JSONObject();
+                                assetOut.put("name", name);
+                                assetOut.put("downloadUrl", safeAssetUrl);
+                                assetOut.put("size", size);
+                                assetsOut.put(assetOut);
+                            }
+                        }
+                    }
+                    release.put("assets", assetsOut);
+                    result.put("status", "ok");
+                    result.put("httpStatus", 200);
+                    result.put("release", release);
+                }
+            } catch (Exception e) {
+                try {
+                    result.put("status", "error");
+                    String msg = e.getMessage();
+                    result.put("message", msg != null && !msg.isEmpty() ? truncate(msg, 240) : "检查更新失败，请检查网络连接");
+                } catch (Exception ignored) {
+                }
+            } finally {
+                if (conn != null) {
+                    try { conn.disconnect(); } catch (Exception ignored) {}
+                }
+            }
+            hostActivity.notifyUpdateCheckResult(requestId, result);
+        }, "LoomaUpdateCheck");
+        worker.setDaemon(true);
+        worker.start();
+        return true;
     }
 
     @JavascriptInterface

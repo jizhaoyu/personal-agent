@@ -79,6 +79,10 @@ test('zh and en dictionaries have 100% key parity, non-empty values, and aligned
 test('translate interpolates named variables and falls back safely', () => {
   assert.equal(translate('en', 'checkin.progressDays', { done: 3, target: 7 }), '3 / 7 days');
   assert.equal(translate('zh-CN', 'checkin.progressDays', { done: 3, target: 7 }), '3 / 7 天');
+  assert.equal(translate('en', 'checkin.todayPulse', { done: 2, active: 3 }), 'Today 2 / 3');
+  assert.equal(translate('zh-CN', 'checkin.todayPulse', { done: 2, active: 3 }), '今日已打 2 / 3');
+  assert.equal(translate('en', 'header.workModeShort'), 'Work');
+  assert.equal(translate('zh-CN', 'header.workModeShort'), '工作');
   assert.equal(translate('invalid' as any, 'header.workMode'), '工作态');
   assert.equal(translate('en', 'nonexistent.key' as any), 'nonexistent.key');
 });

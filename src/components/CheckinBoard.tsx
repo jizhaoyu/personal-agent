@@ -29,9 +29,16 @@ interface Props {
 
 const PRESET_DAYS = [7, 14, 21, 30] as const;
 
+// Keeps creator expanded across tab switches during the same session once a user opens or creates in it,
+// while resetting to smart auto-collapse on fresh page/app reload when active tracks already exist.
+let sessionCreatorPreference: boolean | null = null;
+
 export function CheckinBoard({ onCompanionToast }: Props) {
   const { t } = useI18n();
   const [cards, setCards] = useState<CustomLivingCard[]>(() => Repository.getCurrent().partitions.life.customCards);
+  const [creatorOpen, setCreatorOpen] = useState(
+    () => sessionCreatorPreference ?? partitionCheckinCards(Repository.getCurrent().partitions.life.customCards).active.length === 0,
+  );
   const [title, setTitle] = useState('');
   const [daysTarget, setDaysTarget] = useState<number>(7);
   const [reminderEnabled, setReminderEnabled] = useState(true);
@@ -111,7 +118,10 @@ export function CheckinBoard({ onCompanionToast }: Props) {
 
   const { active, completed, archived } = partitionCheckinCards(cards);
   const activeCount = active.length;
+  const checkedTodayCount = active.filter(card => hasCheckedToday(card, now)).length;
   const slotsFull = activeCount >= MAX_ACTIVE_CHECKINS;
+  const isEmptyBoard = activeCount === 0 && completed.length === 0;
+  const showCreator = isEmptyBoard || creatorOpen;
 
   function handleCreate(event: React.FormEvent) {
     event.preventDefault();
@@ -134,6 +144,8 @@ export function CheckinBoard({ onCompanionToast }: Props) {
         dailyReminderTime: desiredReminder,
       });
       if (mountedRef.current) {
+        sessionCreatorPreference = true;
+        setCreatorOpen(true);
         setTitle('');
       }
       return {
@@ -238,6 +250,7 @@ export function CheckinBoard({ onCompanionToast }: Props) {
     const checkedCount = checkedDates.length;
     const checkedToday = hasCheckedToday(card, now);
     const doneAll = checkedCount >= card.metricTarget;
+    const pct = card.metricTarget > 0 ? Math.min(100, Math.round((checkedCount / card.metricTarget) * 100)) : 0;
     const isEditing = editingId === card.id;
 
     return (
@@ -302,10 +315,35 @@ export function CheckinBoard({ onCompanionToast }: Props) {
 
           <div className="checkin-card-meta">
             <span className="checkin-progress-pill">{t('checkin.progressDays', { done: checkedCount, target: card.metricTarget })}</span>
-            <span className={`checkin-today-chip ${checkedToday || doneAll ? 'checkin-today-chip--done' : 'checkin-today-chip--pending'}`}>
-              {doneAll ? t('checkin.statusDoneAll') : checkedToday ? t('checkin.statusCheckedToday') : t('checkin.statusPending')}
-            </span>
+            {!doneAll && !checkedToday ? (
+              <button
+                type="button"
+                className="checkin-today-chip checkin-today-chip--pending"
+                disabled={busy}
+                onClick={() => handleToggleToday(card)}
+              >
+                {t('checkin.tapTodayBadge')}
+              </button>
+            ) : (
+              <span className="checkin-today-chip checkin-today-chip--done">
+                {doneAll ? t('checkin.statusDoneAll') : t('checkin.statusCheckedToday')}
+              </span>
+            )}
           </div>
+        </div>
+
+        <div className="checkin-progress-row">
+          <div
+            className="checkin-progress-track"
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={t('checkin.progressDays', { done: checkedCount, target: card.metricTarget })}
+          >
+            <div className="checkin-progress-fill" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="checkin-progress-pct">{pct}%</span>
         </div>
 
         <div className="checkin-squares" role="group" aria-label={t('checkin.squaresAria', { title: card.title })}>
@@ -409,14 +447,19 @@ export function CheckinBoard({ onCompanionToast }: Props) {
   return (
     <section className="checkin-panel" aria-label={t('checkin.panelAria')}>
       <header className="checkin-header">
-        <div>
+        <div className="checkin-header-title">
           <span className="eyebrow">{t('checkin.eyebrow')}</span>
           <h2>{t('checkin.title')}</h2>
           <p className="checkin-subtitle">{t('checkin.subtitle', { max: MAX_ACTIVE_CHECKINS })}</p>
         </div>
-        <span className={`checkin-slot-badge${slotsFull ? ' checkin-slot-badge--full' : ''}`}>
-          {t('checkin.activeBadge', { count: activeCount, max: MAX_ACTIVE_CHECKINS })}
-        </span>
+        <div className="checkin-header-badges">
+          <span className={`checkin-pulse-badge${activeCount > 0 && checkedTodayCount === activeCount ? ' checkin-pulse-badge--all-done' : activeCount === 0 ? ' checkin-pulse-badge--idle' : ''}`}>
+            {t('checkin.todayPulse', { done: checkedTodayCount, active: activeCount })}
+          </span>
+          <span className={`checkin-slot-badge${slotsFull ? ' checkin-slot-badge--full' : ''}`}>
+            {t('checkin.activeBadge', { count: activeCount, max: MAX_ACTIVE_CHECKINS })}
+          </span>
+        </div>
       </header>
 
       {error && (
@@ -432,6 +475,24 @@ export function CheckinBoard({ onCompanionToast }: Props) {
         </p>
       )}
 
+      {!isEmptyBoard && (
+        <div className="checkin-creator-bar">
+          <button
+            type="button"
+            className={`checkin-toggle-btn${showCreator ? ' is-open' : ''}`}
+            aria-expanded={showCreator}
+            onClick={() => {
+              const next = !showCreator;
+              sessionCreatorPreference = next;
+              setCreatorOpen(next);
+            }}
+          >
+            {showCreator ? t('checkin.collapseTrackToggle') : t('checkin.newTrackToggle')}
+          </button>
+        </div>
+      )}
+
+      {showCreator && (
       <form className="checkin-creator" onSubmit={handleCreate}>
         <div className="checkin-creator-row">
           <input
@@ -500,6 +561,7 @@ export function CheckinBoard({ onCompanionToast }: Props) {
           </button>
         </div>
       </form>
+      )}
 
       <div className="checkin-list">
         {active.length === 0 && completed.length === 0 && (

@@ -1,6 +1,6 @@
 {
   "index.html": {
-    "file": "assets/index-DGQBZnXL.js",
+    "file": "assets/index-CFHY2QN0.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -14,7 +14,7 @@
       "src/components/MemoryCenter.tsx"
     ],
     "css": [
-      "assets/index-m4wWfpNk.css"
+      "assets/index-C9DBWLlp.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -24,7 +24,7 @@
     "isDynamicEntry": true
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-D8YEs-ep.js",
+    "file": "assets/ChatPill-D2BuIF39.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
@@ -33,7 +33,7 @@
     ]
   },
   "src/components/CheckinBoard.tsx": {
-    "file": "assets/CheckinBoard-DMRzlIO0.js",
+    "file": "assets/CheckinBoard-CNWkSgDm.js",
     "name": "CheckinBoard",
     "src": "src/components/CheckinBoard.tsx",
     "isDynamicEntry": true,
@@ -41,11 +41,11 @@
       "index.html"
     ],
     "css": [
-      "assets/CheckinBoard-DCs39V25.css"
+      "assets/CheckinBoard-UnvNy3sb.css"
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-D2d0KSqH.js",
+    "file": "assets/LivingCardsBoard-BbkkFqT7.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
@@ -57,7 +57,7 @@
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-Z2pXHTkw.js",
+    "file": "assets/MemoryCenter-86Y-7cJE.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
@@ -68,11 +68,11 @@
       "index.html"
     ],
     "css": [
-      "assets/MemoryCenter-jizYsCl6.css"
+      "assets/MemoryCenter-DKp1uTAq.css"
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-BGEo2LTs.js",
+    "file": "assets/PracticeModal-wTtUuXsw.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,
@@ -80,7 +80,7 @@
       "index.html"
     ],
     "css": [
-      "assets/PracticeModal-BKLHpFJD.css"
+      "assets/PracticeModal-CyRHvv6s.css"
     ]
   }
 }

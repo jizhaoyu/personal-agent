@@ -49,6 +49,7 @@
 
 .practice-close {
   display: grid;
+  flex-shrink: 0;
   width: 40px;
   height: 40px;
   place-items: center;
@@ -125,6 +126,7 @@
 
 .practice-result { display: grid; gap: 12px; }
 .practice-restart { justify-self: end; }
+.practice-sheet .receipt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 
 .practice-project {
   padding: 22px;
@@ -140,8 +142,18 @@
 .practice-project dd { margin: 5px 0 0; font-weight: 650; }
 
 @media (max-width: 680px) {
-  .practice-backdrop { padding: 0; place-items: stretch; }
-  .practice-sheet { max-height: 100vh; min-height: 100vh; border-radius: 0; padding: 20px 16px; }
+  .practice-backdrop { padding: 0; place-items: stretch; backdrop-filter: none; }
+  .practice-sheet {
+    max-height: 100vh;
+    max-height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
+    border-radius: 0;
+    padding: calc(16px + var(--looma-safe-top, env(safe-area-inset-top, 0px))) max(16px, env(safe-area-inset-right, 0px)) calc(24px + var(--looma-safe-bottom, env(safe-area-inset-bottom, 0px))) max(16px, env(safe-area-inset-left, 0px));
+  }
   .practice-project dl { grid-template-columns: 1fr; }
   .practice-capture-actions { align-items: stretch; flex-direction: column; }
+  .practice-capture-actions .primary-btn,
+  .practice-restart,
+  .practice-sheet .receipt-actions button { min-height: 42px; }
 }

@@ -12,6 +12,11 @@ export interface LoomaAndroidNative {
   recallModel(payloadJson: string): string;
   notifyDue(count: number): boolean;
   todoRequest?(payloadJson: string): string;
+  setSystemBarStyle?(isLightBackground: boolean): void;
+  exportBackupDocument?(requestId: string, suggestedName: string, content: string): boolean;
+  getAppVersionInfo?(): string;
+  checkForUpdates?(requestId: string): boolean;
+  openExternalUrl?(url: string): boolean;
   minimizeApp(): void;
   closeApp(): void;
 }
@@ -35,6 +40,10 @@ export function sanitizeAndroidClipboard(text: unknown): string {
 export function createAndroidElectronAdapter(native: LoomaAndroidNative) {
   const quickCaptureListeners = new Set<(text: string) => void>();
   const todoFocusListeners = new Set<(focus: {space: 'life'|'work'; id: string}) => void>();
+  const backupExports = new Map<string, { resolve: (res: { canceled: boolean }) => void; reject: (error: Error) => void }>();
+  const updateChecks = new Map<string, { resolve: (res: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  let backupSeq = 0;
+  let updateSeq = 0;
   let pendingFocus: {space: 'life'|'work'; id: string} | undefined;
 
   return {
@@ -61,6 +70,11 @@ export function createAndroidElectronAdapter(native: LoomaAndroidNative) {
     isAlwaysOnTop: async () => false,
     setContentProtection: async (value: boolean) => !!native.setContentProtection(!!value),
     isContentProtected: async () => !!native.isContentProtected(),
+    setSystemBarStyle: async (isLightBackground: boolean) => {
+      if (typeof native.setSystemBarStyle !== 'function') return false;
+      native.setSystemBarStyle(!!isLightBackground);
+      return true;
+    },
     modelStatus: async (): Promise<ModelConnectionStatus> => {
       const raw = JSON.parse(native.getModelStatus() || '{}');
       return {
@@ -112,6 +126,82 @@ export function createAndroidElectronAdapter(native: LoomaAndroidNative) {
       quickCaptureListeners.add(handler);
       return () => { quickCaptureListeners.delete(handler); };
     },
+    ...(typeof native.exportBackupDocument === 'function' ? {
+      saveBackupFile: (suggestedName: string, content: string): Promise<{ canceled: boolean }> => new Promise((resolve, reject) => {
+        const requestId = `exp-${Date.now()}-${++backupSeq}`;
+        backupExports.set(requestId, { resolve, reject });
+        try {
+          const started = native.exportBackupDocument!(requestId, suggestedName, content);
+          if (!started) {
+            backupExports.delete(requestId);
+            reject(new Error('无法调起系统备份文件保存器。'));
+          }
+        } catch (error) {
+          backupExports.delete(requestId);
+          reject(error instanceof Error ? error : new Error('备份保存调起失败。'));
+        }
+      }),
+    } : {}),
+    resolveBackupExport: (payload: { requestId?: string; ok?: boolean; canceled?: boolean; error?: string }) => {
+      const requestId = typeof payload?.requestId === 'string' ? payload.requestId : '';
+      const entry = backupExports.get(requestId);
+      if (!entry) return;
+      backupExports.delete(requestId);
+      if (payload?.canceled) {
+        entry.resolve({ canceled: true });
+      } else if (payload?.ok) {
+        entry.resolve({ canceled: false });
+      } else {
+        entry.reject(new Error(payload?.error || '备份文件保存失败，请重试。'));
+      }
+    },
+    ...(typeof native.getAppVersionInfo === 'function' ? {
+      getAppVersionInfo: async () => {
+        try {
+          const parsed = JSON.parse(native.getAppVersionInfo!() || '{}');
+          return {
+            platform: 'android' as const,
+            ...(typeof parsed.versionCode === 'number' ? { versionCode: parsed.versionCode } : {}),
+            ...(typeof parsed.versionName === 'string' ? { versionName: parsed.versionName } : {}),
+          };
+        } catch {
+          return { platform: 'android' as const };
+        }
+      },
+    } : {}),
+    ...(typeof native.checkForUpdates === 'function' ? {
+      checkForUpdates: (): Promise<any> => new Promise((resolve, reject) => {
+        const requestId = `upd-${Date.now()}-${++updateSeq}`;
+        const timer = setTimeout(() => {
+          updateChecks.delete(requestId);
+          resolve({ status: 'error', message: '检查更新超时，请稍后重试' });
+        }, 12000);
+        updateChecks.set(requestId, { resolve, reject, timer });
+        try {
+          const started = native.checkForUpdates!(requestId);
+          if (!started) {
+            clearTimeout(timer);
+            updateChecks.delete(requestId);
+            reject(new Error('无法调起原生更新检查。'));
+          }
+        } catch (error) {
+          clearTimeout(timer);
+          updateChecks.delete(requestId);
+          reject(error instanceof Error ? error : new Error('检查更新调起失败。'));
+        }
+      }),
+    } : {}),
+    resolveUpdateCheck: (payload: { requestId?: string; result?: any }) => {
+      const requestId = typeof payload?.requestId === 'string' ? payload.requestId : '';
+      const entry = updateChecks.get(requestId);
+      if (!entry) return;
+      clearTimeout(entry.timer);
+      updateChecks.delete(requestId);
+      entry.resolve(payload?.result || { status: 'error', message: '检查更新返回空响应' });
+    },
+    ...(typeof native.openExternalUrl === 'function' ? {
+      openExternalUrl: async (url: string) => ({ opened: !!native.openExternalUrl!(url), url }),
+    } : {}),
     emitQuickCapture: (rawText: string) => {
       const safe = sanitizeAndroidClipboard(rawText);
       if (!safe) return;
@@ -128,6 +218,8 @@ export function installAndroidBridge(targetWindow: any = typeof window !== 'unde
   targetWindow.electronAPI = adapter;
   targetWindow.__loomaDispatchClipboard = (text: string) => adapter.emitQuickCapture(text);
   targetWindow.__loomaTodoFocus = (focus: {space: 'life'|'work'; id: string}) => adapter.emitTodoFocus(focus);
+  targetWindow.__loomaOnBackupExportResult = (payload: { requestId?: string; ok?: boolean; canceled?: boolean; error?: string }) => adapter.resolveBackupExport(payload);
+  targetWindow.__loomaOnUpdateCheckResult = (payload: { requestId?: string; result?: any }) => adapter.resolveUpdateCheck(payload);
   if (targetWindow.__loomaPendingTodoFocus) {
     const focus = targetWindow.__loomaPendingTodoFocus; delete targetWindow.__loomaPendingTodoFocus;
     adapter.emitTodoFocus(focus);

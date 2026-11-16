@@ -16,6 +16,69 @@ function findSubdirWithFile(baseDir, targetFile) {
   return null;
 }
 
+function ensureSigningKeystore({
+  rootDir,
+  allowNewKeystore = process.env.LOOMA_ALLOW_NEW_KEYSTORE === '1',
+  keystorePass = process.env.LOOMA_KEYSTORE_PASS || 'looma2026secure',
+  keyAlias = process.env.LOOMA_KEY_ALIAS || 'looma_release',
+  certSha256Reader,
+}) {
+  const keystoreDir = path.join(rootDir, 'android', 'keystore');
+  fs.mkdirSync(keystoreDir, { recursive: true });
+  const keystorePath = path.join(keystoreDir, 'looma-release.jks');
+  const fingerprintPath = path.join(rootDir, 'android', 'keystore.fingerprint');
+
+  const readCertSha256 = certSha256Reader || (() => {
+    const certDer = execFileSync('keytool', [
+      '-exportcert',
+      '-keystore', keystorePath,
+      '-alias', keyAlias,
+      '-storepass', keystorePass,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    return crypto.createHash('sha256').update(certDer).digest('hex');
+  });
+
+  if (!fs.existsSync(keystorePath)) {
+    if (fs.existsSync(fingerprintPath) && !allowNewKeystore) {
+      const expectedFp = fs.readFileSync(fingerprintPath, 'utf8').trim();
+      throw new Error(
+        `缺少原签名密钥文件 ${keystorePath}（已锁定证书指纹 ${expectedFp.slice(0, 16)}...）。`
+        + '为避免签名变化导致 Android 用户无法覆盖更新并因卸载清空本地数据，已阻止自动生成新密钥；请还原原 looma-release.jks，或显式设置 LOOMA_ALLOW_NEW_KEYSTORE=1。',
+      );
+    }
+    execFileSync('keytool', [
+      '-genkeypair',
+      '-v',
+      '-keystore', keystorePath,
+      '-alias', keyAlias,
+      '-keyalg', 'RSA',
+      '-keysize', '2048',
+      '-validity', '10000',
+      '-storepass', keystorePass,
+      '-keypass', keystorePass,
+      '-dname', 'CN=Looma Security, OU=Client Engineering, O=Looma, L=Shanghai, ST=Shanghai, C=CN',
+    ], { stdio: 'inherit' });
+  }
+
+  const certSha256 = readCertSha256();
+  if (fs.existsSync(fingerprintPath)) {
+    const lockedFp = fs.readFileSync(fingerprintPath, 'utf8').trim();
+    if (lockedFp && lockedFp !== certSha256 && !allowNewKeystore) {
+      throw new Error(
+        `签名证书指纹不匹配（期望 ${lockedFp.slice(0, 16)}...，实际 ${certSha256.slice(0, 16)}...）。`
+        + '请确认使用的 looma-release.jks 与历史发布版一致，以免覆盖安装失败导致用户数据丢失；若有意更换密钥，请设置 LOOMA_ALLOW_NEW_KEYSTORE=1。',
+      );
+    }
+    if (allowNewKeystore && lockedFp !== certSha256) {
+      fs.writeFileSync(fingerprintPath, `${certSha256}\n`, 'utf8');
+    }
+  } else {
+    fs.writeFileSync(fingerprintPath, `${certSha256}\n`, 'utf8');
+  }
+
+  return { keystorePath, fingerprintPath, keystorePass, keyAlias, certSha256 };
+}
+
 function packageAndroidApk(options = {}) {
   const rootDir = options.rootDir || path.resolve(__dirname, '..');
   const sdkRoot = options.sdkRoot || process.env.ANDROID_HOME || 'D:\\DevEnv\\apps\\android-sdk';
@@ -112,27 +175,18 @@ function packageAndroidApk(options = {}) {
     alignedApk,
   ], { stdio: 'inherit' });
 
-  // 7. 生成或复用 RSA-2048 签名密钥库并执行 v1+v2+v3 全量签名
-  const keystoreDir = path.join(rootDir, 'android', 'keystore');
-  fs.mkdirSync(keystoreDir, { recursive: true });
-  const keystorePath = path.join(keystoreDir, 'looma-release.jks');
-  const keystorePass = 'looma2026secure';
-  const keyAlias = 'looma_release';
-
-  if (!fs.existsSync(keystorePath)) {
-    execFileSync('keytool', [
-      '-genkeypair',
-      '-v',
-      '-keystore', keystorePath,
-      '-alias', keyAlias,
-      '-keyalg', 'RSA',
-      '-keysize', '2048',
-      '-validity', '10000',
-      '-storepass', keystorePass,
-      '-keypass', keystorePass,
-      '-dname', 'CN=Looma Security, OU=Client Engineering, O=Looma, L=Shanghai, ST=Shanghai, C=CN',
-    ], { stdio: 'inherit' });
-  }
+  // 7. 固定签名证书防误重签校验 + RSA-2048 v1+v2+v3 全量签名
+  const {
+    keystorePath,
+    keystorePass,
+    keyAlias,
+    certSha256,
+  } = ensureSigningKeystore({
+    rootDir,
+    allowNewKeystore: options.allowNewKeystore === true || process.env.LOOMA_ALLOW_NEW_KEYSTORE === '1',
+    keystorePass: process.env.LOOMA_KEYSTORE_PASS || 'looma2026secure',
+    keyAlias: process.env.LOOMA_KEY_ALIAS || 'looma_release',
+  });
 
   execFileSync('cmd.exe', [
     '/c', apksignerBat, 'sign',
@@ -159,6 +213,7 @@ function packageAndroidApk(options = {}) {
     apkPath: finalApk,
     sizeBytes: apkBuffer.length,
     sha256,
+    certSha256,
     bundledWebFiles: assetIntegrity.fileCount,
     verified: verifyOutput.includes('Verified using v2 scheme (APK Signature Scheme v2): true'),
   };
@@ -169,4 +224,4 @@ if (require.main === module) {
   console.log(JSON.stringify(res, null, 2));
 }
 
-module.exports = { packageAndroidApk };
+module.exports = { packageAndroidApk, ensureSigningKeystore };

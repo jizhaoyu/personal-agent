@@ -288,6 +288,7 @@ test('Electron wiring loads production build, keeps web security and authenticat
     setBounds() {}
     static getAllWindows() { return window ? [window] : []; }
   }
+  const openedUrls = [];
   const electron = {
     app: { isPackaged: false, getPath: () => directory, whenReady: () => Promise.resolve(), on() {}, quit() {}, setAppUserModelId() {}, disableHardwareAcceleration: () => { hwDisabled = true; } },
     BrowserWindow: FakeWindow,
@@ -295,6 +296,7 @@ test('Electron wiring loads production build, keeps web security and authenticat
     screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 1024 }, workAreaSize: { width: 1280, height: 1024 } }) },
     safeStorage: { isEncryptionAvailable: () => false },
     Notification: { isSupported: () => false },
+    shell: { openExternal: async url => { openedUrls.push(url); } },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8'), {
     require: name => name === 'electron' ? electron : name === './desktop-services.cjs' ? desktop : name === './persistence.cjs' ? { createPersistence: async () => ({ request: async () => ({}), close() {} }) } : require(name),
@@ -323,4 +325,57 @@ test('Electron wiring loads production build, keeps web security and authenticat
   assert.equal(await handlers.get('window:isContentProtected')(trusted), true);
   assert.equal(await handlers.get('window:setContentProtection')(trusted, false), false);
   assert.equal(window.contentProtected, false);
+  await assert.rejects(handlers.get('update:openUrl')(trusted, 'https://evil.example/fake.exe'), /受信任|GitHub Releases/);
+  const opened = await handlers.get('update:openUrl')(trusted, desktop.GITHUB_RELEASES_PAGE_URL);
+  assert.equal(opened.opened, true);
+  assert.equal(opened.url, desktop.GITHUB_RELEASES_PAGE_URL);
+  assert.deepEqual(openedUrls, [desktop.GITHUB_RELEASES_PAGE_URL]);
+});
+
+test('desktop update check queries fixed GitHub Releases URL, prunes assets, and rejects oversized or untrusted redirects', async t => {
+  const { service: okService } = fixture(t, {
+    updateFetchImpl: async url => {
+      assert.equal(url, desktop.GITHUB_RELEASES_API_URL);
+      return {
+        ok: true,
+        status: 200,
+        url,
+        text: async () => JSON.stringify({
+          tag_name: 'v5.2.0',
+          name: 'Looma 5.2.0',
+          published_at: '2026-11-20T08:00:00Z',
+          html_url: 'https://github.com/jizhaoyu/personal-agent/releases/tag/v5.2.0',
+          body: 'Updated backup safety.',
+          prerelease: false,
+          assets: [
+            {
+              name: 'Looma-5.2.0-win32-x64.zip',
+              browser_download_url: 'https://github.com/jizhaoyu/personal-agent/releases/download/v5.2.0/Looma-5.2.0-win32-x64.zip',
+              size: 123456,
+            },
+            {
+              name: 'malicious.exe',
+              browser_download_url: 'https://evil.test/malicious.exe',
+              size: 999,
+            },
+          ],
+        }),
+      };
+    },
+  });
+  const okResult = await okService.checkForUpdates();
+  assert.equal(okResult.status, 'ok');
+  assert.equal(okResult.release.tagName, 'v5.2.0');
+  assert.equal(okResult.release.assets.length, 1);
+  assert.equal(okResult.release.assets[0].name, 'Looma-5.2.0-win32-x64.zip');
+
+  const { service: noRelService } = fixture(t, {
+    updateFetchImpl: async () => ({ ok: false, status: 404 }),
+  });
+  assert.deepEqual(await noRelService.checkForUpdates(), { status: 'no-release', httpStatus: 404 });
+
+  const { service: badRedirectService } = fixture(t, {
+    updateFetchImpl: async () => ({ ok: true, status: 200, url: 'https://evil.test/latest' }),
+  });
+  assert.equal((await badRedirectService.checkForUpdates()).status, 'error');
 });

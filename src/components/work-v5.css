@@ -45,6 +45,15 @@
 .work-v5 textarea::placeholder {
   color: var(--work-dim);
 }
+.work-v5 input[type="checkbox"] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--work-accent);
+}
 .work-v5 label {
   color: var(--work-muted);
   font-size: 12px;
@@ -737,9 +746,10 @@
     position: sticky;
     bottom: 0;
     z-index: 1;
-    gap: 4px;
+    gap: 6px;
+    flex-wrap: wrap;
     margin-inline: -18px;
-    padding: 8px 12px max(8px, env(safe-area-inset-bottom));
+    padding: 8px 12px max(8px, var(--looma-safe-bottom, env(safe-area-inset-bottom, 0px)));
     border-radius: 0 0 14px 14px;
     background: var(--work-card);
   }
@@ -894,27 +904,6 @@
 }
 .work-v5 .capture-advanced[open] .capture-quick-tools { margin-top: 8px; }
 .work-v5 .capture-layout + .continuation-home { margin-top: 20px; }
-
-@media (max-width: 540px) {
-  .work-v5 .work-v5-tabs { flex-wrap: wrap; }
-  .work-v5-toolbar-actions { flex-wrap: wrap; max-width: 100%; }
-  .work-v5 .toolbar-search { flex: 1 0 100%; }
-  .work-v5 .toolbar-search input { width: 100%; }
-  .work-v5-toolbar-actions > button { white-space: nowrap; }
-  .work-v5-toolbar,
-  .work-v5 .capture-card-header { flex-wrap: wrap; }
-  .work-v5 .capture-layout,
-  .work-v5 .capture-column,
-  .work-v5 .review-column { min-width: 0; }
-  .work-v5 .capture-card { padding: 14px; }
-  .work-v5 .capture-input { min-height: 128px; }
-  .work-v5 .capture-binding .field-grid { grid-template-columns: minmax(0, 1fr); }
-  .work-v5 .input-footer { flex-wrap: wrap; gap: 10px; }
-  .work-v5 .input-footer-right { margin-left: auto; flex-wrap: wrap; }
-  .work-v5 .capture-quick-tools { flex-wrap: wrap; }
-  .work-v5 .capture-binding select,
-  .work-v5 .capture-binding input { min-width: 0; max-width: 100%; }
-}
 .work-v5 .project-detail-columns {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1214,4 +1203,45 @@
 
 @media (max-width: 900px) {
   .work-v5 .work-home-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 540px) {
+  .work-v5 {
+    padding-bottom: calc(36px + var(--looma-safe-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+  .work-v5 .work-v5-tabs { flex-wrap: wrap; }
+  .work-v5 .work-v5-tabs > button { min-height: 40px; padding: 8px 12px; }
+  .work-v5 .work-sub-nav { flex-wrap: wrap; max-width: 100%; }
+  .work-v5 .work-sub-nav .sub-tab { min-height: 40px; padding: 6px 12px; }
+  .work-v5 .primary-btn,
+  .work-v5 .soft-btn,
+  .work-v5 .text-btn { min-height: 40px; }
+  .work-v5 .task-check-btn { min-width: 40px; min-height: 40px; }
+  .work-v5-toolbar-actions { flex-wrap: wrap; max-width: 100%; width: 100%; }
+  .work-v5 .toolbar-search { flex: 1 0 100%; }
+  .work-v5 .toolbar-search input { width: 100%; }
+  .work-v5-toolbar-actions > button { white-space: nowrap; }
+  .work-v5-toolbar,
+  .work-v5 .capture-card-header { flex-wrap: wrap; gap: 10px; }
+  .work-v5 .capture-layout,
+  .work-v5 .capture-column,
+  .work-v5 .review-column { min-width: 0; }
+  .work-v5 .capture-card,
+  .work-v5 .proposal-box { padding: 14px; }
+  .work-v5 .proposal-actions { margin-inline: -14px; flex-wrap: wrap; }
+  .work-v5 .capture-input { min-height: 128px; }
+  .work-v5 .capture-binding .field-grid { grid-template-columns: minmax(0, 1fr); }
+  .work-v5 .input-footer { flex-wrap: wrap; gap: 10px; }
+  .work-v5 .input-footer-right { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+  .work-v5 .capture-quick-tools { flex-wrap: wrap; }
+  .work-v5 .capture-binding select,
+  .work-v5 .capture-binding input { min-width: 0; max-width: 100%; }
+  .work-v5 .task-row,
+  .work-v5 .followup-row,
+  .work-v5 .resume-draft { flex-wrap: wrap; gap: 8px; }
+  .work-v5 .followup-actions { margin-left: auto; justify-content: flex-end; max-width: 100%; gap: 6px; }
+  .work-v5 .receipt-actions { flex-wrap: wrap; gap: 8px; }
+  .work-v5 .project-grid,
+  .work-v5 .recent-closure-grid { grid-template-columns: minmax(0, 1fr); }
+  .work-v5 .review-differences > div { grid-template-columns: minmax(0, 5.8em) minmax(0, 1fr); gap: 8px; }
 }

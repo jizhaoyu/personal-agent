@@ -55,4 +55,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   setContentProtection: flag => ipcRenderer.invoke('window:setContentProtection', flag),
   isContentProtected: () => ipcRenderer.invoke('window:isContentProtected'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  openExternalUrl: url => ipcRenderer.invoke('update:openUrl', url),
 });

@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import { Settings, Briefcase, Moon, Minus, X, ArrowUpRight, RotateCcw, BookOpen } from 'lucide-react';
+import { Settings, Minus, X, ArrowUpRight, RotateCcw, BookOpen } from 'lucide-react';
 import { Repository } from './persistence/repository';
 import type { AppSnapshotV5 } from './persistence/repository';
 import type { RecallEvidence } from './persistence/memory';
@@ -15,7 +15,7 @@ import { CHECKIN_REMINDER_PREFIX, syncCheckinReminders } from './services/checki
 import { capturePersonalText, clearLifeCaptureFocus, invalidateAgentCaptures } from './services/agentCapture';
 import { lifeActionText, routeLifeInput } from './services/lifeRouting';
 import type { DraftController, DraftState } from './services/draftController';
-import type { AppLanguage, Engagement, ProjectTaskItem, ProposedChangeSet, WorkOperation, WorkspaceMode, CaptureDraft, ClosureRecord, WorkHome, WorkPartition, FollowUpItem, ConditionIntent, TodoRecord } from './types';
+import type { Engagement, ProjectTaskItem, ProposedChangeSet, WorkOperation, WorkspaceMode, CaptureDraft, ClosureRecord, WorkHome, WorkPartition, FollowUpItem, ConditionIntent, TodoRecord } from './types';
 import type { ConditionLifecycleAction } from './services/conditionIntents';
 import { TodoPanel } from './components/TodoPanel';
 import { WorkBench } from './components/WorkBench';
@@ -23,6 +23,8 @@ import { Companion } from './components/Companion';
 import { SettingsModal } from './components/SettingsModal';
 import { AlignmentModal } from './components/AlignmentModal';
 import { TrialInfoModal } from './components/TrialInfoModal';
+import { GITHUB_RELEASES_PAGE_URL, checkForAppUpdates, openReleaseExternalUrl } from './services/appUpdate';
+import type { UpdateCheckResult, UpdatePlatform } from './services/appUpdate';
 import buildInfo from '../shared/build-info.json';
 const PracticeModal = lazy(() => import('./components/PracticeModal').then(m => ({ default: m.PracticeModal })));
 const ChatPill = lazy(() => import('./components/ChatPill').then(m => ({ default: m.ChatPill })));
@@ -31,8 +33,14 @@ const CheckinBoard = lazy(() => import('./components/CheckinBoard').then(m => ({
 const MemoryCenter = lazy(() => import('./components/MemoryCenter').then(m => ({ default: m.MemoryCenter })));
 const id = () => crypto.randomUUID();
 
+declare global {
+  interface Window {
+    __loomaHandleBack?: () => boolean;
+  }
+}
+
 export function App() {
-  const { lang, t } = useI18n();
+  const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<AppSnapshotV5 | null>(null);
   const [startupError, setStartupError] = useState('');
   const [draftState, setDraftState] = useState<DraftState | null>(null);
@@ -62,6 +70,8 @@ export function App() {
   const [todoChoices, setTodoChoices] = useState<TodoRecord[]>([]);
   const [agentRetry,setAgentRetry]=useState<{text:string;space:WorkspaceMode;sourceId:string;epoch:string;stage?:'agent'|'life-mutation'}|null>(null);
   const [todoChoiceAction, setTodoChoiceAction] = useState<'complete' | 'cancel' | 'time'>('complete');
+  const [androidVersionInfo, setAndroidVersionInfo] = useState<{ versionCode?: number; versionName?: string }>({});
+  const [updateCheck, setUpdateCheck] = useState<{ checking: boolean; result: UpdateCheckResult | null }>({ checking: false, result: null });
   const modeRef = useRef<WorkspaceMode>('life');
   const operation = useRef(0);
   const requestRef = useRef<string | null>(null);
@@ -98,18 +108,19 @@ export function App() {
     try { const value = await Repository.getWorkHome(); if (modeRef.current === 'work' && sequence === homeSequence.current) setHome(value); }
     catch { if (modeRef.current === 'work') setIssue(t('app.homeReadIncomplete')); }
   }
-  async function toggleLanguage() {
-    if (!snapshot) return;
-    const next: AppLanguage = lang === 'en' ? 'zh-CN' : 'en';
-    setLanguage(next);
-    setToastValue(translate(next, next === 'en' ? 'app.languageSavedEn' : 'app.languageSavedZh'));
-    setUndoEventId('');
-    try {
-      await Repository.saveSettings({ ...snapshot.settings, language: next });
-    } catch {
-      setIssue(translate(next, 'app.languagePersistFailed'));
-    }
-  }
+  const handleBackRef = useRef<() => boolean>(() => false);
+  handleBackRef.current = () => {
+    if (trialInfoOpen) { setTrialInfoOpen(false); return true; }
+    if (practiceOpen) { setPracticeOpen(false); return true; }
+    if (exportProject) { setExportProject(null); return true; }
+    if (isSettingsOpen) { setSettingsOpen(false); return true; }
+    if (memoryOpen) { void closeMemory(); return true; }
+    return false;
+  };
+  useEffect(() => {
+    window.__loomaHandleBack = () => handleBackRef.current();
+    return () => { delete window.__loomaHandleBack; };
+  }, []);
   useEffect(() => {
     let active = true;
     let ready = false;
@@ -121,6 +132,11 @@ export function App() {
       await Repository.saveWorkspaceMode('life');
       if (boot.snapshot.activeMode === 'work') { const stored = await Repository.getCaptureDraft(); if (active) installDraft(stored || createCaptureDraft()); }
       if (active) { ready = true; setSnapshot(Repository.getCurrent()); }
+      void window.electronAPI?.getAppVersionInfo?.().then(info => {
+        if (active && info?.platform === 'android') {
+          setAndroidVersionInfo({ versionCode: info.versionCode, versionName: info.versionName });
+        }
+      }).catch(() => {});
       try {
         const currentSettings = Repository.getCurrent().settings;
         const hasCheckinReminder = Repository.getCurrent().partitions.life.customCards.some(c => c.cardKind === 'checkin' && Boolean(c.dailyReminderTime) && !c.archived);
@@ -219,6 +235,50 @@ export function App() {
       }
       setMemoryOpen(false); await refreshHome();
     } catch { setIssue(t('app.draftStatusUnavailable')); }
+  }
+  async function handleCheckForUpdates() {
+    if (updateCheck.checking) return;
+    const runtimePlatform: UpdatePlatform = typeof window !== 'undefined' && 'LoomaAndroid' in window
+      ? 'android'
+      : typeof window !== 'undefined' && window.electronAPI
+        ? 'desktop'
+        : 'web';
+    setUpdateCheck(prev => ({ ...prev, checking: true }));
+    let currentCode = androidVersionInfo.versionCode;
+    let currentVer = androidVersionInfo.versionName || buildInfo.productVersion;
+    try {
+      if (runtimePlatform === 'android' && !currentCode && window.electronAPI?.getAppVersionInfo) {
+        try {
+          const nativeInfo = await window.electronAPI.getAppVersionInfo();
+          if (nativeInfo?.versionCode) currentCode = nativeInfo.versionCode;
+          if (nativeInfo?.versionName) currentVer = nativeInfo.versionName;
+          setAndroidVersionInfo({ versionCode: currentCode, versionName: nativeInfo?.versionName });
+        } catch { /* fallback to buildInfo.productVersion */ }
+      }
+      const result = await checkForAppUpdates({
+        platform: runtimePlatform,
+        currentVersion: currentVer,
+        currentAndroidVersionCode: currentCode,
+        electronAPI: typeof window !== 'undefined' ? window.electronAPI : undefined,
+      });
+      setUpdateCheck({ checking: false, result });
+    } catch (error) {
+      setUpdateCheck({
+        checking: false,
+        result: {
+          outcome: 'error',
+          platform: runtimePlatform,
+          checkedAt: new Date().toISOString(),
+          currentVersion: currentVer,
+          ...(currentCode ? { currentVersionCode: currentCode } : {}),
+          releaseUrl: GITHUB_RELEASES_PAGE_URL,
+          errorMessage: error instanceof Error ? error.message : undefined,
+        },
+      });
+    }
+  }
+  async function handleOpenUpdateUrl(url: string) {
+    return openReleaseExternalUrl(url, typeof window !== 'undefined' ? window.electronAPI : undefined);
   }
   async function openSettings() {
     if (committing || unknownCapture) return;
@@ -530,7 +590,7 @@ export function App() {
   if (compact && !isMobileOrAndroid) return <div className="capsule-shell drag-region"><Companion compact state={state} mode={mode} name={settings.personaName} reminderCount={reminderCount} onToggle={() => void toggleCompact(false)} onOpenMemory={() => void openMemory()}/></div>;
   return <div className={`app-shell ${mode === 'life' ? 'life-shell' : 'work-shell'}`}>
     <div className="workspace-content" inert={practiceOpen || trialInfoOpen}>
-    <header className="app-header drag-region"><div className="app-header-left no-drag"><a className="wordmark" href="#" onClick={e => e.preventDefault()}>looma</a><div className={`space-switch ${mode === 'work' ? 'space-switch--work' : ''}`} aria-label={t('header.workspaceAria')}><button className={mode === 'work' ? 'active' : ''} onClick={() => void switchMode('work')}><Briefcase size={11}/>{t('header.workMode')}</button><button className={mode === 'life' ? 'active' : ''} onClick={() => void switchMode('life')}><Moon size={11}/>{t('header.lifeMode')}</button></div></div><div className="header-tools no-drag"><button className="icon-btn lang-switch-btn" onClick={() => void toggleLanguage()} aria-label={t('header.switchLangAria')} title={t('header.switchLangAria')}>{t('header.switchLangLabel')}</button><button className="icon-btn" onClick={() => void openMemory()} aria-label={t('header.openMemory')}><BookOpen size={16}/></button><button className="icon-btn" onClick={() => void openSettings()} aria-label={t('header.openSettings')}><Settings size={16}/></button>{window.electronAPI && !isMobileOrAndroid && <button className="icon-btn" onClick={() => void window.electronAPI!.minimizeWindow()} aria-label={t('header.minimize')}><Minus size={16}/></button>}{window.electronAPI && <button className="icon-btn" onClick={() => void window.electronAPI!.closeWindow()} aria-label={t('header.quitApp')}><X size={16}/></button>}</div></header>
+    <header className="app-header drag-region"><div className="app-header-left no-drag"><a className="wordmark" href="#" onClick={e => e.preventDefault()}>looma</a><div className={`space-switch ${mode === 'work' ? 'space-switch--work' : ''}`} aria-label={t('header.workspaceAria')}><button type="button" className={mode === 'work' ? 'active' : ''} aria-label={t('header.workMode')} aria-pressed={mode === 'work'} onClick={() => void switchMode('work')}>{t('header.workModeShort')}</button><button type="button" className={mode === 'life' ? 'active' : ''} aria-label={t('header.lifeMode')} aria-pressed={mode === 'life'} onClick={() => void switchMode('life')}>{t('header.lifeModeShort')}</button></div></div><div className="header-tools no-drag"><button className="icon-btn" onClick={() => void openMemory()} aria-label={t('header.openMemory')}><BookOpen size={16}/></button><button className="icon-btn" onClick={() => void openSettings()} aria-label={t('header.openSettings')}><Settings size={16}/></button>{window.electronAPI && !isMobileOrAndroid && <button className="icon-btn" onClick={() => void window.electronAPI!.minimizeWindow()} aria-label={t('header.minimize')}><Minus size={16}/></button>}{window.electronAPI && <button className="icon-btn" onClick={() => void window.electronAPI!.closeWindow()} aria-label={t('header.quitApp')}><X size={16}/></button>}</div></header>
     <main>{issue && <div className="app-alert" role="alert">{issue}{unknownCapture ? <button className="text-btn" disabled={committing} onClick={() => void saveCapture(unknownOriginalOnly.current)}>{t('app.checkSaveResult')}</button> : <button className="text-btn" onClick={async () => { try { if (restoreNeedsRead) { await dataImported(); } else { await Repository.refresh(mode); await refreshHome(); setIssue(''); } } catch { setIssue(t('app.reloadDataFailed')); } }}>{t('common.reload')}</button>}<button className="text-btn" disabled={unknownCapture} onClick={() => setIssue('')}>{t('common.collapse')}</button></div>}
       {memoryOpen ? <><button className="text-btn" onClick={() => void closeMemory()}>{t('common.backToSpace')}</button><Suspense fallback={<p>{t('common.openingMemory')}</p>}><MemoryCenter key={mode} mode={mode} onNotice={setToast} modelEnabled={!!settings.memoryModelEnabled && !!connection?.enabled} onModelRecall={modelRecall} onEditBusiness={mode === 'work' ? editBusiness : undefined}/></Suspense></> : mode === 'work' ? <WorkBench onPractice={() => void openPractice()} onRetryDraft={() => { void flushDraft().then(() => setIssue('')).catch(() => setIssue(t('app.draftRetryError'))); }} projectLookup={projectLookup} draft={draftState?.draft || null} draftSaveState={draftState?.status || 'idle'} home={home} closure={closure} onDraftChange={patch => { stopModelRequest(); changeDraft(patch); }} onContinue={continueCapture} onResume={() => setClosure(null)} onOriginalOnly={() => saveCapture(true)} onRebase={() => void reparse()} onResolveConflict={resolveConflict} onSetItemState={setItemState} onSetConditionState={setConditionState} onUndoEvent={eventId => void undo(eventId)} onOpenMemory={() => void openMemory()} onOpenClosure={setClosure} modelBusy={busy && !!requestRef.current} work={work} stats={stats} companion={companion} pending={pending} busy={committing || unknownCapture || restoreNeedsRead || (busy && !pending)} selectedId={selectedId} onSelect={setSelectedId} onPropose={propose} onChange={p => { stopModelRequest(); setPending(p); }} onConfirm={() => void saveCapture()} onDiscard={() => { stopModelRequest(); setPending(null); setIssue(''); }} onReparse={() => void reparse()} onManual={(ops, text) => void manual(ops, text)} onUndo={() => void undo()} onExport={async project => { try { const tasks: ProjectTaskItem[] = []; let cursor: string | undefined; do { const page = await Repository.query<ProjectTaskItem>('work', 'task', { relatedId: project.id, limit: 200, cursor }); tasks.push(...page.items); cursor = page.nextCursor || undefined; } while (cursor); if (modeRef.current === 'work') { setExportProject(project); setExportTasks(tasks); } } catch { setIssue(t('app.linkedActionsReadFailed')); } }} modelEnabled={!!connection?.enabled && !!connection?.configured} workSuggestionsEnabled={settings.workSuggestionsEnabled ?? true} onCancel={() => { stopModelRequest(); setIssue(t('app.modelCancelled')); }}/>
         : <section className="life-workspace"><div className="life-tabs-wrapper"><nav className="life-tabs" aria-label={t('app.lifeTabsAria')}>{[['chat', t('app.lifeTabChat')], ['todos', t('app.lifeTabTodos')], ['checkins', t('app.lifeTabCheckins')], ['cards', t('app.lifeTabCards')], ['memory', t('app.lifeTabMemory')]].map(([tab, label]) => <button key={tab} className={lifeTab === tab ? 'active' : ''} onClick={() => setLifeTab(tab)}>{label}</button>)}</nav></div><div className="life-panel" key={lifeTab}><Suspense fallback={<p className="muted small">{t('common.openingLifeSpace')}</p>}>
@@ -545,7 +605,22 @@ export function App() {
     </main>
     <footer className="app-footer"><span title={buildInfo.buildId}>LOOMA · {buildInfo.productVersion}</span><button className="text-btn" onClick={() => setTrialInfoOpen(true)}>{t('footer.versionAndIssues')}</button><button className="text-btn" onClick={() => void openSettings()}>{t('footer.settingsAndBackup')} <ArrowUpRight size={12}/></button></footer>
     {toast && <div className="app-toast" role="status">{toast}{mode === 'work' && undoEventId && <button className="text-btn" onClick={() => void undo(undoEventId)}>{t('app.undoThisAction')}</button>}</div>}
-    <SettingsModal isOpen={isSettingsOpen} settings={settings} onClose={() => setSettingsOpen(false)} onSaveSettings={async s => { await TodoService.configure(!!s.remindersEnabled); await Repository.saveSettings(s); }} onConnectionChange={s => { stopModelRequest(); setConnection(s); }} onDataImported={dataImported}/>
+    <SettingsModal
+      isOpen={isSettingsOpen}
+      settings={settings}
+      onClose={() => setSettingsOpen(false)}
+      onSaveSettings={async s => { await TodoService.configure(!!s.remindersEnabled); await Repository.saveSettings(s); }}
+      onConnectionChange={s => { stopModelRequest(); setConnection(s); }}
+      onDataImported={dataImported}
+      buildInfo={{
+        ...buildInfo,
+        ...(androidVersionInfo.versionName ? { productVersion: androidVersionInfo.versionName } : {}),
+        ...(androidVersionInfo.versionCode ? { androidVersionCode: androidVersionInfo.versionCode } : {}),
+      }}
+      updateCheck={updateCheck}
+      onCheckForUpdates={handleCheckForUpdates}
+      onOpenUpdateUrl={handleOpenUpdateUrl}
+    />
     {exportProject && mode === 'work' && <AlignmentModal engagement={exportProject} tasks={exportTasks} onClose={() => setExportProject(null)} onNotice={setToast}/>}
     </div>
     <TrialInfoModal isOpen={trialInfoOpen} onClose={() => setTrialInfoOpen(false)} buildInfo={buildInfo} context={{ mode, phase: memoryOpen || (mode === 'life' && lifeTab === 'memory') ? 'memory' : mode === 'life' ? busy ? 'saving' : 'idle' : committing ? 'saving' : unknownCapture ? 'uncertain' : closure ? 'receipt' : pending ? 'review' : draftState?.draft.text.trim() ? 'draft' : 'idle', hasError: !!issue }}/>

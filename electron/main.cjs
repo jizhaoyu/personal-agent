@@ -1,9 +1,9 @@
-const { app, BrowserWindow, ipcMain, screen, safeStorage, Notification, dialog, globalShortcut, clipboard, Tray, Menu, nativeImage, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, safeStorage, Notification, dialog, globalShortcut, clipboard, Tray, Menu, nativeImage, powerMonitor, shell, net } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { getWindowTarget, isTrustedSender, createDesktopServices } = require('./desktop-services.cjs');
+const { getWindowTarget, isTrustedSender, createDesktopServices, validateReleaseExternalUrl } = require('./desktop-services.cjs');
 const { createTodoWindowGuard } = require(path.join(__dirname, 'todo-window.cjs'));
 
 // === 1. 运行时反调试与未授权参数熔断自检 (Anti-Debugging & Tamper Defense) ===
@@ -194,6 +194,13 @@ function registerHandlers() {
   });
   handle('model:cancel', requestId => services.cancelModel(requestId));
   handle('notifications:due', value => services.notifyDue(value));
+  handle('update:check', () => services.checkForUpdates());
+  handle('update:openUrl', async url => {
+    const safeUrl = validateReleaseExternalUrl(url);
+    if (!safeUrl) throw new Error('仅允许通过 HTTPS 打开本项目的 GitHub Releases 页面或官方发行资源');
+    await shell.openExternal(safeUrl);
+    return { opened: true, url: safeUrl };
+  });
   handle('clipboard:read', () => {
     try {
       const raw = clipboard.readText();
@@ -347,7 +354,12 @@ app.whenReady().then(async () => {
   ({ createPersistence } = require('./persistence.cjs'));
   try { persistence = await createPersistence({ filePath: path.join(app.getPath('userData'), 'looma.sqlite') }); }
   catch { persistenceInitError = '本地资料库暂时无法读取，原文件已保留。请使用有效备份恢复。'; }
-  services = createDesktopServices({ userDataPath: app.getPath('userData'), safeStorage, Notification });
+  services = createDesktopServices({
+    userDataPath: app.getPath('userData'),
+    safeStorage,
+    Notification,
+    ...(net && typeof net.fetch === 'function' ? { updateFetchImpl: net.fetch.bind(net) } : {}),
+  });
   if (Notification?.isSupported) {
     const { createTodoDesktop } = require(path.join(__dirname, 'todo-desktop.cjs'));
     todoDesktop = await createTodoDesktop({ getPersistence: () => persistence, Notification, onFocus: showMainWindow });

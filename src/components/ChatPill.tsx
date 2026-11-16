@@ -134,7 +134,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
 
   return (
     <div
-      className={`flex flex-col h-full min-h-[420px] md:h-[460px] backdrop-blur-md border rounded-2xl shadow-float overflow-hidden transition-all duration-300 ${
+      className={`flex flex-col h-full min-h-[280px] md:h-[460px] backdrop-blur-md border rounded-2xl shadow-float overflow-hidden transition-all duration-300 ${
         isWork
           ? 'bg-[#0f172a]/95 border-slate-700 text-slate-100'
           : 'bg-[#fcfaf5]/95 border-[#e5dec9] text-[#23293a]'
@@ -142,7 +142,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
     >
       {/* 极简顶栏（小宠物伴侣置于顶栏左侧） */}
       <div
-        className={`flex items-center justify-between px-3.5 py-2 border-b ${
+        className={`flex items-center justify-between px-3.5 py-2 border-b shrink-0 ${
           isWork ? 'bg-slate-900/90 border-slate-800' : 'bg-[#f9f6ed] border-[#ece6d5]'
         }`}
       >
@@ -353,7 +353,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
 
       {/* 输入框 */}
       <div
-        className={`p-2.5 border-t flex items-end gap-2 ${
+        className={`px-2.5 pt-2 pb-3 shrink-0 border-t flex items-end gap-2 ${
           isWork ? 'bg-slate-900 border-slate-800' : 'bg-[#f9f6ed] border-[#ece6d5]'
         }`}
       >
@@ -368,6 +368,20 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={(e) => {
+              const target = e.currentTarget;
+              const scroller = scrollRef.current;
+              if (scroller) {
+                if (typeof scroller.scrollTo === 'function') {
+                  scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+                } else {
+                  scroller.scrollTop = scroller.scrollHeight;
+                }
+              }
+              if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => target?.scrollIntoView?.({ block: 'nearest' }));
+              }
+            }}
             onCompositionStart={() => { composing.current = true; }}
             onCompositionEnd={() => { composing.current = false; }}
             placeholder={t('lifeChat.inputPlaceholder')}

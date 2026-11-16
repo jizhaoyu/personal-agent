@@ -36,7 +36,19 @@ public final class TodoStore extends SQLiteOpenHelper {
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        throw new IllegalStateException("未知待办数据库版本");
+        if (oldVersion > newVersion) {
+            throw new IllegalStateException("不支持待办数据库降级: v" + oldVersion + " -> v" + newVersion);
+        }
+        db.beginTransaction();
+        try {
+            if (oldVersion < 1) {
+                onCreate(db);
+            }
+            // Subsequent schema versions must apply non-destructive incremental ALTER statements here.
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
     }
 
     public static boolean validSpace(String value) { return "life".equals(value) || "work".equals(value); }

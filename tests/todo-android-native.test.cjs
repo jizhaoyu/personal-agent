@@ -136,5 +136,14 @@ test('Android resources, all native classes and receiver compile into a real SDK
     const dex = execFileSync(path.join(build, 'dexdump.exe'), ['-f', path.join(temp, 'classes.dex')], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
     for (const name of ['TodoStore', 'TodoRules', 'TodoScheduler', 'TodoReceiver']) assert.ok(dex.includes("'Lcom/looma/agent/" + name + ";'"), name + ' absent in DEX');
     assert.match(dex, /'todoRequest'/);
+    assert.match(dex, /'exportBackupDocument'/);
+    assert.match(dex, /'onShowFileChooser'/);
+    assert.match(dex, /'getAppVersionInfo'/);
+    assert.match(dex, /'checkForUpdates'/);
+    assert.match(dex, /'openExternalUrl'/);
+    assert.match(dex, /'shouldOverrideUrlLoading'/);
+    const storeSrc = read('TodoStore.java');
+    assert.doesNotMatch(storeSrc, /DROP TABLE/i);
+    assert.match(storeSrc, /oldVersion > newVersion/);
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 });

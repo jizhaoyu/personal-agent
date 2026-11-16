@@ -8,7 +8,25 @@
 .trial-info-sheet textarea, .trial-info-sheet select { display: block; width: 100%; margin-top: 6px; border: 1px solid #d5ddca; background: #fcfcf7; border-radius: 8px; padding: 10px 12px; color: #344a3b; font: inherit; line-height: 1.8; }
 .trial-report-preview { display: block; margin: 18px 0; }
 .trial-report-preview textarea { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f5ed; }
-.trial-info-sheet .check-label { display: flex; align-items: start; gap: 8px; }
-.trial-info-sheet .check-label input { width: auto; margin-top: 4px; flex-shrink: 0; }
+.trial-info-sheet .check-label { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; cursor: pointer; }
+.trial-info-sheet .check-label input[type="checkbox"] { width: 18px; min-width: 18px; height: 18px; padding: 0; margin: 2px 0 0; flex-shrink: 0; accent-color: #536c44; cursor: pointer; }
 .trial-info-sheet :is(button, textarea, select, input):focus-visible { outline: 2px solid #6d8956; outline-offset: 3px; }
-@media (max-width: 520px) { .trial-info-sheet { max-height: 94vh; border-radius: 12px; } .trial-info-sheet .sheet-header, .trial-info-sheet .sheet-body, .trial-info-sheet .sheet-footer { padding: 17px; } .trial-info-sheet .sheet-footer { flex-wrap: wrap; } }
+@media (max-width: 520px) {
+  .trial-info-sheet {
+    width: 100%;
+    max-height: 92vh;
+    max-height: calc(92dvh - var(--looma-safe-top, env(safe-area-inset-top, 0px)));
+    border-radius: 18px 18px 0 0;
+    border-bottom: 0;
+  }
+  .trial-info-sheet .sheet-header,
+  .trial-info-sheet .sheet-body { padding: 17px; }
+  .trial-info-sheet .sheet-footer {
+    padding: 14px 17px calc(17px + var(--looma-safe-bottom, env(safe-area-inset-bottom, 0px)));
+    flex-wrap: wrap;
+  }
+  .trial-info-sheet .sheet-footer button {
+    min-height: 42px;
+    flex: 1 1 120px;
+  }
+}

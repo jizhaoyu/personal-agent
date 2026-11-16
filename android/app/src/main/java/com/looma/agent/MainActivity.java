@@ -5,22 +5,42 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
+import android.graphics.Insets;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import org.json.JSONObject;
 
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+
 public class MainActivity extends Activity {
+    private static final String ENTRY_URL = "file:///android_asset/www/index.html";
+    private static final int REQUEST_FILE_CHOOSER = 4101;
+    private static final int REQUEST_EXPORT_BACKUP = 4102;
+
     private WebView webView;
     private JSONObject pendingTodoFocus;
     private boolean pageReady;
+    private float cachedSafeTopDp = 0f;
+    private float cachedSafeBottomDp = 0f;
+    private float cachedImeBottomDp = 0f;
+    private ValueCallback<Uri[]> pendingFileChooserCallback;
+    private String pendingExportRequestId;
+    private String pendingExportContent;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -49,34 +69,18 @@ public class MainActivity extends Activity {
                 window.setAttributes(lp);
             }
 
-            window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
-            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-            window.setStatusBarColor(Color.TRANSPARENT);
-            window.setNavigationBarColor(Color.parseColor("#090A0F"));
-
-            // 状态栏图标与导航栏图标设为浅色（暗色主题下高对比度可见，解决 ColorOS/OriginOS 黑底黑字隐形问题）
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 window.setDecorFitsSystemWindows(false);
-                android.view.WindowInsetsController controller = window.getInsetsController();
-                if (controller != null) {
-                    controller.setSystemBarsAppearance(0,
-                            android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
-                            android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
-                }
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                View decor = window.getDecorView();
-                decor.setSystemUiVisibility(
-                        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                );
             }
+
+            applySystemBarStyle(window, true);
         } catch (Throwable ignored) {
         }
 
         // 3. 构建 WebView 并初始化设置
         try {
             webView = new WebView(this);
-            webView.setBackgroundColor(Color.parseColor("#090A0F"));
+            webView.setBackgroundColor(Color.parseColor("#f7f1e5"));
 
             // 禁用过度拉伸与多余滚动条，消除小米与 vivo 边缘弹性重影拉扯
             webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -108,37 +112,211 @@ public class MainActivity extends Activity {
                 settings.setForceDark(WebSettings.FORCE_DARK_OFF);
             }
 
-            // C. 页面自适应与排版缩放
+            // C. 页面自适应与排版缩放，禁用意外双指缩放及缩放控件
             settings.setUseWideViewPort(true);
             settings.setLoadWithOverviewMode(true);
+            settings.setSupportZoom(false);
+            settings.setBuiltInZoomControls(false);
+            settings.setDisplayZoomControls(false);
 
             // 4. 挂载原生安全桥接接口 window.LoomaAndroid
             webView.addJavascriptInterface(new LoomaBridge(this), "LoomaAndroid");
             webView.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    String reqUrl = request != null && request.getUrl() != null ? request.getUrl().toString() : "";
+                    return !reqUrl.startsWith("file:///android_asset/www/");
+                }
+
                 @Override public void onPageFinished(WebView view, String url) {
-                    if (!"file:///android_asset/www/index.html".equals(url)) return;
+                    if (!ENTRY_URL.equals(url)) return;
                     pageReady = true;
+                    syncWindowInsetsNow();
                     dispatchTodoFocus(40);
                     publishTodoCapabilities();
                 }
             });
-            webView.setWebChromeClient(new WebChromeClient());
+            webView.setWebChromeClient(new WebChromeClient() {
+                @Override
+                public boolean onShowFileChooser(
+                        WebView view,
+                        ValueCallback<Uri[]> filePathCallback,
+                        FileChooserParams fileChooserParams
+                ) {
+                    if (pendingFileChooserCallback != null) {
+                        pendingFileChooserCallback.onReceiveValue(null);
+                        pendingFileChooserCallback = null;
+                    }
+                    pendingFileChooserCallback = filePathCallback;
+                    try {
+                        Intent intent = fileChooserParams != null
+                                ? fileChooserParams.createIntent()
+                                : new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/json");
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        startActivityForResult(intent, REQUEST_FILE_CHOOSER);
+                        return true;
+                    } catch (Throwable t) {
+                        if (pendingFileChooserCallback != null) {
+                            pendingFileChooserCallback.onReceiveValue(null);
+                            pendingFileChooserCallback = null;
+                        }
+                        return false;
+                    }
+                }
+            });
+
+            View decorView = getWindow().getDecorView();
+            decorView.setOnApplyWindowInsetsListener((v, insets) -> {
+                updateInsetsFromWindowInsets(insets);
+                return v.onApplyWindowInsets(insets);
+            });
+            syncWindowInsetsNow();
+            decorView.requestApplyInsets();
 
             // 5. 加载本地打包的前端工作台
-            webView.loadUrl("file:///android_asset/www/index.html");
+            webView.loadUrl(ENTRY_URL);
         } catch (Throwable t) {
             // 兜底异常处理
         }
     }
 
+    @SuppressWarnings("deprecation")
+    static void applySystemBarStyle(Window window, boolean isLightBackground) {
+        if (window == null) return;
+        int bgColor = Color.parseColor(isLightBackground ? "#f7f1e5" : "#090A0F");
+
+        window.clearFlags(
+                WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
+                | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION
+        );
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(bgColor);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.setStatusBarContrastEnforced(false);
+            window.setNavigationBarContrastEnforced(false);
+        }
+
+        View decor = window.getDecorView();
+        if (decor != null) {
+            decor.setBackgroundColor(bgColor);
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            final int mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            final int appearance = isLightBackground ? mask : 0;
+            WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                controller.setSystemBarsAppearance(appearance, mask);
+            } else if (decor != null) {
+                decor.post(() -> {
+                    WindowInsetsController attached = window.getInsetsController();
+                    if (attached != null) {
+                        attached.setSystemBarsAppearance(appearance, mask);
+                    }
+                });
+            }
+        } else if (decor != null) {
+            int flags = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+            if (isLightBackground) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                }
+            }
+            decor.setSystemUiVisibility(flags);
+        }
+    }
+
+    void applyBarStyle(boolean isLightBackground) {
+        applySystemBarStyle(getWindow(), isLightBackground);
+        if (webView != null) {
+            webView.setBackgroundColor(Color.parseColor(isLightBackground ? "#f7f1e5" : "#090A0F"));
+        }
+    }
+
+    private void syncWindowInsetsNow() {
+        View decor = getWindow() != null ? getWindow().getDecorView() : null;
+        if (decor != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            WindowInsets rootInsets = decor.getRootWindowInsets();
+            if (rootInsets != null) {
+                updateInsetsFromWindowInsets(rootInsets);
+                return;
+            }
+        }
+        injectWindowInsets();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void updateInsetsFromWindowInsets(WindowInsets insets) {
+        if (insets == null) return;
+        float density = getResources().getDisplayMetrics().density;
+        if (density <= 0f) density = 1f;
+
+        int topPx;
+        int bottomPx;
+        int imePx = 0;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Insets sys = insets.getInsets(
+                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()
+            );
+            Insets ime = insets.getInsets(WindowInsets.Type.ime());
+            topPx = sys.top;
+            bottomPx = sys.bottom;
+            imePx = Math.max(0, ime.bottom - sys.bottom);
+        } else {
+            topPx = insets.getSystemWindowInsetTop();
+            bottomPx = insets.getSystemWindowInsetBottom();
+        }
+
+        cachedSafeTopDp = topPx / density;
+        cachedSafeBottomDp = bottomPx / density;
+        cachedImeBottomDp = imePx / density;
+        injectWindowInsets();
+    }
+
+    private void injectWindowInsets() {
+        if (webView == null) return;
+        final String script = String.format(
+                Locale.US,
+                "(function(){var r=document.documentElement;if(!r)return;"
+                        + "r.setAttribute('data-platform','android');"
+                        + "r.style.setProperty('--looma-safe-top','%.2fpx');"
+                        + "r.style.setProperty('--looma-safe-bottom','%.2fpx');"
+                        + "r.style.setProperty('--looma-ime-bottom','%.2fpx');"
+                        + "})();",
+                cachedSafeTopDp,
+                cachedSafeBottomDp,
+                cachedImeBottomDp
+        );
+        webView.evaluateJavascript(script, null);
+    }
+
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
+        if (webView == null) {
             moveTaskToBack(true);
+            return;
         }
+        webView.evaluateJavascript(
+                "(function(){try{return Boolean(window.__loomaHandleBack&&window.__loomaHandleBack());}catch(e){return false;}})()",
+                result -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if ("true".equals(result)) return;
+                    if (webView != null && webView.canGoBack()) {
+                        webView.goBack();
+                    } else {
+                        moveTaskToBack(true);
+                    }
+                }
+        );
     }
 
     @Override
@@ -200,13 +378,131 @@ public class MainActivity extends Activity {
             SecurityShield.enforceRuntimeIntegrity(this);
         } catch (Throwable ignored) {
         }
+        View decor = getWindow() != null ? getWindow().getDecorView() : null;
+        if (decor != null) {
+            decor.requestApplyInsets();
+        }
         TodoScheduler.reconcile(this);
         publishTodoCapabilities();
         dispatchTodoFocus(40);
     }
 
+    void launchExportBackup(final String requestId, final String suggestedName, final String jsonContent) {
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (pendingExportRequestId != null) {
+                notifyBackupExportResult(requestId, false, false, "已有导出窗口打开中，请先完成当前保存。");
+                return;
+            }
+            if (jsonContent == null || jsonContent.isEmpty()) {
+                notifyBackupExportResult(requestId, false, false, "备份内容为空。");
+                return;
+            }
+            String safeName = (suggestedName != null && !suggestedName.trim().isEmpty())
+                    ? suggestedName.trim().replaceAll("[\\\\/:*?\"<>|]", "_")
+                    : "Looma-v5-backup.json";
+            pendingExportRequestId = requestId;
+            pendingExportContent = jsonContent;
+            try {
+                Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("application/json");
+                intent.putExtra(Intent.EXTRA_TITLE, safeName);
+                startActivityForResult(intent, REQUEST_EXPORT_BACKUP);
+            } catch (Throwable t) {
+                pendingExportRequestId = null;
+                pendingExportContent = null;
+                notifyBackupExportResult(requestId, false, false, "无法打开系统文件保存器，请检查系统文档权限。");
+            }
+        });
+    }
+
+    private void evaluateJsObjectCallback(String fnName, JSONObject payload) {
+        if (webView == null || fnName == null || payload == null) return;
+        String jsArg = payload.toString().replace("\u2028", "\\u2028").replace("\u2029", "\\u2029");
+        String script = "(function(){if(typeof window." + fnName + "==='function'){window." + fnName + "(" + jsArg + ");}})();";
+        webView.post(() -> {
+            if (webView != null) {
+                webView.evaluateJavascript(script, null);
+            }
+        });
+    }
+
+    private void notifyBackupExportResult(String requestId, boolean ok, boolean canceled, String error) {
+        if (webView == null || requestId == null) return;
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("requestId", requestId);
+            payload.put("ok", ok);
+            payload.put("canceled", canceled);
+            payload.put("error", error == null ? "" : error);
+            evaluateJsObjectCallback("__loomaOnBackupExportResult", payload);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    void notifyUpdateCheckResult(String requestId, JSONObject result) {
+        if (webView == null || requestId == null || result == null) return;
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("requestId", requestId);
+            payload.put("result", result);
+            evaluateJsObjectCallback("__loomaOnUpdateCheckResult", payload);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_FILE_CHOOSER) {
+            ValueCallback<Uri[]> callback = pendingFileChooserCallback;
+            pendingFileChooserCallback = null;
+            if (callback != null) {
+                Uri[] result = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                if (result == null && resultCode == RESULT_OK && data != null && data.getData() != null) {
+                    result = new Uri[]{data.getData()};
+                }
+                callback.onReceiveValue(result);
+            }
+            return;
+        }
+        if (requestCode == REQUEST_EXPORT_BACKUP) {
+            String requestId = pendingExportRequestId;
+            String content = pendingExportContent;
+            pendingExportRequestId = null;
+            pendingExportContent = null;
+            if (requestId == null) return;
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                notifyBackupExportResult(requestId, false, true, "");
+                return;
+            }
+            Uri uri = data.getData();
+            try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
+                if (out == null) {
+                    notifyBackupExportResult(requestId, false, false, "无法写入所选文件位置。");
+                    return;
+                }
+                out.write((content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                notifyBackupExportResult(requestId, true, false, "");
+            } catch (Throwable t) {
+                notifyBackupExportResult(requestId, false, false, "备份文件写入失败，请换一个目录重试。");
+            }
+        }
+    }
+
     @Override
     protected void onDestroy() {
+        if (pendingFileChooserCallback != null) {
+            try {
+                pendingFileChooserCallback.onReceiveValue(null);
+            } catch (Throwable ignored) {
+            }
+            pendingFileChooserCallback = null;
+        }
+        pendingExportRequestId = null;
+        pendingExportContent = null;
         if (webView != null) {
             try {
                 webView.removeJavascriptInterface("LoomaAndroid");
