@@ -168,6 +168,8 @@ export interface GomokuState {
   history: [number, number][];
 }
 
+export type AppLanguage = 'zh-CN' | 'en';
+
 export interface AppSettings {
   /** Only accepted during migration; never stored in the v3 application snapshot. */
   apiKey?: string;
@@ -182,6 +184,8 @@ export interface AppSettings {
   remindersEnabled?: boolean;
   memoryModelEnabled?: boolean;
   workSuggestionsEnabled?: boolean;
+  contentProtection?: boolean;
+  language?: AppLanguage;
 }
 
 export type PublicAppSettings = Omit<AppSettings, 'apiKey'>;

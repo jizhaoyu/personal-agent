@@ -7,6 +7,21 @@ const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 
+function loadI18n(react) {
+  const dir = path.join(process.cwd(), 'src/i18n');
+  const cache = {};
+  const loadTs = name => {
+    if (cache[name]) return cache[name];
+    const file = path.join(dir, `${name}.ts`);
+    const compiled = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: file }).outputText;
+    const mod = { exports: {} }; cache[name] = mod.exports;
+    vm.runInNewContext(compiled, { module: mod, exports: mod.exports, Intl, console, get window() { return globalThis.window; }, get document() { return globalThis.document; }, get localStorage() { return globalThis.localStorage; },
+      require(dep) { return dep === 'react' ? react : dep.startsWith('./') ? loadTs(dep.slice(2)) : require(dep); } }, { filename: file });
+    return (cache[name] = mod.exports);
+  };
+  return loadTs('index');
+}
+
 function load(name, react = React, repository = { query: async () => ({ items: [], nextCursor: null }), get: async () => null }) {
   const filename = path.join(process.cwd(), 'src/components', `${name}.tsx`);
   if (!fs.existsSync(filename)) return undefined;
@@ -21,6 +36,7 @@ function load(name, react = React, repository = { query: async () => ({ items: [
       if (dependency === 'lucide-react') return new Proxy({}, { get: (_target, name) => () => React.createElement('span', { 'data-icon': String(name) }) });
       if (dependency.endsWith('.css')) return {};
       if (dependency === '../persistence/repository') return { Repository: repository };
+      if (dependency === '../i18n') return loadI18n(react);
       if (dependency === './ProposalReview') return { ProposalReview: load('ProposalReview', react, repository) };
       if (dependency === './ClosureReceipt') return { ClosureReceipt: load('ClosureReceipt', react, repository) };
       if (dependency === './ProjectContinuation') return { ProjectContinuation: load('ProjectContinuation', react, repository) };
@@ -40,6 +56,7 @@ function load(name, react = React, repository = { query: async () => ({ items: [
         const m = { exports: {} };
         vm.runInNewContext(compiledService, { module: m, exports: m.exports, Date, console, crypto, require(dep) {
           if (dep === './storage') return { newId: prefix => `${prefix}-${crypto.randomUUID()}` };
+          if (dep === '../i18n/domain') return loadI18n(react);
           return require(dep);
         } });
         return m.exports;

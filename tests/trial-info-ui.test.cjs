@@ -16,6 +16,19 @@ function harness() {
     if (name === 'react') return react;
     if (name === 'lucide-react') return new Proxy({}, { get: (_target, icon) => () => React.createElement('span', { 'data-icon': String(icon) }) });
     if (name === '../services/trialInfo') return { buildTrialReport };
+    if (name === '../i18n') {
+      const dir = path.join(process.cwd(), 'src/i18n'), cache = {};
+      const loadTs = modName => {
+        if (cache[modName]) return cache[modName];
+        const f = path.join(dir, `${modName}.ts`);
+        const mod = { exports: {} }; cache[modName] = mod.exports;
+        vm.runInNewContext(ts.transpileModule(fs.readFileSync(f, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: f }).outputText,
+          { module: mod, exports: mod.exports, Intl, console, get window() { return globalThis.window; }, get document() { return globalThis.document; }, get localStorage() { return globalThis.localStorage; },
+            require: d => d === 'react' ? react : d.startsWith('./') ? loadTs(d.slice(2)) : require(d) }, { filename: f });
+        return (cache[modName] = mod.exports);
+      };
+      return loadTs('index');
+    }
     if (name.endsWith('.css')) return {};
     throw new Error(`Unexpected dependency ${name}`);
   } }, { filename });

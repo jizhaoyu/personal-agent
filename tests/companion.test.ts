@@ -29,6 +29,7 @@ function component() {
     require: (dependency: string) => {
       if (dependency === 'react') return React;
       if (dependency === '../services/companionState') return states;
+      if (dependency === '../i18n') return require('../src/i18n');
       if (dependency.endsWith('.css')) return {};
       return require(dependency);
     },

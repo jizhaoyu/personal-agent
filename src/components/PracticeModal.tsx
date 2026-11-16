@@ -10,6 +10,7 @@ import {
   undoPractice,
   type PracticeState,
 } from '../services/practice';
+import { formatBudgetAmount, formatDealStage, useI18n } from '../i18n';
 import { ClosureReceipt } from './ClosureReceipt';
 import { ProposalReview } from './ProposalReview';
 import './practice.css';
@@ -18,16 +19,17 @@ export interface PracticeModalProps {
   onClose(): void;
 }
 
-function errorText(error: unknown): string {
+function errorText(error: unknown, fallback: string): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'object' && error !== null && 'message' in error) {
     const message = (error as { message?: unknown }).message;
     if (typeof message === 'string') return message;
   }
-  return '演练操作没有完成，请保留当前内容后重试。';
+  return fallback;
 }
 
 export function PracticeModal({ onClose }: PracticeModalProps) {
+  const { t } = useI18n();
   const [practice, setPractice] = useState<PracticeState>(() => createPractice());
   const [error, setError] = useState('');
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -39,7 +41,7 @@ export function PracticeModal({ onClose }: PracticeModalProps) {
       setError('');
       return next;
     } catch (cause) {
-      setError(errorText(cause));
+      setError(errorText(cause, t('practice.errorFallback')));
       return null;
     }
   }
@@ -71,7 +73,7 @@ export function PracticeModal({ onClose }: PracticeModalProps) {
       setProjectId(null);
       setError('');
     } catch (cause) {
-      setError(errorText(cause));
+      setError(errorText(cause, t('practice.errorFallback')));
     }
   }
 
@@ -81,11 +83,11 @@ export function PracticeModal({ onClose }: PracticeModalProps) {
   return <div className="practice-backdrop" role="presentation">
     <section className="practice-sheet" role="dialog" aria-modal="true" aria-labelledby="practice-title">
       <header className="practice-header">
-        <div className="practice-title"><span className="practice-icon"><FlaskConical size={19}/></span><div><span className="eyebrow">独立演练</span><h2 id="practice-title">放心练习一次</h2></div></div>
-        <button type="button" autoFocus className="practice-close" aria-label="关闭演练" onClick={onClose}><X size={20}/></button>
+        <div className="practice-title"><span className="practice-icon"><FlaskConical size={19}/></span><div><span className="eyebrow">{t('practice.eyebrow')}</span><h2 id="practice-title">{t('practice.title')}</h2></div></div>
+        <button type="button" autoFocus className="practice-close" aria-label={t('practice.closeAria')} onClick={onClose}><X size={20}/></button>
       </header>
 
-      <p className="practice-boundary" role="note"><strong>演练资料，仅在当前窗口临时保留，关闭后丢弃。</strong><span>不会清空或改动真实工作区，也不会调用模型、通知或外发能力。</span></p>
+      <p className="practice-boundary" role="note"><strong>{t('practice.boundaryStrong')}</strong><span>{t('practice.boundaryRest')}</span></p>
       {error && <p className="practice-error" role="alert">{error}</p>}
 
       {projectId && <PracticeProject project={selectedProject} onBack={() => setProjectId(null)}/>}
@@ -104,7 +106,7 @@ export function PracticeModal({ onClose }: PracticeModalProps) {
           onUndo={undo}
           practice
         />
-        <button type="button" className="soft-btn practice-restart" onClick={restart}><RefreshCcw size={14}/>重新练习</button>
+        <button type="button" className="soft-btn practice-restart" onClick={restart}><RefreshCcw size={14}/>{t('practice.restartBtn')}</button>
       </div>}
 
       {!projectId && !practice.closure && practice.draft.proposal && <ProposalReview
@@ -116,23 +118,24 @@ export function PracticeModal({ onClose }: PracticeModalProps) {
         onReparse={review}
       />}
 
-      {!projectId && !practice.closure && !practice.draft.proposal && <section className="practice-capture" aria-label="演练输入">
-        <div className="practice-step"><span>1</span><div><h3>先改一改这段示例沟通</h3><p>这是合成资料。你可以随意修改，看看 Looma 如何分开我方行动、等待客户和未定问题。</p></div></div>
-        <label htmlFor="practice-source">演练沟通原文</label>
-        <textarea id="practice-source" aria-label="演练沟通原文" rows={6} value={practice.draft.text} onChange={event => revise(event.target.value)}/>
-        <div className="practice-capture-actions"><small>此时尚未产生任何真实项目记录。</small><button type="button" className="primary-btn" onClick={review}>整理并核对</button></div>
+      {!projectId && !practice.closure && !practice.draft.proposal && <section className="practice-capture" aria-label={t('practice.inputAria')}>
+        <div className="practice-step"><span>1</span><div><h3>{t('practice.stepHeading')}</h3><p>{t('practice.stepDesc')}</p></div></div>
+        <label htmlFor="practice-source">{t('practice.sourceLabel')}</label>
+        <textarea id="practice-source" aria-label={t('practice.sourceLabel')} rows={6} value={practice.draft.text} onChange={event => revise(event.target.value)}/>
+        <div className="practice-capture-actions"><small>{t('practice.noRealRecordsHint')}</small><button type="button" className="primary-btn" onClick={review}>{t('practice.organizeAndReviewBtn')}</button></div>
       </section>}
     </section>
   </div>;
 }
 
 function PracticeProject({ project, onBack }: { project?: Engagement | null; onBack(): void }) {
-  return <section className="practice-project" aria-label="演练项目">
-    <button type="button" className="text-btn" onClick={onBack}><ArrowLeft size={14}/>返回演练回执</button>
-    <span className="eyebrow">演练项目 · 临时资料</span>
+  const { lang, t } = useI18n();
+  return <section className="practice-project" aria-label={t('practice.projectAria')}>
+    <button type="button" className="text-btn" onClick={onBack}><ArrowLeft size={14}/>{t('practice.backToReceipt')}</button>
+    <span className="eyebrow">{t('practice.projectEyebrow')}</span>
     {project ? <>
       <h3>{project.clientName} · {project.title}</h3>
-      <dl><div><dt>当前进展</dt><dd>{project.stage}</dd></div><div><dt>参考预算</dt><dd>{project.budgetAmount === undefined ? '尚未确认' : `¥${project.budgetAmount.toLocaleString('zh-CN')} 元`}</dd></div><div><dt>下一步</dt><dd>{project.nextAction || '尚未安排'}</dd></div></dl>
-    </> : <><h3>这项演练变更已撤销</h3><p>演练项目已经恢复到练习前的状态，原文仍可在回执中查看。</p></>}
+      <dl><div><dt>{t('practice.stageLabel')}</dt><dd>{formatDealStage(project.stage, lang)}</dd></div><div><dt>{t('practice.budgetLabel')}</dt><dd>{project.budgetAmount === undefined ? t('proposal.valueUnconfirmed') : `${formatBudgetAmount(project.budgetAmount, lang)}${t('closure.budgetRefSuffix')}`}</dd></div><div><dt>{t('practice.nextActionLabel')}</dt><dd>{project.nextAction || t('practice.noNextAction')}</dd></div></dl>
+    </> : <><h3>{t('practice.revertedTitle')}</h3><p>{t('practice.revertedDesc')}</p></>}
   </section>;
 }

@@ -158,6 +158,19 @@ function settingsHarness(repository: any, electronAPI?: any) {
       if (dependency === '../persistence/repository') return { Repository: repository };
       if (dependency === '../services/legacyConnection') return { clearLegacyCredential() {} };
       if (dependency === '../services/todos') return { TodoService: { capabilities: async () => ({ background: true, enabled: false, notifications: 'granted', exactAlarms: 'not-required' }) } };
+      if (dependency === '../i18n') {
+        const dir = path.join(process.cwd(), 'src/i18n'), cache: Record<string, any> = {};
+        const loadTs = (modName: string): any => {
+          if (cache[modName]) return cache[modName];
+          const f = path.join(dir, `${modName}.ts`);
+          const mod = { exports: {} as any }; cache[modName] = mod.exports;
+          vm.runInNewContext(ts.transpileModule(fs.readFileSync(f, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: f }).outputText,
+            { module: mod, exports: mod.exports, Intl, console, get window() { return (globalThis as any).window; }, get document() { return (globalThis as any).document; }, get localStorage() { return (globalThis as any).localStorage; },
+              require: (d: string) => d === 'react' ? react : d.startsWith('./') ? loadTs(d.slice(2)) : require(d) }, { filename: f });
+          return (cache[modName] = mod.exports);
+        };
+        return loadTs('index');
+      }
       return require(dependency);
     } }, { filename });
   const text = (node: any): string => node == null || typeof node === 'boolean' ? '' : typeof node === 'string' || typeof node === 'number' ? String(node) : Array.isArray(node) ? node.map(text).join('') : text(node.props?.children);

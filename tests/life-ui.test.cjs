@@ -54,6 +54,30 @@ function component(name, storageOverrides = {}, repositoryOverrides = {}, aiOver
       loads.push(dependency);
       if (dependency === 'react') return hooks;
       if (dependency === 'lucide-react') return new Proxy({}, { get: (_target, name) => () => React.createElement('span', { 'data-icon': String(name) }) });
+      if (dependency === '../i18n') {
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const vm = require('node:vm');
+        const ts = require('typescript');
+        const cache = new Map();
+        const loadTs = rel => {
+          const abs = path.join(process.cwd(), 'src/i18n', rel);
+          if (cache.has(abs)) return cache.get(abs);
+          const code = ts.transpileModule(fs.readFileSync(abs, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: abs }).outputText;
+          const m = { exports: {} }; cache.set(abs, m.exports);
+          vm.runInNewContext(code, { module: m, exports: m.exports, Date, Intl, console, require(d) {
+            if (d === 'react') return hooks;
+            if (d === '../types') return {};
+            if (d === './store') return loadTs('store.ts');
+            if (d === './domain') return loadTs('domain.ts');
+            if (d === './zh') return loadTs('zh.ts');
+            if (d === './en') return loadTs('en.ts');
+            return require(d);
+          } }, { filename: abs });
+          return m.exports;
+        };
+        return loadTs('index.ts');
+      }
       if (dependency === '../services/storage') return { StorageService: storage };
       if (dependency === '../persistence/repository') return { Repository: repository };
       if (dependency === '../services/aiService') return { AiService: aiOverrides };

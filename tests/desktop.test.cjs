@@ -63,6 +63,11 @@ test('IPC only accepts the expected window main frame at the exact app URL', () 
   assert.equal(desktop.isTrustedSender({ ...trusted, senderFrame: { url: mainFrame.url } }, contents, mainFrame.url), false);
   assert.equal(desktop.isTrustedSender({ ...trusted, sender: {} }, contents, mainFrame.url), false);
   assert.equal(desktop.isTrustedSender(trusted, contents, 'http://localhost:5173/other'), false);
+  const winFileFrame = { url: 'file:///D:/Desktop/personnal-agents/dist/index.html' };
+  const winFileContents = { mainFrame: winFileFrame };
+  const winFileTrusted = { sender: winFileContents, senderFrame: winFileFrame };
+  assert.equal(desktop.isTrustedSender(winFileTrusted, winFileContents, 'file:///d:/Desktop/personnal-agents/dist/index.html'), true);
+  assert.equal(desktop.isTrustedSender(winFileTrusted, winFileContents, 'file:///d:/Desktop/personnal-agents/dist/other.html'), false);
 });
 
 test('credentials are encrypted on disk and status never returns the key', async t => {
@@ -258,11 +263,12 @@ test('native notifications contain only a count and fail safely when unsupported
 test('Electron wiring loads production build, keeps web security and authenticates every IPC', async t => {
   const { directory } = fixture(t);
   const handlers = new Map();
-  let window;
+  let window, hwDisabled = false;
   class FakeWindow {
     constructor(options) {
       window = this;
       this.options = options;
+      this.contentProtected = false;
       this.webContents = {
         mainFrame: { url: '' }, setWindowOpenHandler: handler => { this.openHandler = handler; },
         on: (name, callback) => { this[name] = callback; },
@@ -270,6 +276,7 @@ test('Electron wiring loads production build, keeps web security and authenticat
     }
     loadFile(file) { this.loadedFile = file; this.webContents.mainFrame.url = pathToFileURL(file).href; }
     loadURL(url) { this.loadedUrl = url; this.webContents.mainFrame.url = url; }
+    setContentProtection(flag) { this.contentProtected = !!flag; }
     setVisibleOnAllWorkspaces() {}
     on() {}
     minimize() { this.minimized = true; }
@@ -282,7 +289,7 @@ test('Electron wiring loads production build, keeps web security and authenticat
     static getAllWindows() { return window ? [window] : []; }
   }
   const electron = {
-    app: { isPackaged: false, getPath: () => directory, whenReady: () => Promise.resolve(), on() {}, quit() {}, setAppUserModelId() {} },
+    app: { isPackaged: false, getPath: () => directory, whenReady: () => Promise.resolve(), on() {}, quit() {}, setAppUserModelId() {}, disableHardwareAcceleration: () => { hwDisabled = true; } },
     BrowserWindow: FakeWindow,
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 1024 }, workAreaSize: { width: 1280, height: 1024 } }) },
@@ -294,8 +301,11 @@ test('Electron wiring loads production build, keeps web security and authenticat
     __dirname: path.join(__dirname, '../electron'), process: { env: { NODE_ENV: 'production' }, platform: 'win32' }, console,
   });
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(hwDisabled, true);
   assert.ok(window.loadedFile?.endsWith(path.join('dist', 'index.html')));
   assert.equal(window.loadedUrl, undefined);
+  assert.equal(window.options.backgroundColor, '#00000000');
+  assert.equal(window.contentProtected, false);
   assert.equal(window.options.webPreferences.webSecurity, true);
   assert.equal(window.options.webPreferences.contextIsolation, true);
   assert.equal(window.options.webPreferences.nodeIntegration, false);
@@ -307,4 +317,10 @@ test('Electron wiring loads production build, keeps web security and authenticat
   const trusted = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
   await handlers.get('window:minimize')(trusted);
   assert.equal(window.minimized, true);
+  assert.equal(await handlers.get('window:isContentProtected')(trusted), false);
+  assert.equal(await handlers.get('window:setContentProtection')(trusted, true), true);
+  assert.equal(window.contentProtected, true);
+  assert.equal(await handlers.get('window:isContentProtected')(trusted), true);
+  assert.equal(await handlers.get('window:setContentProtection')(trusted, false), false);
+  assert.equal(window.contentProtected, false);
 });

@@ -1,9 +1,42 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const React = require('react');
+
+function loadI18n(react) {
+  const cache = new Map();
+  const loadTs = (relPath) => {
+    const abs = path.join(process.cwd(), 'src/i18n', relPath);
+    if (cache.has(abs)) return cache.get(abs);
+    const compiled = ts.transpileModule(fs.readFileSync(abs, 'utf8'), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
+      fileName: abs,
+    }).outputText;
+    const mod = { exports: {} };
+    cache.set(abs, mod.exports);
+    vm.runInNewContext(compiled, {
+      module: mod,
+      exports: mod.exports,
+      Date,
+      Intl,
+      console,
+      require(dep) {
+        if (dep === 'react') return react;
+        if (dep === '../types') return {};
+        if (dep === './store') return loadTs('store.ts');
+        if (dep === './domain') return loadTs('domain.ts');
+        if (dep === './zh') return loadTs('zh.ts');
+        if (dep === './en') return loadTs('en.ts');
+        return require(dep);
+      },
+    }, { filename: abs });
+    return mod.exports;
+  };
+  return loadTs('index.ts');
+}
 
 function harness() {
   const states = [], refs = []; let index = 0, refIndex = 0;
@@ -15,6 +48,7 @@ function harness() {
       if (name === 'react') return react;
       if (name === 'lucide-react') return new Proxy({}, { get: () => () => null });
       if (name.endsWith('.css')) return {};
+      if (name === '../i18n') return loadI18n(react);
       if (name.includes('repository')) return { Repository: { getReadIdentity: () => '' } };
       if (name.includes('aiService')) return { chinaTime: String };
       if (name.includes('projectContinuation')) return { canContinueProject: () => true };

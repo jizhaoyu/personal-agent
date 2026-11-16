@@ -29,6 +29,7 @@ import {
 } from '../types';
 import { StorageService } from '../services/storage';
 import { Repository } from '../persistence/repository';
+import { formatBudgetAmount, formatDealStage, formatExpenseCategory, useI18n } from '../i18n';
 
 interface LivingCardsBoardProps {
   mode: WorkspaceMode;
@@ -82,6 +83,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   highlightedCard,
   onCompanionToast,
 }) => {
+  const { lang, t } = useI18n();
   const cachedPartition = Repository.getCurrent().partitions[mode];
   const cachedLife = mode === 'life' ? Repository.getCurrent().partitions.life : null;
   // Only the current space is read. The repository cache contains a bounded, already migrated window.
@@ -143,7 +145,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       onCompanionToast(success);
     } catch {
       if (mountedRef.current && activeModeRef.current === sourceMode) {
-        onCompanionToast('保存失败，界面保留原记录。请检查本地存储空间后重试。');
+        onCompanionToast(t('cards.saveFailedToast'));
       }
     } finally {
       savingRef.current = false;
@@ -157,7 +159,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       entries: [
         {
           id: 'exp-' + Date.now(),
-          title: '随手攒入心愿金库',
+          title: t('cards.quickSaveEntryTitle'),
           amount: 200,
           type: 'saving',
           category: '金库✨',
@@ -167,7 +169,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       ],
     };
     return persistUpdate(() => Repository.saveWalletCard(next), () => setWallet(next),
-      `💰 已记录心愿储蓄 ¥200，当前累计 ¥${next.wishSaved}。`);
+      t('cards.quickSaveToast', { saved: next.wishSaved }));
   };
 
   // ==================== ToB 双向交互动作（手动嘴知） ====================
@@ -187,7 +189,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
     const updated = nextDeals.find((d) => d.id === dealId);
     if (updated) {
       persistUpdate(() => StorageService.saveCrmDeals(nextDeals), () => setDeals(nextDeals),
-        `💼 【${updated.clientName}】已更新为「${updated.stage}」。`);
+        t('cards.advanceDealToast', { client: updated.clientName, stage: formatDealStage(updated.stage, lang) }));
     }
   };
 
@@ -195,7 +197,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
     const nextTasks = tasks.map((t) => (t.id === taskId ? { ...t, done: !t.done } : t));
     const target = nextTasks.find((t) => t.id === taskId);
     persistUpdate(() => StorageService.saveProjectTasks(nextTasks), () => setTasks(nextTasks),
-      `🎯 已更新「${target?.title || '事项'}」的完成状态。`);
+      t('cards.toggleTaskToast', { title: target?.title || t('cards.defaultTaskTitle') }));
   };
 
   const handleExportClientPoster = async () => {
@@ -210,11 +212,11 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Looma待确认纪要草稿-${selectedDealForPoster?.clientName || '客户'}.png`;
+      a.download = t('cards.posterDownloadName', { client: selectedDealForPoster?.clientName || t('cards.defaultClientLabel') });
       a.click();
-      onCompanionToast('📤 已导出待确认纪要草稿，请核对全部文字后再自行发送。');
+      onCompanionToast(t('cards.posterExportedToast'));
     } catch {
-      onCompanionToast('图片导出失败，请重试。');
+      onCompanionToast(t('cards.posterExportErrorToast'));
     }
   };
 
@@ -250,7 +252,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               }`}
             >
               <Wallet size={13} />
-              <span>随口记账</span>
+              <span>{t('cards.tabWallet')}</span>
             </button>
             <button
               onClick={() => setActiveSubTab('relationships')}
@@ -261,7 +263,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               }`}
             >
               <Users size={13} />
-              <span>人脉档案</span>
+              <span>{t('cards.tabRelationships')}</span>
             </button>
             {customCards.length > 0 && (
               <button
@@ -273,7 +275,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                 }`}
               >
                 <Sparkles size={13} />
-                <span>自定义({customCards.length})</span>
+                <span>{t('cards.tabCustom', { count: customCards.length })}</span>
               </button>
             )}
           </div>
@@ -288,7 +290,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               }`}
             >
               <Briefcase size={13} />
-              <span>商机CRM({deals.length})</span>
+              <span>{t('cards.tabCrm', { count: deals.length })}</span>
             </button>
             <button
               onClick={() => setActiveSubTab('projects')}
@@ -299,7 +301,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               }`}
             >
               <Target size={13} />
-              <span>死线看板</span>
+              <span>{t('cards.tabProjects')}</span>
             </button>
             <button
               onClick={() => {
@@ -313,7 +315,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               }`}
             >
               <FileCheck size={13} />
-              <span>外发对齐单</span>
+              <span>{t('cards.tabPoster')}</span>
             </button>
           </div>
         )}
@@ -327,9 +329,9 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
             {/* 月度预算血条 */}
             <div className="p-3 rounded-xl bg-white border border-[#e6decd] shadow-xs space-y-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-[#23293a]">💰 本月支出与预算</span>
+                <span className="font-semibold text-[#23293a]">{t('cards.monthlyBudgetHeading')}</span>
                 <span className="font-mono text-[#a8681a] font-bold">
-                  已支出 ¥{totalSpent.toFixed(0)} / 预算 ¥{wallet.monthlyBudget}
+                  {t('cards.monthlyBudgetSummary', { spent: totalSpent.toFixed(0), budget: wallet.monthlyBudget })}
                 </span>
               </div>
               <div className="w-full h-2.5 bg-[#efeadd] rounded-full overflow-hidden">
@@ -354,20 +356,20 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   />
                 </div>
                 <span className="text-[10px] text-[#6b7183] block">
-                  已攒 ¥{wallet.wishSaved} / 目标 ¥{wallet.wishTarget}
+                  {t('cards.wishSavedSummary', { saved: wallet.wishSaved, target: wallet.wishTarget })}
                 </span>
               </div>
               <button
                 onClick={handleQuickSaveWish}
                 className="px-2.5 py-1.5 rounded-lg bg-[#a8681a] hover:bg-[#8a5410] text-white text-xs font-medium shrink-0 cursor-pointer shadow-xs"
               >
-                +攒 ¥200
+                {t('cards.quickSaveBtn')}
               </button>
             </div>
 
             {/* 近期流水 */}
             <div className="space-y-1.5">
-              <span className="text-[11px] font-semibold text-[#6b7183] px-1">近期生活账单</span>
+              <span className="text-[11px] font-semibold text-[#6b7183] px-1">{t('cards.recentEntriesTitle')}</span>
               {wallet.entries.slice(0, 6).map((item) => (
                 <div
                   key={item.id}
@@ -375,7 +377,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                 >
                   <div className="flex items-center gap-2">
                     <span className="px-1.5 py-0.5 rounded bg-[#f5f1e6] text-[10px] text-[#8a5410]">
-                      {item.category}
+                      {formatExpenseCategory(item.category, lang)}
                     </span>
                     <span className="font-medium text-[#23293a]">{item.title}</span>
                   </div>
@@ -417,10 +419,10 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
 
                 {p.taboos.length > 0 && (
                   <div className="flex flex-wrap gap-1 items-center text-[11px]">
-                    <span className="text-rose-600 font-semibold">⚠️ 忌口/雷区：</span>
-                    {p.taboos.map((t, i) => (
+                    <span className="text-rose-600 font-semibold">{t('cards.taboosLabel')}</span>
+                    {p.taboos.map((taboo, i) => (
                       <span key={i} className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
-                        {t}
+                        {taboo}
                       </span>
                     ))}
                   </div>
@@ -428,7 +430,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
 
                 {p.preferences.length > 0 && (
                   <div className="flex flex-wrap gap-1 items-center text-[11px]">
-                    <span className="text-emerald-700 font-semibold">🎁 喜好/心愿：</span>
+                    <span className="text-emerald-700 font-semibold">{t('cards.preferencesLabel')}</span>
                     {p.preferences.map((pref, i) => (
                       <span
                         key={i}
@@ -450,14 +452,17 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
             {/* 商机总盘摘要 */}
             <div className="p-3 rounded-xl bg-slate-800/90 border border-slate-700 flex items-center justify-between">
               <div>
-                <span className="text-[10px] text-slate-400 block">活跃跟进商机池总额</span>
+                <span className="text-[10px] text-slate-400 block">{t('cards.crmTotalLabel')}</span>
                 <span className="text-lg font-mono font-bold text-emerald-400">
-                  ¥{(deals.reduce((s, d) => s + d.budgetAmount, 0) / 10000).toFixed(1)} 万
+                  {t('cards.crmTotalValue', {
+                    wan: (deals.reduce((s, d) => s + d.budgetAmount, 0) / 10000).toFixed(1),
+                    formatted: formatBudgetAmount(deals.reduce((s, d) => s + d.budgetAmount, 0), lang),
+                  })}
                 </span>
               </div>
               <div className="text-right">
-                <span className="text-[10px] text-slate-400 block">零填表语音/文字建档</span>
-                <span className="text-xs text-blue-400 font-medium">已跟进 {deals.length} 家核心客户</span>
+                <span className="text-[10px] text-slate-400 block">{t('cards.crmSubtitle')}</span>
+                <span className="text-xs text-blue-400 font-medium">{t('cards.crmClientCount', { count: deals.length })}</span>
               </div>
             </div>
 
@@ -471,15 +476,19 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   <div>
                     <h4 className="text-sm font-bold text-white">{deal.clientName}</h4>
                     <span className="text-[11px] font-mono text-emerald-400 font-semibold">
-                      预算规模：¥{(deal.budgetAmount / 10000).toFixed(1)}万 · 赢率 {deal.winProbability}%
+                      {t('cards.crmDealBudget', {
+                        wan: (deal.budgetAmount / 10000).toFixed(1),
+                        formatted: formatBudgetAmount(deal.budgetAmount, lang),
+                        prob: deal.winProbability,
+                      })}
                     </span>
                   </div>
                   <button
                     onClick={() => handleAdvanceDealStage(deal.id)}
                     className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer"
-                    title="点击推进到下一商机阶段"
+                    title={t('cards.crmAdvanceTitle')}
                   >
-                    <span>{deal.stage}</span>
+                    <span>{formatDealStage(deal.stage, lang)}</span>
                     <ArrowRight size={11} />
                   </button>
                 </div>
@@ -501,7 +510,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                             idx === currentIdx ? 'text-blue-400 font-bold' : 'text-slate-500'
                           }`}
                         >
-                          {st}
+                          {formatDealStage(st, lang)}
                         </span>
                       </div>
                     );
@@ -510,16 +519,16 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
 
                 <div className="text-xs space-y-1 bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
                   <p className="text-slate-300">
-                    <span className="text-blue-400 font-medium">🎯 客户痛点：</span>
+                    <span className="text-blue-400 font-medium">{t('cards.crmPainPoints')}</span>
                     {deal.painPoints}
                   </p>
                   <p className="text-amber-300/90 flex items-center gap-1">
                     <Lock size={11} className="shrink-0" />
-                    <span className="font-medium">内部备注（仅内部查看）：</span>
+                    <span className="font-medium">{t('cards.crmInternalBottomLine')}</span>
                     {deal.internalBottomLine}
                   </p>
                   <p className="text-emerald-400">
-                    <span className="font-medium">⏰ 下一步行动：</span>
+                    <span className="font-medium">{t('cards.crmNextAction')}</span>
                     {deal.nextAction}
                   </p>
                 </div>
@@ -533,7 +542,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                     className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
                   >
                     <FileCheck size={12} />
-                    <span>查看待确认纪要草稿 →</span>
+                    <span>{t('cards.crmViewPosterBtn')}</span>
                   </button>
                 </div>
               </div>
@@ -544,35 +553,35 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
         {/* ==================== ToB 2: 项目死线推进看板 ==================== */}
         {isWork && activeSubTab === 'projects' && (
           <div className="space-y-2.5">
-            {tasks.map((t) => (
+            {tasks.map((task) => (
               <div
-                key={t.id}
-                onClick={() => handleToggleTask(t.id)}
+                key={task.id}
+                onClick={() => handleToggleTask(task.id)}
                 className={`p-3 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-all ${
-                  t.done
+                  task.done
                     ? 'bg-slate-900/40 border-slate-800 text-slate-500 line-through'
                     : 'bg-slate-800/80 border-slate-700 text-slate-100 hover:border-blue-500/50'
                 }`}
               >
                 <div className="flex items-center gap-2.5">
-                  {t.done ? (
+                  {task.done ? (
                     <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />
                   ) : (
                     <Circle size={16} className="text-blue-400 shrink-0" />
                   )}
                   <div>
-                    <p className="text-xs font-medium">{t.title}</p>
-                    <span className="text-[10px] text-amber-400 font-mono">⏰ 截止：{t.deadline}</span>
+                    <p className="text-xs font-medium">{task.title}</p>
+                    <span className="text-[10px] text-amber-400 font-mono">{t('cards.deadlinePrefix')}{task.deadline}</span>
                   </div>
                 </div>
                 <span
                   className={`text-[10px] px-2 py-0.5 rounded font-medium ${
-                    t.priority === 'high'
+                    task.priority === 'high'
                       ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                       : 'bg-blue-500/20 text-blue-300'
                   }`}
                 >
-                  {t.priority === 'high' ? '高优死线' : '推进中'}
+                  {task.priority === 'high' ? t('cards.priorityHigh') : t('cards.priorityNormal')}
                 </span>
               </div>
             ))}
@@ -593,7 +602,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
               >
                 {deals.map((d) => (
                   <option key={d.id} value={d.id}>
-                    客户：{d.clientName}
+                    {t('cards.posterClientOption', { client: d.clientName })}
                   </option>
                 ))}
               </select>
@@ -603,7 +612,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                 className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow-sm"
               >
                 <Download size={13} />
-                <span>导出待确认草稿</span>
+                <span>{t('cards.posterExportBtn')}</span>
               </button>
             </div>
 
@@ -619,10 +628,10 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   <div className="flex items-center justify-between border-b border-slate-700 pb-3">
                     <div>
                       <span className="text-[10px] font-mono uppercase tracking-widest text-amber-400 block">
-                        DRAFT · 沟通纪要草稿／待对方确认
+                        {t('cards.posterDraftEyebrow')}
                       </span>
                       <h3 className="text-base font-bold text-white mt-0.5">
-                        {target.clientName} · 合作推进备忘录
+                        {t('cards.posterMemoHeading', { client: target.clientName })}
                       </h3>
                     </div>
                     <ShieldCheck size={22} className="text-amber-400" />
@@ -630,13 +639,16 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
 
                   <div className="grid grid-cols-2 gap-2.5 text-xs">
                     <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-700/80">
-                      <span className="text-[10px] text-slate-400 block">当前合作阶段</span>
-                      <span className="font-bold text-emerald-400">{target.stage}</span>
+                      <span className="text-[10px] text-slate-400 block">{t('cards.posterStageLabel')}</span>
+                      <span className="font-bold text-emerald-400">{formatDealStage(target.stage, lang)}</span>
                     </div>
                     <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-700/80">
-                      <span className="text-[10px] text-slate-400 block">规划预算规模</span>
+                      <span className="text-[10px] text-slate-400 block">{t('cards.posterBudgetLabel')}</span>
                       <span className="font-mono font-bold text-amber-300">
-                        ¥{(target.budgetAmount / 10000).toFixed(1)} 万元
+                        {t('cards.posterBudgetValue', {
+                          wan: (target.budgetAmount / 10000).toFixed(1),
+                          formatted: formatBudgetAmount(target.budgetAmount, lang),
+                        })}
                       </span>
                     </div>
                   </div>
@@ -644,21 +656,21 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   <div className="space-y-2 text-xs">
                     <div className="p-3 rounded-lg bg-slate-900/60 border-l-3 border-blue-500">
                       <span className="text-[10px] text-blue-400 font-semibold block mb-1">
-                        一、 待核对的业务诉求
+                        {t('cards.posterSection1Title')}
                       </span>
                       <p className="text-slate-200 leading-relaxed">{target.painPoints}</p>
                     </div>
 
                     <div className="p-3 rounded-lg bg-slate-900/60 border-l-3 border-emerald-500">
                       <span className="text-[10px] text-emerald-400 font-semibold block mb-1">
-                        二、 待确认的后续行动与排期
+                        {t('cards.posterSection2Title')}
                       </span>
                       <p className="text-slate-200 leading-relaxed">{target.nextAction}</p>
                     </div>
                   </div>
 
                   <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-                    <span>草稿仅供核对，发送前请审阅所有内容。</span>
+                    <span>{t('cards.posterFooterNote')}</span>
                     <span className="font-mono text-amber-400/80">Generated by Looma OS</span>
                   </div>
                 </div>
@@ -695,11 +707,11 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                       onClick={() => {
                         const updated = { ...c, metricValue: Math.min(c.metricTarget, c.metricValue + 10) };
                         return persistUpdate(() => Repository.upsert(mode, 'custom', [updated], true),
-                          () => setCustomCards(previous => previous.map(item => item.id === c.id ? updated : item)), `🌟 已更新「${c.title}」进度。`);
+                          () => setCustomCards(previous => previous.map(item => item.id === c.id ? updated : item)), t('cards.customUpdatedToast', { title: c.title }));
                       }}
                       className="px-2.5 py-1 rounded bg-[#a8681a] text-white text-xs cursor-pointer"
                     >
-                      +推进进度
+                      {t('cards.customAdvanceBtn')}
                     </button>
                   </div>
                 </div>

@@ -1,6 +1,6 @@
 {
   "index.html": {
-    "file": "assets/index-DNUojb1D.js",
+    "file": "assets/index-DGQBZnXL.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -14,7 +14,7 @@
       "src/components/MemoryCenter.tsx"
     ],
     "css": [
-      "assets/index-BYIDnLuX.css"
+      "assets/index-m4wWfpNk.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -24,7 +24,7 @@
     "isDynamicEntry": true
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-BY9j1HHZ.js",
+    "file": "assets/ChatPill-D8YEs-ep.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
@@ -33,7 +33,7 @@
     ]
   },
   "src/components/CheckinBoard.tsx": {
-    "file": "assets/CheckinBoard-BiFAVhKp.js",
+    "file": "assets/CheckinBoard-DMRzlIO0.js",
     "name": "CheckinBoard",
     "src": "src/components/CheckinBoard.tsx",
     "isDynamicEntry": true,
@@ -45,7 +45,7 @@
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-Fu683xLl.js",
+    "file": "assets/LivingCardsBoard-D2d0KSqH.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
@@ -57,7 +57,7 @@
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-BKbIthOy.js",
+    "file": "assets/MemoryCenter-Z2pXHTkw.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
@@ -72,7 +72,7 @@
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-DcSaXheh.js",
+    "file": "assets/PracticeModal-BGEo2LTs.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,

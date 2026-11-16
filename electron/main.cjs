@@ -13,6 +13,12 @@ if (Array.isArray(process?.argv) && process.argv.some(arg => typeof arg === 'str
   process.exit(1);
 }
 
+// Windows 下透明窗体（transparent: true）配合 Electron 34 GPU 合成易触发 0xC0000005 崩溃或黑屏，
+// 在应用就绪前改为软件合成以稳定渲染并保留圆角胶囊外观
+if (process.platform === 'win32' && typeof app?.disableHardwareAcceleration === 'function') {
+  app.disableHardwareAcceleration();
+}
+
 let mainWindow = null;
 let expectedUrl = '';
 let services;
@@ -22,6 +28,7 @@ let persistenceInitError = '';
 let importing = false;
 let expandedBounds;
 let compact = false;
+let contentProtected = false;
 let closeGuard;
 let todoDesktop;
 let tray;
@@ -53,6 +60,20 @@ function sanitizeClipboard(text) {
   return trimmed;
 }
 
+function applyContentProtection(flag) {
+  const enabled = !!flag;
+  if (!mainWindow || (typeof mainWindow.isDestroyed === 'function' && mainWindow.isDestroyed())) {
+    contentProtected = false;
+    return false;
+  }
+  if (contentProtected === enabled) return contentProtected;
+  if (typeof mainWindow.setContentProtection === 'function') {
+    mainWindow.setContentProtection(enabled);
+  }
+  contentProtected = enabled;
+  return contentProtected;
+}
+
 function registerHandlers() {
   const handle = (channel, callback) => ipcMain.handle(channel, trustedHandler(callback));
   handle('window:minimize', () => mainWindow.minimize());
@@ -72,10 +93,9 @@ function registerHandlers() {
   });
   handle('window:setContentProtection', flag => {
     if (typeof flag !== 'boolean') throw new Error('防截屏参数无效');
-    mainWindow.setContentProtection(flag);
-    return mainWindow.isContentProtected();
+    return applyContentProtection(flag);
   });
-  handle('window:isContentProtected', () => mainWindow.isContentProtected());
+  handle('window:isContentProtected', () => contentProtected);
   handle('window:setCompact', flag => {
     if (typeof flag !== 'boolean') throw new Error('窗口状态无效');
     if (compact === flag) return { compact };
@@ -249,6 +269,7 @@ function createWindow() {
   const area = screen.getPrimaryDisplay().workArea;
   const width = Math.min(480, area.width);
   const height = Math.min(820, area.height - 24);
+  contentProtected = false;
   mainWindow = new BrowserWindow({
     width, height,
     x: Math.max(area.x, area.x + area.width - width - 24),
@@ -256,6 +277,7 @@ function createWindow() {
     minWidth: Math.min(340, area.width),
     minHeight: Math.min(480, area.height),
     transparent: true,
+    backgroundColor: '#00000000',
     frame: false,
     alwaysOnTop: true,
     resizable: true,
@@ -272,13 +294,7 @@ function createWindow() {
     },
   });
 
-  // === 2. 窗口防截屏与录屏物理隐身器 (Win32 SetWindowDisplayAffinity) ===
-  // 默认激活：本地显示器肉眼正常交互，远程会议投屏/录屏/截屏时呈全黑或穿透，物理防窥
-  try {
-    mainWindow.setContentProtection(true);
-  } catch (err) {
-    console.warn('[SECURITY] 开启防截屏隐身失败:', err);
-  }
+  // === 2. 窗口防截屏与录屏物理隐身（默认关闭以兼容透明窗口与远程桌面，由桌面设置按需开启） ===
 
   // === 3. 生产环境快捷键防逆向注入拦截 ===
   if (app.isPackaged) {
@@ -309,6 +325,9 @@ function createWindow() {
   window.on('close', guard.onClose);
   window.webContents.on('did-start-loading', guard.onLoading);
   window.webContents.on('render-process-gone', guard.onRendererGone);
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error('[Looma] 页面加载失败:', errorCode, errorDescription, validatedURL);
+  });
   window.webContents.on('did-finish-load', () => {
     if (pendingTodoFocus) { window.webContents.send('todo:focus', pendingTodoFocus); pendingTodoFocus = null; }
   });
@@ -320,7 +339,7 @@ function createWindow() {
   mainWindow.webContents.on('will-attach-webview', event => event.preventDefault());
   if (target.type === 'file') mainWindow.loadFile(target.value);
   else mainWindow.loadURL(target.value);
-  window.on('closed', () => { guard.dispose(); closeGuard = null; mainWindow = null; });
+  window.on('closed', () => { guard.dispose(); closeGuard = null; contentProtected = false; mainWindow = null; });
 }
 
 app.setAppUserModelId('com.looma.desktop');

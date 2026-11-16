@@ -24,11 +24,18 @@ function validateEndpoint(value) {
   return url.href.replace(/\/+$/, '');
 }
 
+function normalizeFileDrive(url) {
+  if (url.protocol === 'file:') {
+    url.pathname = url.pathname.replace(/^\/([A-Za-z]):\//, (_, drive) => `/${drive.toLowerCase()}:/`);
+  }
+  return url;
+}
+
 function isTrustedSender(event, webContents, expectedUrl) {
   if (!event || !webContents || event.sender !== webContents || event.senderFrame !== webContents.mainFrame) return false;
   try {
-    const actual = new URL(event.senderFrame.url);
-    const expected = new URL(expectedUrl);
+    const actual = normalizeFileDrive(new URL(event.senderFrame.url));
+    const expected = normalizeFileDrive(new URL(expectedUrl));
     actual.hash = '';
     expected.hash = '';
     return actual.href === expected.href;

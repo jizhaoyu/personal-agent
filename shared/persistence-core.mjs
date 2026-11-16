@@ -4,6 +4,7 @@ export const DEFAULT_PUBLIC_SETTINGS = Object.freeze({
   personaAvatar: '✨', personaGreeting: '把零散沟通整理成可信的下一步。',
   systemPrompt: '你是 Looma 客户跟进伴侣。整理用户提供的事实，不猜测预算、成交或承诺；变更必须由用户确认。',
   alwaysOnTop: false, modelEnabled: false, remindersEnabled: false, memoryModelEnabled: false, workSuggestionsEnabled: true,
+  contentProtection: false, language: 'zh-CN',
 });
 export const RECORD_KINDS = Object.freeze(['message', 'event', 'engagement', 'task', 'memory', 'summary', 'expense', 'person', 'journal', 'custom', 'wallet', 'rpg', 'capture_draft', 'followup', 'condition', 'closure', 'todo', 'artifact']);
 const spaces = ['life', 'work'];
@@ -88,10 +89,12 @@ export function normalizeApplied(value) {
   return { space: value.space, id: value.id, signature: value.signature || '', result: clone(result), at: value.at || 0 };
 }
 
+const OPTIONAL_SETTINGS_KEYS = new Set(['memoryModelEnabled', 'workSuggestionsEnabled', 'contentProtection', 'language']);
 export function validateSettings(settings, partial = false) {
   return only(settings, Object.keys(DEFAULT_PUBLIC_SETTINGS)) &&
     Object.keys(settings).every(k => typeof settings[k] === typeof DEFAULT_PUBLIC_SETTINGS[k]) &&
-    (partial || Object.keys(DEFAULT_PUBLIC_SETTINGS).filter(k => k !== 'memoryModelEnabled' && k !== 'workSuggestionsEnabled').every(k => k in settings));
+    (settings.language === undefined || settings.language === 'zh-CN' || settings.language === 'en') &&
+    (partial || Object.keys(DEFAULT_PUBLIC_SETTINGS).filter(k => !OPTIONAL_SETTINGS_KEYS.has(k)).every(k => k in settings));
 }
 function validMutation(space, m) {
   return only(m, ['kind', 'id', 'before', 'after']) && RECORD_KINDS.includes(m.kind) && m.kind !== 'event' &&

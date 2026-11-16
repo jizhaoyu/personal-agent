@@ -28,6 +28,38 @@ function committed(state) {
   return { ...state, partition: { ...state.partition, revision: 2, engagements: [project], tasks: [task], followUps: [waiting, question], closures: [closure], events: [event] }, closure, event };
 }
 
+function loadI18n(react = React) {
+  const cache = new Map();
+  const loadTs = (relPath) => {
+    const abs = path.join(process.cwd(), 'src/i18n', relPath);
+    if (cache.has(abs)) return cache.get(abs);
+    const compiled = ts.transpileModule(fs.readFileSync(abs, 'utf8'), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
+      fileName: abs,
+    }).outputText;
+    const mod = { exports: {} };
+    cache.set(abs, mod.exports);
+    vm.runInNewContext(compiled, {
+      module: mod,
+      exports: mod.exports,
+      Date,
+      Intl,
+      console,
+      require(dep) {
+        if (dep === 'react') return react;
+        if (dep === '../types') return {};
+        if (dep === './store') return loadTs('store.ts');
+        if (dep === './domain') return loadTs('domain.ts');
+        if (dep === './zh') return loadTs('zh.ts');
+        if (dep === './en') return loadTs('en.ts');
+        return require(dep);
+      },
+    }, { filename: abs });
+    return mod.exports;
+  };
+  return loadTs('index.ts');
+}
+
 function load(name, react = React, practice = {}) {
   const filename = path.join(process.cwd(), 'src/components', `${name}.tsx`);
   if (!fs.existsSync(filename)) return undefined;
@@ -38,6 +70,7 @@ function load(name, react = React, practice = {}) {
       if (dependency === 'react') return react;
       if (dependency === 'lucide-react') return new Proxy({}, { get: (_target, key) => () => React.createElement('span', { 'data-icon': String(key) }) });
       if (dependency.endsWith('.css')) return {};
+      if (dependency === '../i18n') return loadI18n(react);
       if (dependency === '../services/practice') return practice;
       if (dependency === './ProposalReview') return { ProposalReview: load('ProposalReview', react, practice) };
       if (dependency === './ClosureReceipt') return { ClosureReceipt: load('ClosureReceipt', react, practice) };
@@ -49,7 +82,7 @@ function load(name, react = React, practice = {}) {
 }
 function harness(practice) {
   const values = []; let stateIndex = 0;
-  const react = { ...React, useState(initial) { const index = stateIndex++; if (!(index in values)) values[index] = typeof initial === 'function' ? initial() : initial; return [values[index], next => { values[index] = typeof next === 'function' ? next(values[index]) : next; }]; } };
+  const react = { ...React, useEffect() {}, useState(initial) { const index = stateIndex++; if (!(index in values)) values[index] = typeof initial === 'function' ? initial() : initial; return [values[index], next => { values[index] = typeof next === 'function' ? next(values[index]) : next; }]; } };
   const component = load('PracticeModal', react, practice);
   return { render(props = { onClose() {} }) { stateIndex = 0; return component(props); } };
 }

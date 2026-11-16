@@ -9,6 +9,7 @@ import { ProjectContinuation } from './ProjectContinuation';
 import { canContinueProject } from '../services/projectContinuation';
 import { Repository } from '../persistence/repository';
 import { eventMutations } from '../../shared/persistence-core.mjs';
+import { formatBudgetAmount, formatDealStage, useI18n } from '../i18n';
 import './work-v5.css';
 
 export interface WorkBenchProps {
@@ -55,9 +56,16 @@ type View = 'home' | 'capture' | 'projects' | 'tasks' | 'followups' | 'history' 
 const stages: Engagement['stage'][] = ['初步接触', '需求确认', '方案报价', '商务谈判', '赢单成交'];
 const uniqueProjects = (rows: Engagement[]) => [...new Map(rows.map(row => [row.id, row])).values()];
 const shortText = (value: string, length = 72) => value.length > length ? `${value.slice(0, length)}…` : value;
-const saveLabels = { idle: '就绪', unsaved: '未保存', saving: '保存中…', saved: '已保存', error: '保存失败' };
 
 export function WorkBench(props: WorkBenchProps) {
+  const { lang, t } = useI18n();
+  const saveLabels = {
+    idle: t('work.saveIdle'),
+    unsaved: t('work.saveUnsaved'),
+    saving: t('work.saveSaving'),
+    saved: t('work.saveSaved'),
+    error: t('work.saveError'),
+  };
   const { work: cached, pending, draft, home, closure } = props;
   const [view, setView] = useState<View>(closure ? 'receipt' : 'home');
   const [query, setQuery] = useState('');
@@ -98,7 +106,7 @@ export function WorkBench(props: WorkBenchProps) {
     setLoading(true); setListError('');
     Repository.query('work', kind, { query, limit: 50, ...(kind === 'task' ? { dueOnly } : {}) }).then(page => {
       if (active && sequence === listSequence.current && (Repository.getReadIdentity?.() || '') === readIdentity) { setItems(page.items); setItemsKey(key); setCursor(page.nextCursor || null); }
-    }).catch(() => { if (active) setListError('记录读取失败，请重试。'); }).finally(() => { if (active) setLoading(false); });
+    }).catch(() => { if (active) setListError(t('work.readListError')); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; listSequence.current++; };
   }, [kind, query, dueOnly, cached.revision, readIdentity]);
   useEffect(() => {
@@ -115,7 +123,7 @@ export function WorkBench(props: WorkBenchProps) {
     void Promise.all([
       Repository.get<Message>('work', 'message', closure.sourceMessageId), Repository.get<CommittedChangeEvent>('work', 'event', closure.eventId),
       referenced<Engagement>('engagement', closure.engagementIds), referenced<ProjectTaskItem>('task', closure.taskIds), referenced<FollowUpItem>('followup', closure.followUpIds),
-    ]).then(([source, event, engagements, tasks, followUps]) => { if (active) setReceiptData({ source, event, engagements, tasks, followUps }); }).catch(() => { if (active) setListError('关联资料暂未读全，请稍后重试。'); });
+    ]).then(([source, event, engagements, tasks, followUps]) => { if (active) setReceiptData({ source, event, engagements, tasks, followUps }); }).catch(() => { if (active) setListError(t('work.readReceiptError')); });
     return () => { active = false; };
   }, [view, closure?.id, closure?.revertedAt, cached.revision]);
 
@@ -123,7 +131,7 @@ export function WorkBench(props: WorkBenchProps) {
     if (!kind || !cursor || loading) return;
     const sequence = listSequence.current; setLoading(true);
     try { const page = await Repository.query('work', kind, { query, cursor, limit: 50, ...(kind === 'task' ? { dueOnly } : {}) }); if (sequence === listSequence.current) { setItems(previous => [...previous, ...page.items]); setCursor(page.nextCursor || null); } }
-    catch { if (sequence === listSequence.current) setListError('后续记录暂未读到，可以重试。'); }
+    catch { if (sequence === listSequence.current) setListError(t('work.readMoreError')); }
     finally { if (sequence === listSequence.current) setLoading(false); }
   }
   function openView(next: View) { setQuery(''); setDueOnly(false); setListError(''); setView(next); }
@@ -138,7 +146,7 @@ export function WorkBench(props: WorkBenchProps) {
   function manual(operations: WorkOperation[], label: string) { props.onManual(operations, label); openView('capture'); }
   function createProject() {
     const engagement: Engagement = { id: crypto.randomUUID(), clientName: '', title: '', stage: '初步接触', internalContext: '', shareableSummary: '', nextAction: '', updatedAt: Date.now() };
-    manual([{ target: 'engagement', entityId: engagement.id, before: null, after: engagement }], '手动新建客户合作项目');
+    manual([{ target: 'engagement', entityId: engagement.id, before: null, after: engagement }], t('work.manualCreateProjectSource'));
   }
   function showProject(id: string) {
     setSelectedProjectId(id); openView('projects');
@@ -147,19 +155,19 @@ export function WorkBench(props: WorkBenchProps) {
     if (props.busy || savingItem) return;
     setSavingItem(item.id); setListError('');
     try { await props.onSetItemState(kind, item, done); }
-    catch { setListError('状态尚未保存，请重试。'); }
+    catch { setListError(t('work.saveStateFailed')); }
     finally { setSavingItem(''); }
   }
   function taskRow(task: ProjectTaskItem) {
     const project = projects.find(item => item.id === task.engagementId);
     const canOpenProject = !!task.engagementId && !(view === 'projects' && selectedProjectId === task.engagementId);
-    return <article className={`task-row ${task.done ? 'completed' : ''}`} key={task.id}><button className="icon-btn task-check-btn" disabled={props.busy || !!savingItem} aria-label={`${task.done ? '重新打开' : '完成'}${task.title}`} onClick={() => setItemState('task', task, !task.done)}>{task.done ? <CheckCircle2 size={18}/> : <Circle size={18}/>}</button><div className="task-row-body"><h3>{task.title}</h3><p>{project ? `${project.clientName}${project.title ? ` · ${project.title}` : ''}` : '未关联客户'} · {task.dueAt ? `我方提醒 ${chinaTime(task.dueAt)}` : '无提醒'}</p></div><div className="followup-actions">{canOpenProject && <button className="text-btn" disabled={props.busy} onClick={() => showProject(task.engagementId!)}>查看项目</button>}<button className="text-btn" disabled={props.busy} onClick={() => manual([{ target: 'task', entityId: task.id, before: task, after: { ...task } }], '修改跟进行动')}>修改</button></div></article>;
+    return <article className={`task-row ${task.done ? 'completed' : ''}`} key={task.id}><button className="icon-btn task-check-btn" disabled={props.busy || !!savingItem} aria-label={`${task.done ? t('work.reopenActionPrefix') : t('work.completeActionPrefix')}${task.title}`} onClick={() => setItemState('task', task, !task.done)}>{task.done ? <CheckCircle2 size={18}/> : <Circle size={18}/>}</button><div className="task-row-body"><h3>{task.title}</h3><p>{project ? `${project.clientName}${project.title ? ` · ${project.title}` : ''}` : t('work.unlinkedClient')} · {task.dueAt ? `${t('work.ourReminderPrefix')}${chinaTime(task.dueAt, lang)}` : t('work.noReminder')}</p></div><div className="followup-actions">{canOpenProject && <button className="text-btn" disabled={props.busy} onClick={() => showProject(task.engagementId!)}>{t('work.viewProject')}</button>}<button className="text-btn" disabled={props.busy} onClick={() => manual([{ target: 'task', entityId: task.id, before: task, after: { ...task } }], t('work.manualEditTaskSource'))}>{t('work.editBtn')}</button></div></article>;
   }
   function followUpRow(item: FollowUpItem) {
     const resolved = item.status === 'resolved';
     const project = projects.find(row => row.id === item.engagementId);
     const canOpenProject = !!item.engagementId && !(view === 'projects' && selectedProjectId === item.engagementId);
-    return <article className={`followup-row${resolved ? ' completed' : ''}`} key={item.id}><div className="followup-row-body"><span className={`followup-label followup-label--${item.kind}`}>{item.kind === 'waiting' ? '等待客户' : '仍待确认'}{resolved ? ' · 已处理' : ''}</span><h3>{item.title}</h3><p>{project ? `${project.clientName}${project.title ? ` · ${project.title}` : ''} · ` : ''}{item.expectedDate ? `预计 ${item.expectedDate}` : item.expectedAt ? `预计 ${chinaTime(item.expectedAt)}` : item.kind === 'waiting' ? '时间未定' : '待确认'}{item.reviewAt ? ` · 回访 ${chinaTime(item.reviewAt)}` : ''}</p></div><div className="followup-actions">{canOpenProject && <button className="text-btn" disabled={props.busy} onClick={() => showProject(item.engagementId!)}>查看项目</button>}<button className="soft-btn" disabled={props.busy || !!savingItem} onClick={() => setItemState('followup', item, !resolved)}>{resolved ? '重新打开' : item.kind === 'waiting' ? '已收到' : '已处理'}</button><button className="text-btn" disabled={props.busy} onClick={() => manual([{ target: 'followup', entityId: item.id, before: item, after: { ...item } }], '核对等待或未定事项')}>修改</button></div></article>;
+    return <article className={`followup-row${resolved ? ' completed' : ''}`} key={item.id}><div className="followup-row-body"><span className={`followup-label followup-label--${item.kind}`}>{item.kind === 'waiting' ? t('work.labelWaiting') : t('work.labelQuestion')}{resolved ? t('work.labelResolvedSuffix') : ''}</span><h3>{item.title}</h3><p>{project ? `${project.clientName}${project.title ? ` · ${project.title}` : ''} · ` : ''}{item.expectedDate ? `${t('work.expectedDatePrefix')}${item.expectedDate}` : item.expectedAt ? `${t('work.expectedDatePrefix')}${chinaTime(item.expectedAt, lang)}` : item.kind === 'waiting' ? t('work.timeTbd') : t('work.timePendingConfirm')}{item.reviewAt ? `${t('work.reviewAtPrefix')}${chinaTime(item.reviewAt, lang)}` : ''}</p></div><div className="followup-actions">{canOpenProject && <button className="text-btn" disabled={props.busy} onClick={() => showProject(item.engagementId!)}>{t('work.viewProject')}</button>}<button className="soft-btn" disabled={props.busy || !!savingItem} onClick={() => setItemState('followup', item, !resolved)}>{resolved ? t('work.reopenBtn') : item.kind === 'waiting' ? t('work.markReceived') : t('work.markResolved')}</button><button className="text-btn" disabled={props.busy} onClick={() => manual([{ target: 'followup', entityId: item.id, before: item, after: { ...item } }], t('work.manualEditFollowUpSource'))}>{t('work.editBtn')}</button></div></article>;
   }
   async function setConditionState(item: ConditionIntent, action: ConditionLifecycleAction | 'convert_to_task') {
     if (props.busy || savingItem) return;
@@ -170,7 +178,7 @@ export function WorkBench(props: WorkBenchProps) {
         const res = await Repository.setConditionState(item, action);
         if (res.outcome !== 'committed') throw new Error(res.error);
       }
-    } catch { setListError('状态尚未保存，请重试。'); }
+    } catch { setListError(t('work.saveStateFailed')); }
     finally { setSavingItem(''); }
   }
   function prepareArtifactFromCondition(item: ConditionIntent) {
@@ -187,8 +195,8 @@ export function WorkBench(props: WorkBenchProps) {
     const canOpenProject = !!item.engagementId && !(view === 'projects' && selectedProjectId === item.engagementId);
     const closed = item.status === 'cancelled' || item.status === 'completed';
     const suggestionsEnabled = props.workSuggestionsEnabled !== false;
-    const statusLabel = item.status === 'ready' ? '条件已就绪' : item.status === 'watching' ? '观察中' : item.status === 'draft' ? '待绑定' : item.status === 'paused' ? '已暂停' : item.status === 'cancelled' ? '已取消' : '已完成';
-    return <article className={`followup-row condition-row${closed ? ' completed' : ''}`} key={item.id}><div className="followup-row-body"><span className={`followup-label followup-label--${item.status === 'ready' ? 'waiting' : 'question'}`}>{statusLabel} · v{item.revision}</span><h3>当 {item.conditionText} → {item.actionTitle}</h3><p>{project ? `${project.clientName}${project.title ? ` · ${project.title}` : ''} · ` : ''}{item.conditionKind === 'followup_resolved' ? '绑定等待事项收到后触发' : '由我方明确确认满足'}</p></div><div className="followup-actions">{canOpenProject && <button className="text-btn" disabled={props.busy} onClick={() => showProject(item.engagementId!)}>查看项目</button>}{item.status === 'ready' && <button className="primary-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'convert_to_task')}>转为项目行动</button>}{item.status === 'ready' && suggestionsEnabled && item.engagementId && <button className="soft-btn" disabled={props.busy || !!savingItem} onClick={() => prepareArtifactFromCondition(item)}>准备交付草稿</button>}{item.status === 'ready' && item.dismissedRevision !== item.revision && <button className="text-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'dismiss_highlight')}>稍后看</button>}{(item.status === 'watching' || item.status === 'draft') && <button className="soft-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'confirm_ready')}>确认条件满足</button>}{item.status === 'draft' && <button className="text-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'activate_watching')}>设为观察中</button>}{item.status === 'paused' && <button className="soft-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'activate_watching')}>恢复观察</button>}{(item.status === 'watching' || item.status === 'ready') && <button className="text-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'pause')}>暂停</button>}{!closed && <button className="text-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'cancel')}>取消</button>}<button className="text-btn" disabled={props.busy} onClick={() => manual([{ target: 'condition', entityId: item.id, before: item, after: { ...item } }], '修改条件跟进')}>修改</button></div></article>;
+    const statusLabel = item.status === 'ready' ? t('work.condReady') : item.status === 'watching' ? t('work.condWatching') : item.status === 'draft' ? t('work.condDraft') : item.status === 'paused' ? t('work.condPaused') : item.status === 'cancelled' ? t('work.condCancelled') : t('work.condCompleted');
+    return <article className={`followup-row condition-row${closed ? ' completed' : ''}`} key={item.id}><div className="followup-row-body"><span className={`followup-label followup-label--${item.status === 'ready' ? 'waiting' : 'question'}`}>{statusLabel} · v{item.revision}</span><h3>{t('work.condTitlePrefix')}{item.conditionText}{t('work.condTitleArrow')}{item.actionTitle}</h3><p>{project ? `${project.clientName}${project.title ? ` · ${project.title}` : ''} · ` : ''}{item.conditionKind === 'followup_resolved' ? t('work.condKindFollowup') : t('work.condKindManual')}</p></div><div className="followup-actions">{canOpenProject && <button className="text-btn" disabled={props.busy} onClick={() => showProject(item.engagementId!)}>{t('work.viewProject')}</button>}{item.status === 'ready' && <button className="primary-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'convert_to_task')}>{t('work.condConvertToTask')}</button>}{item.status === 'ready' && suggestionsEnabled && item.engagementId && <button className="soft-btn" disabled={props.busy || !!savingItem} onClick={() => prepareArtifactFromCondition(item)}>{t('work.condPrepareArtifact')}</button>}{item.status === 'ready' && item.dismissedRevision !== item.revision && <button className="text-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'dismiss_highlight')}>{t('work.condDismiss')}</button>}{(item.status === 'watching' || item.status === 'draft') && <button className="soft-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'confirm_ready')}>{t('work.condConfirmReady')}</button>}{item.status === 'draft' && <button className="text-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'activate_watching')}>{t('work.condActivateWatching')}</button>}{item.status === 'paused' && <button className="soft-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'activate_watching')}>{t('work.condResumeWatching')}</button>}{(item.status === 'watching' || item.status === 'ready') && <button className="text-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'pause')}>{t('work.condPause')}</button>}{!closed && <button className="text-btn" disabled={props.busy || !!savingItem} onClick={() => void setConditionState(item, 'cancel')}>{t('common.cancel')}</button>}<button className="text-btn" disabled={props.busy} onClick={() => manual([{ target: 'condition', entityId: item.id, before: item, after: { ...item } }], t('work.manualEditConditionSource'))}>{t('work.editBtn')}</button></div></article>;
   }
   async function submitCapture(originalOnly = false) {
     if (props.busy || submitting.current || !text.trim()) return;
@@ -197,51 +205,51 @@ export function WorkBench(props: WorkBenchProps) {
       if (originalOnly) await props.onOriginalOnly();
       else await props.onPropose(text);
     } catch {
-      setCaptureError('这段话还在这里，保存未完成。请再试一次。');
+      setCaptureError(t('work.captureRetrySaveError'));
     } finally { submitting.current = false; }
   }
   function capturePanel() {
     const linkedProject = projects.find(project => project.id === props.selectedId);
     return <div className={`capture-layout ${pending ? '' : 'capture-layout--single'}`}><div className="capture-column"><section className="capture-card">
       <div className="capture-card-header">
-        <div className={`draft-save-state draft-save-state--${props.draftSaveState}`} role="status"><span className="status-dot"/><span>{saveLabels[props.draftSaveState]}</span>{props.draftSaveState === 'error' && props.onRetryDraft && <button className="text-btn" onClick={props.onRetryDraft}>重试</button>}<span className="draft-char-count">{text.length} / 12000</span></div>
-        <details className="capture-advanced"><summary>更多工具</summary><div className="capture-quick-tools">
-          <button className="text-btn" type="button" disabled={props.busy} onClick={async () => { const clip = await window.electronAPI?.readClipboard?.(); if (clip) props.onDraftChange({ text: clip }); }}><ClipboardPaste size={13}/>粘贴剪贴板</button>
-          <button className="text-btn" disabled={props.busy} onClick={createProject}><FolderPlus size={13}/>新建项目</button>
-          <button className="text-btn" disabled={props.busy} onClick={() => { const id = crypto.randomUUID(); manual([{ target: 'task', entityId: id, before: null, after: { id, title: '', assignee: '我', deadline: '', priority: 'medium', done: false, ...(props.selectedId ? { engagementId: props.selectedId } : {}) } }], '手动新增跟进行动'); }}><ListPlus size={13}/>新增行动</button>
-          {props.onPractice && <button className="text-btn" disabled={props.busy} onClick={props.onPractice}><Sparkles size={13}/>放心练习一次</button>}
+        <div className={`draft-save-state draft-save-state--${props.draftSaveState}`} role="status"><span className="status-dot"/><span>{saveLabels[props.draftSaveState]}</span>{props.draftSaveState === 'error' && props.onRetryDraft && <button className="text-btn" onClick={props.onRetryDraft}>{t('work.retryBtn')}</button>}<span className="draft-char-count">{text.length} / 12000</span></div>
+        <details className="capture-advanced"><summary>{t('work.moreTools')}</summary><div className="capture-quick-tools">
+          <button className="text-btn" type="button" disabled={props.busy} onClick={async () => { const clip = await window.electronAPI?.readClipboard?.(); if (clip) props.onDraftChange({ text: clip }); }}><ClipboardPaste size={13}/>{t('work.pasteClipboard')}</button>
+          <button className="text-btn" disabled={props.busy} onClick={createProject}><FolderPlus size={13}/>{t('work.newProject')}</button>
+          <button className="text-btn" disabled={props.busy} onClick={() => { const id = crypto.randomUUID(); manual([{ target: 'task', entityId: id, before: null, after: { id, title: '', assignee: '我', deadline: '', priority: 'medium', done: false, ...(props.selectedId ? { engagementId: props.selectedId } : {}) } }], t('work.manualAddTaskSource')); }}><ListPlus size={13}/>{t('work.addAction')}</button>
+          {props.onPractice && <button className="text-btn" disabled={props.busy} onClick={props.onPractice}><Sparkles size={13}/>{t('work.practiceOnce')}</button>}
         </div></details>
       </div>
-      <div className="capture-invitation"><p className="capture-kicker">工作日志</p><h2>记一条工作进展</h2><p>直接写，不用先选项目。Looma 会尝试整理待办和项目更新，重要变更由你核对。</p></div>
-      <textarea ref={captureInput} aria-label="客户沟通记录" aria-description="不用先选项目。Enter 整理，Shift+Enter 换行。" className="capture-input" rows={4} maxLength={12000} disabled={props.busy} value={text} onChange={event => { props.onDraftChange({ text: event.target.value }); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => {
+      <div className="capture-invitation"><p className="capture-kicker">{t('work.kicker')}</p><h2>{t('work.captureHeading')}</h2><p>{t('work.captureDesc')}</p></div>
+      <textarea ref={captureInput} aria-label={t('work.captureAria')} aria-description={t('work.captureAriaDesc')} className="capture-input" rows={4} maxLength={12000} disabled={props.busy} value={text} onChange={event => { props.onDraftChange({ text: event.target.value }); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => {
         if (event.key !== 'Enter' || event.shiftKey || composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         event.preventDefault(); void submitCapture();
-      }} placeholder="例如：刚和谁聊了什么，接下来要做什么？"/>
+      }} placeholder={t('work.capturePlaceholder')}/>
       {!text && !pending && <button type="button" className="capture-example" disabled={props.busy} onClick={() => {
-        props.onDraftChange({ text: '刚和客户确认了首页方向，周五前发新版报价。' });
+        props.onDraftChange({ text: t('work.exampleSentence') });
         captureInput.current?.focus();
-      }}><span>填入例句</span>刚和客户确认了首页方向，周五前发新版报价。</button>}
-      <details className="capture-binding" open={!!pending?.clarification || showBinding}><summary id="work-project-binding">{pending?.clarification ? '选择或新建关联项目' : linkedProject ? `已关联项目 · ${linkedProject.clientName} · ${linkedProject.title}` : props.selectedId ? '已关联项目' : '关联项目（可选）'}</summary>
+      }}><span>{t('work.fillExampleBadge')}</span>{t('work.exampleSentence')}</button>}
+      <details className="capture-binding" open={!!pending?.clarification || showBinding}><summary id="work-project-binding">{pending?.clarification ? t('work.bindingSelectOrCreate') : linkedProject ? `${t('work.bindingSelectedPrefix')}${linkedProject.clientName} · ${linkedProject.title}` : props.selectedId ? t('work.bindingSelectedGeneric') : t('work.bindingOptional')}</summary>
         <div className="capture-binding-body">
           {pending?.clarification && <p className="muted small">{pending.clarification.message}</p>}
           <div className="field-grid">
-            <label>查找项目<input aria-label="查找已有记录" value={query} disabled={props.busy} onChange={event => setQuery(event.target.value)} placeholder="客户名或项目关键词"/></label>
-            <label className="context-select">目标项目<select aria-label="目标项目" value={props.selectedId} disabled={props.busy} onChange={event => props.onSelect(event.target.value)}><option value="">自动识别</option>{projects.map(project => <option key={project.id} value={project.id}>{project.clientName} · {project.title}</option>)}</select></label>
+            <label>{t('work.findProjectLabel')}<input aria-label={t('work.findExistingAria')} value={query} disabled={props.busy} onChange={event => setQuery(event.target.value)} placeholder={t('work.findProjectPlaceholder')}/></label>
+            <label className="context-select">{t('work.targetProjectLabel')}<select aria-label={t('work.targetProjectLabel')} value={props.selectedId} disabled={props.busy} onChange={event => props.onSelect(event.target.value)}><option value="">{t('work.autoDetectOption')}</option>{projects.map(project => <option key={project.id} value={project.id}>{project.clientName} · {project.title}</option>)}</select></label>
           </div>
-          {!props.selectedId ? <div className="field-grid"><label>新客户<input aria-label="明确新客户姓名" disabled={props.busy} maxLength={100} value={draft?.newClientName || ''} onChange={event => props.onDraftChange({ newClientName: event.target.value })} placeholder="客户姓名"/></label><label>新项目<input aria-label="新项目名称" disabled={props.busy} maxLength={200} value={draft?.newProjectTitle || ''} onChange={event => props.onDraftChange({ newProjectTitle: event.target.value })} placeholder="项目名称"/></label></div> : <button className="text-btn" disabled={props.busy} onClick={() => { props.onSelect(''); setShowBinding(true); }}>切换到新建合作</button>}
+          {!props.selectedId ? <div className="field-grid"><label>{t('work.newClientLabel')}<input aria-label={t('work.newClientAria')} disabled={props.busy} maxLength={100} value={draft?.newClientName || ''} onChange={event => props.onDraftChange({ newClientName: event.target.value })} placeholder={t('work.newClientPlaceholder')}/></label><label>{t('work.newProjectLabel')}<input aria-label={t('work.newProjectAria')} disabled={props.busy} maxLength={200} value={draft?.newProjectTitle || ''} onChange={event => props.onDraftChange({ newProjectTitle: event.target.value })} placeholder={t('work.newProjectPlaceholder')}/></label></div> : <button className="text-btn" disabled={props.busy} onClick={() => { props.onSelect(''); setShowBinding(true); }}>{t('work.switchToNewProject')}</button>}
         </div>
       </details>
       <div className="input-footer">
         <div className="input-footer-left">
-          {props.modelBusy && <button className="text-btn danger" onClick={props.onCancel}>取消模型请求</button>}
+          {props.modelBusy && <button className="text-btn danger" onClick={props.onCancel}>{t('work.cancelModelReq')}</button>}
         </div>
         <div className="input-footer-right">
-          <button className="soft-btn" disabled={props.busy || !text.trim()} onClick={() => submitCapture(true)}>只保存原文</button>
-          <button className="primary-btn" disabled={props.busy || !text.trim()} onClick={() => submitCapture()}>{props.busy ? '整理中…' : pending ? '重新整理' : '整理这条记录'}<CornerDownLeft size={14}/></button>
+          <button className="soft-btn" disabled={props.busy || !text.trim()} onClick={() => submitCapture(true)}>{t('work.saveOriginalOnly')}</button>
+          <button className="primary-btn" disabled={props.busy || !text.trim()} onClick={() => submitCapture()}>{props.busy ? t('work.organizingBtn') : pending ? t('work.reorganizeBtn') : t('work.organizeRecordBtn')}<CornerDownLeft size={14}/></button>
         </div>
       </div>
-      {pending && <a className="capture-review-link" href="#work-capture-review">已整理，查看待核对内容 <ArrowRight size={14}/></a>}
-      <p className="capture-keyboard-hint">Enter 整理 · Shift+Enter 换行</p>
+      {pending && <a className="capture-review-link" href="#work-capture-review">{t('work.reviewLinkText')}<ArrowRight size={14}/></a>}
+      <p className="capture-keyboard-hint">{t('work.keyboardHint')}</p>
       {captureError && <p className="notice" role="alert">{captureError}</p>}
     </section></div>
     {pending && <div className="review-column" id="work-capture-review" tabIndex={-1}><fieldset className="review-fieldset" disabled={props.busy}><ProposalReview proposal={pending} projectBindingId="work-project-binding" engagements={projects} conflicts={draft?.conflicts} onResolveConflict={props.onResolveConflict} onChange={props.onChange} onConfirm={props.onConfirm} onDiscard={props.onDiscard} onReparse={props.onRebase} busy={props.busy}/></fieldset></div>}</div>;
@@ -256,8 +264,8 @@ export function WorkBench(props: WorkBenchProps) {
   const hasSummary = !!home && (hasActiveSummary || home.overdue.length > 0 || home.recent.length > 0 || readyConditions.length > 0 || activeConditions.length > 0);
   return <div className="work-v5">
     <div className="work-v5-toolbar">
-      <nav className="work-v5-tabs" aria-label="工作台导航">
-        {([['home', '工作台'], ['projects', '项目'], ['history', '变更记录']] as const).map(([value, label]) => (
+      <nav className="work-v5-tabs" aria-label={t('work.navAria')}>
+        {([['home', t('work.tabHome')], ['projects', t('work.tabProjects')], ['history', t('work.tabHistory')]] as const).map(([value, label]) => (
           <button
             key={value}
             type="button"
@@ -266,80 +274,80 @@ export function WorkBench(props: WorkBenchProps) {
             onClick={() => openView(value)}
           >
             {label}
-            {value === 'home' && hasDraft && <span className="tiny-dot" title="存在未完成草稿" aria-hidden="true"/>}
+            {value === 'home' && hasDraft && <span className="tiny-dot" title={t('work.draftDotTitle')} aria-hidden="true"/>}
           </button>
         ))}
         <span className="sr-only">
-          <button type="button" onClick={() => openView('capture')}>随心记下</button>
-          <button type="button" onClick={() => openView('tasks')}>项目行动</button>
-          <button type="button" onClick={() => openView('followups')}>等待与未定</button>
+          <button type="button" onClick={() => openView('capture')}>{t('work.srCapture')}</button>
+          <button type="button" onClick={() => openView('tasks')}>{t('work.srTasks')}</button>
+          <button type="button" onClick={() => openView('followups')}>{t('work.srFollowUps')}</button>
         </span>
       </nav>
       <div className="work-v5-toolbar-actions">
         {(view === 'projects' || view === 'tasks' || view === 'followups' || view === 'history') && (
           <label className="toolbar-search">
-            <input aria-label="查找已有记录" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索记录…"/>
+            <input aria-label={t('work.findExistingAria')} value={query} onChange={event => setQuery(event.target.value)} placeholder={t('work.searchPlaceholder')}/>
           </label>
         )}
-        {(view === 'projects' || view === 'tasks' || view === 'followups') && <button className="soft-btn" disabled={props.busy} onClick={createProject}><Plus size={14}/>新建项目</button>}
-        {view === 'history' && <button className="soft-btn" disabled={props.busy || !visibleItems.some(event => !event.revertedAt)} onClick={props.onUndo}><RotateCcw size={14}/>撤销</button>}
-        {!showCapture && <button className="primary-btn" onClick={start} disabled={props.busy}><Plus size={14}/>随心记下</button>}
+        {(view === 'projects' || view === 'tasks' || view === 'followups') && <button className="soft-btn" disabled={props.busy} onClick={createProject}><Plus size={14}/>{t('work.newProject')}</button>}
+        {view === 'history' && <button className="soft-btn" disabled={props.busy || !visibleItems.some(event => !event.revertedAt)} onClick={props.onUndo}><RotateCcw size={14}/>{t('work.undoBtn')}</button>}
+        {!showCapture && <button className="primary-btn" onClick={start} disabled={props.busy}><Plus size={14}/>{t('work.srCapture')}</button>}
       </div>
     </div>
 
     {listError && <p className="notice" role="alert">{listError}</p>}
     {(view === 'projects' || view === 'tasks' || view === 'followups') && (
       <div className="work-sub-nav">
-        <button type="button" className={`sub-tab ${view === 'projects' ? 'active' : ''}`} onClick={() => openView('projects')}>客户项目 ({projects.length})</button>
-        <button type="button" className={`sub-tab ${view === 'tasks' ? 'active' : ''}`} onClick={() => openView('tasks')}>项目行动</button>
-        <button type="button" className={`sub-tab ${view === 'followups' ? 'active' : ''}`} onClick={() => openView('followups')}>等待与未定</button>
+        <button type="button" className={`sub-tab ${view === 'projects' ? 'active' : ''}`} onClick={() => openView('projects')}>{`${t('work.subNavProjectsPrefix')}${projects.length}${t('work.subNavProjectsSuffix')}`}</button>
+        <button type="button" className={`sub-tab ${view === 'tasks' ? 'active' : ''}`} onClick={() => openView('tasks')}>{t('work.subNavTasks')}</button>
+        <button type="button" className={`sub-tab ${view === 'followups' ? 'active' : ''}`} onClick={() => openView('followups')}>{t('work.subNavFollowUps')}</button>
       </div>
     )}
 
     {showCapture && <div className={view === 'home' && !pending ? 'work-home-layout' : 'work-capture-page'}>
     {capturePanel()}
-    {view === 'home' && <aside className="continuation-home" aria-label="工作摘要">
-      <h2 className="home-summary-title">工作摘要</h2>
-      {hasDraft && <article className="resume-draft"><div className="resume-draft-info"><span className="resume-badge">未完成草稿</span><p>{shortText(text || '存在待确认的更改草稿', 90)}</p></div><button className="soft-btn" onClick={resume} disabled={props.busy}>继续整理 <ArrowRight size={14}/></button></article>}
-      {!home ? <p className="muted small" role="status">读取中…</p> : !hasSummary ? <div className="home-summary-empty">
+    {view === 'home' && <aside className="continuation-home" aria-label={t('work.summaryAria')}>
+      <h2 className="home-summary-title">{t('work.summaryTitle')}</h2>
+      {hasDraft && <article className="resume-draft"><div className="resume-draft-info"><span className="resume-badge">{t('work.unfinishedDraftBadge')}</span><p>{shortText(text || t('work.unfinishedDraftFallback'), 90)}</p></div><button className="soft-btn" onClick={resume} disabled={props.busy}>{t('work.continueOrganize')}<ArrowRight size={14}/></button></article>}
+      {!home ? <p className="muted small" role="status">{t('work.loadingText')}</p> : !hasSummary ? <div className="home-summary-empty">
         <span className="home-summary-empty-mark" aria-hidden="true"><FileText size={18}/></span>
-        <div><h3>{hasBusiness ? '目前没有需要跟进的工作' : '从第一条工作进展开始'}</h3><p>{hasBusiness ? '新的行动、待回复和最近沟通会汇总在这里。' : '第一条记录保存后，相关行动、待回复和沟通记录会汇总在这里。'}</p></div>
+        <div><h3>{hasBusiness ? t('work.homeEmptyIdleTitle') : t('work.homeEmptyNewTitle')}</h3><p>{hasBusiness ? t('work.homeEmptyIdleDesc') : t('work.homeEmptyNewDesc')}</p></div>
       </div> : <>
-        {readyConditions.length > 0 && <section className="home-section home-section--ready-condition" aria-label="条件已就绪"><div className="section-heading"><h2>条件已就绪，可推进 <span>{readyConditions.length}</span></h2></div><div className="section-list">{readyConditions.slice(0, 3).map(conditionRow)}</div></section>}
-        {home.overdue.length > 0 && <section className="home-section home-section--overdue" aria-label="早前安排"><div className="section-heading"><h2>逾期未完 <span>{home.counts.overdue}</span></h2><button className="text-btn" onClick={() => { openView('tasks'); setDueOnly(true); }}>查看 <ArrowRight size={13}/></button></div><div className="section-list">{home.overdue.slice(0, 3).map(taskRow)}</div></section>}
+        {readyConditions.length > 0 && <section className="home-section home-section--ready-condition" aria-label={t('work.readySectionAria')}><div className="section-heading"><h2>{t('work.readySectionHeading')}<span>{readyConditions.length}</span></h2></div><div className="section-list">{readyConditions.slice(0, 3).map(conditionRow)}</div></section>}
+        {home.overdue.length > 0 && <section className="home-section home-section--overdue" aria-label={t('work.overdueSectionAria')}><div className="section-heading"><h2>{t('work.overdueSectionHeading')}<span>{home.counts.overdue}</span></h2><button className="text-btn" onClick={() => { openView('tasks'); setDueOnly(true); }}>{t('work.viewBtn')}<ArrowRight size={13}/></button></div><div className="section-list">{home.overdue.slice(0, 3).map(taskRow)}</div></section>}
         {hasActiveSummary && <div className="home-bento-grid">
-          {home.today.length > 0 && <section className="home-section" aria-label="今天要处理">
-            <div className="section-heading"><h2>今日行动 <span>{home.counts.today}</span></h2><button className="text-btn" onClick={() => openView('tasks')}>全部 <ArrowRight size={13}/></button></div>
+          {home.today.length > 0 && <section className="home-section" aria-label={t('work.todaySectionAria')}>
+            <div className="section-heading"><h2>{t('work.todaySectionHeading')}<span>{home.counts.today}</span></h2><button className="text-btn" onClick={() => openView('tasks')}>{t('work.allBtn')}<ArrowRight size={13}/></button></div>
             <div className="section-list">{home.today.slice(0, 3).map(taskRow)}</div>
           </section>}
-          {home.waiting.length > 0 && <section className="home-section" aria-label="等待客户">
-            <div className="section-heading"><h2>等待客户 <span>{home.counts.waiting}</span></h2><button className="text-btn" onClick={() => openView('followups')}>全部 <ArrowRight size={13}/></button></div>
+          {home.waiting.length > 0 && <section className="home-section" aria-label={t('work.waitingSectionAria')}>
+            <div className="section-heading"><h2>{t('work.waitingSectionHeading')}<span>{home.counts.waiting}</span></h2><button className="text-btn" onClick={() => openView('followups')}>{t('work.allBtn')}<ArrowRight size={13}/></button></div>
             <div className="section-list">{home.waiting.slice(0, 3).map(followUpRow)}</div>
           </section>}
-          {home.questions.length > 0 && <section className="home-section" aria-label="仍待确认">
-            <div className="section-heading"><h2>待确认项 <span>{home.counts.questions}</span></h2><button className="text-btn" onClick={() => openView('followups')}>全部 <ArrowRight size={13}/></button></div>
+          {home.questions.length > 0 && <section className="home-section" aria-label={t('work.questionsSectionAria')}>
+            <div className="section-heading"><h2>{t('work.questionsSectionHeading')}<span>{home.counts.questions}</span></h2><button className="text-btn" onClick={() => openView('followups')}>{t('work.allBtn')}<ArrowRight size={13}/></button></div>
             <div className="section-list">{home.questions.slice(0, 3).map(followUpRow)}</div>
           </section>}
         </div>}
-        {activeConditions.length > 0 && <section className="home-section" aria-label="条件跟进"><div className="section-heading"><h2>条件跟进 <span>{activeConditions.length}</span></h2></div><div className="section-list">{activeConditions.slice(0, 3).map(conditionRow)}</div></section>}
-        {home.recent.length > 0 && <section className="home-section home-recent-section" aria-label="最近沟通">
-          <div className="section-heading"><h2>最近沟通</h2><button className="text-btn" onClick={() => openView('history')}>历史 <ArrowRight size={13}/></button></div>
-          <div className="recent-closure-grid">{home.recent.slice(0, 3).map(record => <button className="recent-closure" key={record.id} onClick={() => { props.onOpenClosure(record); setView('receipt'); }}><span><strong>{record.engagementIds.map(id => cached.engagements.find(project => project.id === id)?.clientName).filter(Boolean).slice(0, 3).join('、') || '沟通记录'}</strong><small>{chinaTime(record.confirmedAt)} · {record.originalOnly ? '仅原文' : record.revertedAt ? '已撤销' : '已核对'}</small></span><ArrowRight size={15}/></button>)}</div>
+        {activeConditions.length > 0 && <section className="home-section" aria-label={t('work.conditionsSectionAria')}><div className="section-heading"><h2>{t('work.conditionsSectionHeading')}<span>{activeConditions.length}</span></h2></div><div className="section-list">{activeConditions.slice(0, 3).map(conditionRow)}</div></section>}
+        {home.recent.length > 0 && <section className="home-section home-recent-section" aria-label={t('work.recentSectionAria')}>
+          <div className="section-heading"><h2>{t('work.recentSectionHeading')}</h2><button className="text-btn" onClick={() => openView('history')}>{t('work.historyBtn')}<ArrowRight size={13}/></button></div>
+          <div className="recent-closure-grid">{home.recent.slice(0, 3).map(record => <button className="recent-closure" key={record.id} onClick={() => { props.onOpenClosure(record); setView('receipt'); }}><span><strong>{record.engagementIds.map(id => cached.engagements.find(project => project.id === id)?.clientName).filter(Boolean).slice(0, 3).join('、') || t('work.recentDefaultTitle')}</strong><small>{chinaTime(record.confirmedAt, lang)} · {record.originalOnly ? t('work.recentOriginalOnly') : record.revertedAt ? t('work.recentReverted') : t('work.recentReviewed')}</small></span><ArrowRight size={15}/></button>)}</div>
         </section>}
       </>}
     </aside>}
     </div>}
 
-    {view === 'projects' && <section className="records-panel">{selectedProjectId && <ProjectContinuation projectId={selectedProjectId} revision={cached.revision} draft={draft} busy={props.busy} workSuggestionsEnabled={suggestionsEnabled} initialArtifactCondition={artifactRequest?.projectId === selectedProjectId ? artifactRequest : null} onConsumeArtifactRequest={() => setArtifactRequest(null)} onContinueProject={continueProject} onResumeDraft={resume} onEdit={project => manual([{ target: 'engagement', entityId: project.id, before: project, after: { ...project, updatedAt: Date.now() } }], '编辑客户合作项目')} onClose={() => { setArtifactRequest(null); setSelectedProjectId(null); }} onProjectLoaded={project => setDetailProject({ identity: Repository.getReadIdentity?.() || '', project })} onOpenClosure={record => { props.onOpenClosure(record); setView('receipt'); }} renderTask={taskRow} renderFollowUp={followUpRow} renderCondition={conditionRow}/>}{!visibleItems.length && !loading && <p className="empty-text">暂无客户项目</p>}<div className="project-grid">{(visibleItems as Engagement[]).map(project => <article className="project-card" key={project.id}><header><span className="project-client">{project.clientName || '未命名客户'}</span><span className={`tag tag--stage-${project.stage}`}>{project.stage}</span></header><h3>{project.title || '未命名项目'}</h3><div className="project-action-box"><strong>卡点 / 下一步</strong><p className="project-next-action">{project.nextAction || '暂无下一步安排'}</p></div><span className="budget-label">预算规模</span><p className="project-budget">{project.budgetAmount === undefined ? '预算待定' : `¥${project.budgetAmount.toLocaleString('zh-CN')}`}</p><footer className="button-row"><button className="soft-btn" onClick={() => showProject(project.id)}>详情</button><button className="text-btn" disabled={props.busy} onClick={() => { manual([{ target: 'engagement', entityId: project.id, before: project, after: { ...project, updatedAt: Date.now() } }], '编辑客户合作项目'); }}>编辑</button><button className="text-btn" onClick={() => props.onExport(project)}><FileText size={13}/>纪要</button></footer><details><summary>备注与阶段推进</summary>{project.shareableSummary && <p className="muted small">{project.shareableSummary}</p>}<p className="small">{project.internalContext || '无内部备注'}</p><button className="text-btn" disabled={props.busy || project.stage === '赢单成交'} onClick={() => manual([{ target: 'engagement', entityId: project.id, before: project, after: { ...project, stage: stages[Math.min(4, stages.indexOf(project.stage) + 1)], updatedAt: Date.now() } }], '核对项目进展')}>推进至下一阶段 →</button></details></article>)}</div></section>}
+    {view === 'projects' && <section className="records-panel">{selectedProjectId && <ProjectContinuation projectId={selectedProjectId} revision={cached.revision} draft={draft} busy={props.busy} workSuggestionsEnabled={suggestionsEnabled} initialArtifactCondition={artifactRequest?.projectId === selectedProjectId ? artifactRequest : null} onConsumeArtifactRequest={() => setArtifactRequest(null)} onContinueProject={continueProject} onResumeDraft={resume} onEdit={project => manual([{ target: 'engagement', entityId: project.id, before: project, after: { ...project, updatedAt: Date.now() } }], t('work.manualEditProjectSource'))} onClose={() => { setArtifactRequest(null); setSelectedProjectId(null); }} onProjectLoaded={project => setDetailProject({ identity: Repository.getReadIdentity?.() || '', project })} onOpenClosure={record => { props.onOpenClosure(record); setView('receipt'); }} renderTask={taskRow} renderFollowUp={followUpRow} renderCondition={conditionRow}/>}{!visibleItems.length && !loading && <p className="empty-text">{t('work.emptyProjects')}</p>}<div className="project-grid">{(visibleItems as Engagement[]).map(project => <article className="project-card" key={project.id}><header><span className="project-client">{project.clientName || t('work.unnamedClient')}</span><span className={`tag tag--stage-${project.stage}`}>{formatDealStage(project.stage, lang)}</span></header><h3>{project.title || t('work.unnamedProject')}</h3><div className="project-action-box"><strong>{t('work.nextActionBoxTitle')}</strong><p className="project-next-action">{project.nextAction || t('work.noNextAction')}</p></div><span className="budget-label">{t('work.budgetScaleLabel')}</span><p className="project-budget">{project.budgetAmount === undefined ? t('work.budgetTbd') : formatBudgetAmount(project.budgetAmount, lang)}</p><footer className="button-row"><button className="soft-btn" onClick={() => showProject(project.id)}>{t('work.detailsBtn')}</button><button className="text-btn" disabled={props.busy} onClick={() => { manual([{ target: 'engagement', entityId: project.id, before: project, after: { ...project, updatedAt: Date.now() } }], t('work.manualEditProjectSource')); }}>{t('work.editShortBtn')}</button><button className="text-btn" onClick={() => props.onExport(project)}><FileText size={13}/>{t('work.notesBtn')}</button></footer><details><summary>{t('work.notesAndStageSummary')}</summary>{project.shareableSummary && <p className="muted small">{project.shareableSummary}</p>}<p className="small">{project.internalContext || t('work.noInternalNotes')}</p><button className="text-btn" disabled={props.busy || project.stage === '赢单成交'} onClick={() => manual([{ target: 'engagement', entityId: project.id, before: project, after: { ...project, stage: stages[Math.min(4, stages.indexOf(project.stage) + 1)], updatedAt: Date.now() } }], t('work.manualAdvanceStageSource'))}>{t('work.advanceStageBtn')}</button></details></article>)}</div></section>}
 
-    {view === 'tasks' && <section className="records-panel" aria-label="项目行动"><div className="records-panel-bar action-list-heading"><div><h2>项目行动</h2><p>在这里跟进我方要完成的事，没设提醒也能记录和完成。</p></div><label className="check-label"><input type="checkbox" checked={dueOnly} onChange={event => setDueOnly(event.target.checked)}/>只看到期未完成</label></div>{!visibleItems.length && !loading && <p className="empty-text">暂无项目行动</p>}<div className="records-list">{[...(visibleItems as ProjectTaskItem[])].sort((a, b) => Number(a.done) - Number(b.done)).map(taskRow)}</div></section>}
+    {view === 'tasks' && <section className="records-panel" aria-label={t('work.srTasks')}><div className="records-panel-bar action-list-heading"><div><h2>{t('work.srTasks')}</h2><p>{t('work.tasksPanelDesc')}</p></div><label className="check-label"><input type="checkbox" checked={dueOnly} onChange={event => setDueOnly(event.target.checked)}/>{t('work.dueOnlyCheckbox')}</label></div>{!visibleItems.length && !loading && <p className="empty-text">{t('work.emptyTasks')}</p>}<div className="records-list">{[...(visibleItems as ProjectTaskItem[])].sort((a, b) => Number(a.done) - Number(b.done)).map(taskRow)}</div></section>}
 
-    {view === 'followups' && <section className="records-panel">{!visibleItems.length && !loading && <p className="empty-text">暂无等待或未定事项</p>}<div className="records-list">{(visibleItems as FollowUpItem[]).map(followUpRow)}</div></section>}
+    {view === 'followups' && <section className="records-panel">{!visibleItems.length && !loading && <p className="empty-text">{t('work.emptyFollowUps')}</p>}<div className="records-list">{(visibleItems as FollowUpItem[]).map(followUpRow)}</div></section>}
 
-    {view === 'history' && <section className="records-panel">{!visibleItems.length && !loading && <p className="empty-text">暂无变更记录</p>}<div className="records-list">{visibleItems.map(event => <article className="history-row" key={event.id}><History size={16}/><div><div className="history-row-head"><strong>{event.revertedAt ? '已撤销' : '已保存'} · {eventMutations(event).length} 项变更</strong><time>{chinaTime(event.createdAt)}</time>{!event.revertedAt && <button className="text-btn" disabled={props.busy} onClick={() => props.onUndoEvent(event.id)}>撤销</button>}</div><p>{event.sourceText || '无原文'}</p></div></article>)}</div></section>}
+    {view === 'history' && <section className="records-panel">{!visibleItems.length && !loading && <p className="empty-text">{t('work.emptyHistory')}</p>}<div className="records-list">{visibleItems.map(event => <article className="history-row" key={event.id}><History size={16}/><div><div className="history-row-head"><strong>{event.revertedAt ? t('work.eventReverted') : t('work.eventSaved')}{t('work.eventChangesCount', { count: eventMutations(event).length })}</strong><time>{chinaTime(event.createdAt, lang)}</time>{!event.revertedAt && <button className="text-btn" disabled={props.busy} onClick={() => props.onUndoEvent(event.id)}>{t('work.undoBtn')}</button>}</div><p>{event.sourceText || t('work.noSourceText')}</p></div></article>)}</div></section>}
 
-    {view === 'receipt' && (closure ? receiptData ? <ClosureReceipt closure={closure} {...receiptData} onProject={showProject} onContinue={start} onExport={props.onExport} onUndo={props.onUndoEvent}/> : <p className="receipt-loading" role="status">读取中…</p> : <p className="empty-text">暂无记录</p>)}
-    {kind && cursor && <button className="soft-btn work-more" disabled={loading} onClick={() => void more()}>{loading ? '读取中…' : '加载更多'}<ChevronDown size={14}/></button>}
-    {loading && view !== 'home' && <p className="muted small" role="status">读取中…</p>}
+    {view === 'receipt' && (closure ? receiptData ? <ClosureReceipt closure={closure} {...receiptData} onProject={showProject} onContinue={start} onExport={props.onExport} onUndo={props.onUndoEvent}/> : <p className="receipt-loading" role="status">{t('work.loadingText')}</p> : <p className="empty-text">{t('work.noReceiptText')}</p>)}
+    {kind && cursor && <button className="soft-btn work-more" disabled={loading} onClick={() => void more()}>{loading ? t('work.loadingText') : t('work.loadMoreBtn')}<ChevronDown size={14}/></button>}
+    {loading && view !== 'home' && <p className="muted small" role="status">{t('work.loadingText')}</p>}
   </div>;
 }

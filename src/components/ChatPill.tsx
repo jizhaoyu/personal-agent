@@ -8,6 +8,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { Message, AppSettings, WorkspaceMode, StateMutationReceipt, TodoRecord } from '../types';
+import { useI18n } from '../i18n';
 import { Character } from './Companion';
 
 interface ChatPillProps {
@@ -41,6 +42,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
   onDismissPendingTodo,
   onOpenTodos,
 }) => {
+  const { lang, t } = useI18n();
   const [localInput, setLocalInput] = useState('');
   const [todoConfirmed, setTodoConfirmed] = useState(false);
   const [todoFading, setTodoFading] = useState(false);
@@ -106,7 +108,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
       await onSendMessage(original.trim());
       if (latestInput.current === original) setInputText('', original);
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : String(error) || '记录未保存，原文仍保留。');
+      setSendError(error instanceof Error ? error.message : String(error) || t('lifeChat.saveErrorFallback'));
     } finally { sending.current = false; setSendPending(false); }
   };
 
@@ -155,7 +157,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
               {isWork ? '💼 Looma Pro' : `🌙 ${settings.personaName || 'Looma'}`}
             </div>
             <div className="text-[10px] text-emerald-600 font-medium leading-tight">
-              {isLoading ? '正在记录…' : '随口说，我在听'}
+              {isLoading ? t('lifeChat.statusRecording') : t('lifeChat.statusListening')}
             </div>
           </div>
         </div>
@@ -169,7 +171,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
           }`}
         >
           <Zap size={11} />
-          <span>查看卡片</span>
+          <span>{t('lifeChat.viewCards')}</span>
         </button>
       </div>
 
@@ -183,9 +185,9 @@ export const ChatPill: React.FC<ChatPillProps> = ({
               </div>
             </div>
             <div className="space-y-1">
-              <h4 className="text-sm font-semibold text-[#3d2b1f]">随口说，无需刻意排版</h4>
+              <h4 className="text-sm font-semibold text-[#3d2b1f]">{t('lifeChat.emptyTitle')}</h4>
               <p className="text-xs text-[#7c6248] max-w-xs leading-relaxed">
-                例如：“我今天攒了30块钱”、“今天花了25吃午饭”、“妈妈不吃香菜”…
+                {t('lifeChat.emptyExample')}
               </p>
             </div>
           </div>
@@ -214,7 +216,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
                       <img
                         key={idx}
                         src={att}
-                        alt="attachment"
+                        alt={t('lifeChat.attachmentAlt')}
                         className="rounded-lg max-h-36 w-auto object-cover"
                       />
                     ))}
@@ -246,7 +248,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
               )}
 
               <span className="text-[10px] opacity-50 mt-1 px-1">
-                {new Date(msg.timestamp).toLocaleTimeString([], {
+                {new Date(msg.timestamp).toLocaleTimeString(lang === 'en' ? 'en-US' : undefined, {
                   hour: '2-digit',
                   minute: '2-digit',
                 })}
@@ -262,7 +264,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             }`}
           >
             <RefreshCw size={12} className="animate-spin" />
-            <span>记录中…</span>
+            <span>{t('lifeChat.loadingBubble')}</span>
           </div>
         )}
       </div>
@@ -290,20 +292,20 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <span className="text-[11px] font-bold text-[#8a5410] tracking-tight">待办提醒</span>
+                <span className="text-[11px] font-bold text-[#8a5410] tracking-tight">{t('lifeChat.todoCapsuleTitle')}</span>
                 {pendingTodo.dueAt ? (
                   <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded-md bg-amber-100/90 text-amber-800">
-                    {new Date(pendingTodo.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(pendingTodo.dueAt).toLocaleTimeString(lang === 'en' ? 'en-US' : undefined, { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 ) : pendingTodo.dueDate ? (
                   <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded-md bg-amber-100/90 text-amber-800">
                     {pendingTodo.dueDate}
                   </span>
                 ) : (
-                  <span className="text-[10px] text-[#7c6248]/70">时间待定</span>
+                  <span className="text-[10px] text-[#7c6248]/70">{t('lifeChat.todoTimeTbd')}</span>
                 )}
                 {!todoConfirmed && (
-                  <span className="hidden sm:inline-block text-[9px] font-mono text-slate-400 dark:text-slate-500 bg-black/5 dark:bg-white/10 px-1.5 py-0.2 rounded">Tab 确认 · Esc 忽略</span>
+                  <span className="hidden sm:inline-block text-[9px] font-mono text-slate-400 dark:text-slate-500 bg-black/5 dark:bg-white/10 px-1.5 py-0.2 rounded">{t('lifeChat.todoShortcuts')}</span>
                 )}
               </div>
               <p className="text-xs font-semibold truncate mt-0.5 text-[#23293a] dark:text-slate-200">{pendingTodo.title}</p>
@@ -313,7 +315,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
           <div className="flex items-center gap-1.5 shrink-0">
             {todoConfirmed ? (
               <span className="text-xs font-semibold text-emerald-600 px-2 py-1 flex items-center gap-1 animate-pulse">
-                <CheckCircle2 size={13} /> 已记录待办
+                <CheckCircle2 size={13} /> {t('lifeChat.todoRecorded')}
               </span>
             ) : (
               <>
@@ -324,14 +326,14 @@ export const ChatPill: React.FC<ChatPillProps> = ({
                   className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer transition-all shadow-xs"
                 >
                   <CheckCircle2 size={13} />
-                  <span>确认</span>
+                  <span>{t('lifeChat.confirmBtn')}</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleDismissTodo}
                   className="px-2 py-1 rounded-lg text-xs text-[#7c6248] hover:bg-black/5 active:scale-95 cursor-pointer transition-all"
                 >
-                  忽略
+                  {t('lifeChat.dismissBtn')}
                 </button>
               </>
             )}
@@ -340,9 +342,9 @@ export const ChatPill: React.FC<ChatPillProps> = ({
                 type="button"
                 onClick={onOpenTodos}
                 className="text-[11px] text-[#8a5410] hover:underline px-1 cursor-pointer"
-                title="去待办列表查看"
+                title={t('lifeChat.openTodosTitle')}
               >
-                待办 →
+                {t('lifeChat.openTodosBtn')}
               </button>
             )}
           </div>
@@ -368,7 +370,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
             onKeyDown={handleKeyDown}
             onCompositionStart={() => { composing.current = true; }}
             onCompositionEnd={() => { composing.current = false; }}
-            placeholder="随手记录…"
+            placeholder={t('lifeChat.inputPlaceholder')}
             rows={1}
             className={`w-full resize-none text-[12.5px] bg-transparent focus:outline-none max-h-20 leading-5 ${
               isWork
@@ -381,7 +383,7 @@ export const ChatPill: React.FC<ChatPillProps> = ({
         <button
           onClick={handleSend}
           disabled={isLoading || sendPending || !inputText.trim()}
-          aria-label="发送文字记录"
+          aria-label={t('lifeChat.sendAria')}
           className={`p-2 rounded-xl text-white disabled:opacity-40 transition-colors shadow-xs cursor-pointer ${
             isWork ? 'bg-blue-600 hover:bg-blue-500' : 'bg-[#a8681a] hover:bg-[#8a5410]'
           }`}

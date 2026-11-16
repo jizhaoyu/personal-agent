@@ -7,6 +7,38 @@ const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 
+function loadI18n(react) {
+  const cache = new Map();
+  const loadTs = (relPath) => {
+    const abs = path.join(process.cwd(), 'src/i18n', relPath);
+    if (cache.has(abs)) return cache.get(abs);
+    const compiled = ts.transpileModule(fs.readFileSync(abs, 'utf8'), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
+      fileName: abs,
+    }).outputText;
+    const mod = { exports: {} };
+    cache.set(abs, mod.exports);
+    vm.runInNewContext(compiled, {
+      module: mod,
+      exports: mod.exports,
+      Date,
+      Intl,
+      console,
+      require(dep) {
+        if (dep === 'react') return react;
+        if (dep === '../types') return {};
+        if (dep === './store') return loadTs('store.ts');
+        if (dep === './domain') return loadTs('domain.ts');
+        if (dep === './zh') return loadTs('zh.ts');
+        if (dep === './en') return loadTs('en.ts');
+        return require(dep);
+      },
+    }, { filename: abs });
+    return mod.exports;
+  };
+  return loadTs('index.ts');
+}
+
 function harness(reader) {
   const filename = path.join(process.cwd(), 'src/components/ProjectContinuation.tsx');
   assert.ok(fs.existsSync(filename), '项目接续组件尚未实现');
@@ -21,6 +53,7 @@ function harness(reader) {
     module, exports: module.exports, console, Date, Intl,
     require(name) {
       if (name === 'react') return react;
+      if (name === '../i18n') return loadI18n(react);
       if (name === '../persistence/repository') return { Repository: reader };
       if (name === '../services/projectContinuation') return require('../src/services/projectContinuation');
       if (name === '../services/artifacts') return require('../src/services/artifacts');
@@ -30,6 +63,7 @@ function harness(reader) {
         const m = { exports: {} };
         vm.runInNewContext(compiledArt, { module: m, exports: m.exports, Date, console, crypto: require('node:crypto'), require(dep) {
           if (dep === './storage') return { newId: prefix => `${prefix}-${require('node:crypto').randomUUID()}` };
+          if (dep === '../i18n/domain') return require('../src/i18n/domain');
           return require(dep);
         } });
         return m.exports;

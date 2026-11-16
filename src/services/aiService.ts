@@ -1,6 +1,7 @@
-import type { AppSettings, Message, MemoryItem, WorkspaceMode, StateMutationReceipt, Engagement, ProjectTaskItem, ProposedChangeSet, WorkPartition, AlignmentDraft, FollowUpItem } from '../types';
+import type { AppLanguage, AppSettings, Message, MemoryItem, WorkspaceMode, StateMutationReceipt, Engagement, ProjectTaskItem, ProposedChangeSet, WorkPartition, AlignmentDraft, FollowUpItem } from '../types';
 import { StateEngine, budgetIsUncertain, dateIsUncertain } from './stateEngine';
 import { resolveDeadline, shanghaiDateKey } from './dates';
+import { formatBudgetAmount, formatShanghaiTime } from '../i18n/domain';
 
 export interface AlignmentBoundaryProof {
   allowedFields: string[];
@@ -11,25 +12,48 @@ export interface AlignmentBoundaryProof {
   budgetWithheld: boolean;
 }
 
-export function inspectAlignmentBoundary(engagement: Engagement, tasks: ProjectTaskItem[], selectedIds: string[], includeBudget = false): AlignmentBoundaryProof {
+export function inspectAlignmentBoundary(
+  engagement: Engagement,
+  tasks: ProjectTaskItem[],
+  selectedIds: string[],
+  includeBudget = false,
+  lang: AppLanguage = 'zh-CN',
+): AlignmentBoundaryProof {
   const projectTasks = tasks.filter(t => t.engagementId === engagement.id);
   const selectedCount = projectTasks.filter(t => selectedIds.includes(t.id)).length;
   const unselectedTaskCount = Math.max(0, projectTasks.length - selectedCount);
   const internalNotesChars = (engagement.internalContext || '').trim().length;
   const internalNotesWithheld = internalNotesChars > 0;
   const budgetWithheld = !includeBudget;
-  const allowedFields = [
-    `客户与项目名称（${engagement.clientName} · ${engagement.title}）`,
-    '外发摘要（经发送者编辑审阅）',
-    ...(includeBudget && engagement.budgetAmount !== undefined ? [`预算参考（¥${engagement.budgetAmount.toLocaleString('zh-CN')}）`] : []),
-    ...(selectedCount > 0 ? [`已勾选待核对行动（${selectedCount} 项）`] : []),
-  ];
-  const withheldFields = [
-    internalNotesWithheld ? `内部备注已拦截（${internalNotesChars} 字不外发）` : '内部备注（空，默认隔离不外发）',
-    ...(budgetWithheld ? ['项目预算已隐藏（默认不选入外发草稿）'] : []),
-    ...(unselectedTaskCount > 0 ? [`未勾选内部待办已拦截（${unselectedTaskCount} 项不外发）`] : []),
-    '原始沟通全文与生活空间资料（零外发）',
-  ];
+  const budgetText = engagement.budgetAmount !== undefined ? formatBudgetAmount(engagement.budgetAmount, lang) : '';
+  const allowedFields = lang === 'en'
+    ? [
+        `Client & project (${engagement.clientName} · ${engagement.title})`,
+        'Shareable summary (edited & reviewed by sender)',
+        ...(includeBudget && engagement.budgetAmount !== undefined ? [`Budget reference (${budgetText})`] : []),
+        ...(selectedCount > 0 ? [`Selected pending actions (${selectedCount})`] : []),
+      ]
+    : [
+        `客户与项目名称（${engagement.clientName} · ${engagement.title}）`,
+        '外发摘要（经发送者编辑审阅）',
+        ...(includeBudget && engagement.budgetAmount !== undefined ? [`预算参考（${budgetText}）`] : []),
+        ...(selectedCount > 0 ? [`已勾选待核对行动（${selectedCount} 项）`] : []),
+      ];
+  const withheldFields = lang === 'en'
+    ? [
+        internalNotesWithheld
+          ? `Internal notes withheld (${internalNotesChars} chars excluded)`
+          : 'Internal notes (empty, isolated by default)',
+        ...(budgetWithheld ? ['Project budget hidden (excluded by default)'] : []),
+        ...(unselectedTaskCount > 0 ? [`Unselected internal todos excluded (${unselectedTaskCount})`] : []),
+        'Raw transcripts & Life space data (never shared)',
+      ]
+    : [
+        internalNotesWithheld ? `内部备注已拦截（${internalNotesChars} 字不外发）` : '内部备注（空，默认隔离不外发）',
+        ...(budgetWithheld ? ['项目预算已隐藏（默认不选入外发草稿）'] : []),
+        ...(unselectedTaskCount > 0 ? [`未勾选内部待办已拦截（${unselectedTaskCount} 项不外发）`] : []),
+        '原始沟通全文与生活空间资料（零外发）',
+      ];
   return {
     allowedFields,
     withheldFields,
@@ -63,19 +87,45 @@ export function inspectProposalContextBoundary(proposal: ProposedChangeSet, enga
   };
 }
 
-export function createAlignmentDraft(engagement: Engagement, tasks: ProjectTaskItem[], selectedIds: string[], includeBudget = false): AlignmentDraft {
-  const draft: AlignmentDraft = { title: '沟通纪要草稿 / 待对方确认', clientName: engagement.clientName, projectTitle: engagement.title, summary: engagement.shareableSummary,
-    actions: tasks.filter(t => t.engagementId === engagement.id && selectedIds.includes(t.id)).map(t => ({ title: t.title, ...(t.dueAt ? { dueAt: t.dueAt } : {}) })) };
+export function createAlignmentDraft(
+  engagement: Engagement,
+  tasks: ProjectTaskItem[],
+  selectedIds: string[],
+  includeBudget = false,
+  lang: AppLanguage = 'zh-CN',
+): AlignmentDraft {
+  const draft: AlignmentDraft = {
+    title: lang === 'en' ? 'Communication Notes Draft / Pending Client Confirmation' : '沟通纪要草稿 / 待对方确认',
+    clientName: engagement.clientName,
+    projectTitle: engagement.title,
+    summary: engagement.shareableSummary,
+    actions: tasks.filter(t => t.engagementId === engagement.id && selectedIds.includes(t.id)).map(t => ({ title: t.title, ...(t.dueAt ? { dueAt: t.dueAt } : {}) })),
+  };
   if (includeBudget && engagement.budgetAmount !== undefined) draft.budgetAmount = engagement.budgetAmount;
   return draft;
 }
 
-export function chinaTime(value: string | number): string {
-  return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
+export function chinaTime(value: string | number, lang: AppLanguage = 'zh-CN'): string {
+  return formatShanghaiTime(value, lang);
 }
 
-export function alignmentText(draft: AlignmentDraft): string {
-  return [draft.title, `客户：${draft.clientName}`, `项目：${draft.projectTitle}`, draft.summary && `讨论摘要：\n${draft.summary}`, draft.budgetAmount !== undefined && `预算参考：¥${draft.budgetAmount.toLocaleString('zh-CN')}`, draft.actions.length > 0 && `待核对行动：\n${draft.actions.map(t => `• ${t.title}${t.dueAt ? `（${chinaTime(t.dueAt)}，北京时间）` : '（时间待确认）'}`).join('\n')}`, '请对方核对上述记录；如有偏差，以双方后续确认为准。', '由 Looma 整理 · 内容经发送者审阅'].filter(Boolean).join('\n\n');
+export function alignmentText(draft: AlignmentDraft, lang: AppLanguage = 'zh-CN'): string {
+  if (lang === 'en') {
+    const title = draft.title === '沟通纪要草稿 / 待对方确认'
+      ? 'Communication Notes Draft / Pending Client Confirmation'
+      : draft.title;
+    return [
+      title,
+      `Client: ${draft.clientName}`,
+      `Project: ${draft.projectTitle}`,
+      draft.summary && `Summary:\n${draft.summary}`,
+      draft.budgetAmount !== undefined && `Budget Reference: ${formatBudgetAmount(draft.budgetAmount, 'en')}`,
+      draft.actions.length > 0 && `Pending Actions:\n${draft.actions.map(t => `• ${t.title}${t.dueAt ? ` (${chinaTime(t.dueAt, 'en')} Asia/Shanghai)` : ' (Time TBD)'}`).join('\n')}`,
+      'Please review the notes above. Final terms remain subject to mutual confirmation.',
+      'Compiled with Looma · Reviewed by sender',
+    ].filter(Boolean).join('\n\n');
+  }
+  return [draft.title, `客户：${draft.clientName}`, `项目：${draft.projectTitle}`, draft.summary && `讨论摘要：\n${draft.summary}`, draft.budgetAmount !== undefined && `预算参考：¥${draft.budgetAmount.toLocaleString('zh-CN')}`, draft.actions.length > 0 && `待核对行动：\n${draft.actions.map(t => `• ${t.title}${t.dueAt ? `（${chinaTime(t.dueAt, 'zh-CN')}，北京时间）` : '（时间待确认）'}`).join('\n')}`, '请对方核对上述记录；如有偏差，以双方后续确认为准。', '由 Looma 整理 · 内容经发送者审阅'].filter(Boolean).join('\n\n');
 }
 
 export function getDueTasks(tasks: ProjectTaskItem[], now = Date.now()): ProjectTaskItem[] {

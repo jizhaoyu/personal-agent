@@ -25,6 +25,19 @@ function harness(name, service = {}) {
       if (dep === './Companion') return { Character: () => null };
       if (dep === '../persistence/repository') return { Repository: {} };
       if (dep === '../services/legacyConnection') return {};
+      if (dep === '../i18n') {
+        const dir = path.join(process.cwd(), 'src/i18n'), cache = {};
+        const loadTs = modName => {
+          if (cache[modName]) return cache[modName];
+          const f = path.join(dir, `${modName}.ts`);
+          const mod = { exports: {} }; cache[modName] = mod.exports;
+          vm.runInNewContext(ts.transpileModule(fs.readFileSync(f, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, fileName: f }).outputText,
+            { module: mod, exports: mod.exports, Intl, console, get window() { return globalThis.window; }, get document() { return globalThis.document; }, get localStorage() { return globalThis.localStorage; },
+              require: d => d === 'react' ? hooks : d.startsWith('./') ? loadTs(d.slice(2)) : require(d) }, { filename: f });
+          return (cache[modName] = mod.exports);
+        };
+        return loadTs('index');
+      }
       if (dep.endsWith('.css')) return {};
       throw new Error('Unexpected dependency ' + dep);
     },

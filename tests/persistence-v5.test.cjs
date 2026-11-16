@@ -228,11 +228,20 @@ nativeTest('v5 SQLite condition intents commit atomically, surface in workHome, 
 test('US09 workSuggestionsEnabled defaults to true and remains optional on historical settings restore', async () => {
   const core = await corePromise;
   assert.equal(core.DEFAULT_PUBLIC_SETTINGS.workSuggestionsEnabled, true);
+  assert.equal(core.DEFAULT_PUBLIC_SETTINGS.contentProtection, false);
+  assert.equal(core.DEFAULT_PUBLIC_SETTINGS.language, 'zh-CN');
   const legacySettings = { ...core.DEFAULT_PUBLIC_SETTINGS };
   delete legacySettings.workSuggestionsEnabled;
   delete legacySettings.memoryModelEnabled;
+  delete legacySettings.contentProtection;
+  delete legacySettings.language;
   assert.equal(core.validateSettings(legacySettings), true);
   assert.equal(core.validateSettings({ workSuggestionsEnabled: false }, true), true);
+  assert.equal(core.validateSettings({ contentProtection: true }, true), true);
+  assert.equal(core.validateSettings({ language: 'en' }, true), true);
+  assert.equal(core.validateSettings({ language: 'zh-CN' }, true), true);
+  assert.equal(core.validateSettings({ language: 'fr' }, true), false);
+  assert.equal(core.validateSettings({ contentProtection: 'invalid' }, true), false);
   assert.equal(core.validateSettings({ workSuggestionsEnabled: 'invalid' }, true), false);
 });
 
@@ -240,20 +249,24 @@ nativeTest('US09 SQLite persists workSuggestionsEnabled independently from remin
   const { store, directory } = await fixture(t);
   const initial = await store.request({ op: 'init' });
   assert.equal(initial.settings.workSuggestionsEnabled, true);
-  const saved = await store.request({ op: 'settings', patch: { workSuggestionsEnabled: false, remindersEnabled: true } });
+  assert.equal(initial.settings.language, 'zh-CN');
+  const saved = await store.request({ op: 'settings', patch: { workSuggestionsEnabled: false, remindersEnabled: true, language: 'en' } });
   assert.equal(saved.workSuggestionsEnabled, false);
   assert.equal(saved.remindersEnabled, true);
+  assert.equal(saved.language, 'en');
   const backupPath = path.join(directory, 'v5-us09.jsonl');
   assert.equal((await store.exportToFile(backupPath)).ok, true);
-  await store.request({ op: 'settings', patch: { workSuggestionsEnabled: true, remindersEnabled: false } });
+  await store.request({ op: 'settings', patch: { workSuggestionsEnabled: true, remindersEnabled: false, language: 'zh-CN' } });
   assert.equal((await store.restoreFromFile(backupPath)).ok, true);
   const restored = await store.request({ op: 'init' });
   assert.equal(restored.settings.workSuggestionsEnabled, false);
   assert.equal(restored.settings.remindersEnabled, true);
+  assert.equal(restored.settings.language, 'en');
 
   const lines = fs.readFileSync(backupPath, 'utf8').trimEnd().split('\n');
   const header = JSON.parse(lines[0]);
   delete header.meta.settings.workSuggestionsEnabled;
+  delete header.meta.settings.language;
   lines[0] = JSON.stringify(header);
   const end = JSON.parse(lines.at(-1));
   end.sha256 = require('node:crypto').createHash('sha256').update(`${lines.slice(0, -1).join('\n')}\n`).digest('hex');
@@ -262,6 +275,7 @@ nativeTest('US09 SQLite persists workSuggestionsEnabled independently from remin
   fs.writeFileSync(legacyPath, `${lines.join('\n')}\n`);
   assert.equal((await store.restoreFromFile(legacyPath)).ok, true);
   assert.equal((await store.request({ op: 'init' })).settings.workSuggestionsEnabled, true);
+  assert.equal((await store.request({ op: 'init' })).settings.language, 'zh-CN');
 });
 
 test('M3 collectAffectedWorkProjects and markArtifactStale handle cross-project moves and preserve user content', async () => {

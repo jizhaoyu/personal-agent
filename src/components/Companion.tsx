@@ -1,5 +1,6 @@
 import React from 'react';
 import type { CompanionState } from '../services/companionState';
+import { useI18n } from '../i18n';
 import './companion.css';
 
 export interface CompanionProps {
@@ -14,9 +15,13 @@ export interface CompanionProps {
   statusText?: string;
 }
 
-const stateLabels: Record<CompanionState, string> = {
-  idle: '安静待机', thinking: '正在整理', review: '待核对',
-  saved: '已确认保存', reminder: '待跟进提醒', error: '需要处理',
+const stateKeys: Record<CompanionState, 'companion.stateIdle' | 'companion.stateThinking' | 'companion.stateReview' | 'companion.stateSaved' | 'companion.stateReminder' | 'companion.stateError'> = {
+  idle: 'companion.stateIdle',
+  thinking: 'companion.stateThinking',
+  review: 'companion.stateReview',
+  saved: 'companion.stateSaved',
+  reminder: 'companion.stateReminder',
+  error: 'companion.stateError',
 };
 
 export function Character({ state }: { state: CompanionState }) {
@@ -65,31 +70,32 @@ function MemoryIcon() {
 }
 
 export function Companion({ state, mode, name = 'Looma', compact = false, onToggle, onOpenMemory, reminderCount = 0, statusText }: CompanionProps) {
+  const { t } = useI18n();
   const displayName = name.trim().slice(0, 24) || 'Looma';
   const count = Number.isFinite(reminderCount) ? Math.max(0, Math.floor(reminderCount)) : 0;
   const countText = count > 99 ? '99+' : String(count);
-  const label = stateLabels[state];
+  const label = t(stateKeys[state]);
   const genericDetail = state === 'reminder'
-    ? count > 0 ? `${countText} 项待跟进` : '查看提醒事项'
-    : state === 'idle' ? mode === 'work' ? '随时记下，继续跟进' : '我在，慢慢说'
-    : state === 'thinking' ? '整理完成后请你核对'
-    : state === 'review' ? '由你确认，再记住'
-    : state === 'saved' ? '这次记录已保存'
-    : '请查看操作提示';
+    ? count > 0 ? t('companion.detailReminderCount', { count: countText }) : t('companion.detailReminderView')
+    : state === 'idle' ? mode === 'work' ? t('companion.detailIdleWork') : t('companion.detailIdleLife')
+    : state === 'thinking' ? t('companion.detailThinking')
+    : state === 'review' ? t('companion.detailReview')
+    : state === 'saved' ? t('companion.detailSaved')
+    : t('companion.detailError');
   // A desktop capsule is visible outside the main workspace: never include operation details.
   const detail = compact ? genericDetail : statusText?.trim() || genericDetail;
   const contents = <>
     <Character state={state}/>
     <div className="looma-companion__copy">
-      <div className="looma-companion__identity"><strong>{displayName}</strong><span>{mode === 'work' ? '工作' : '生活'}</span></div>
+      <div className="looma-companion__identity"><strong>{displayName}</strong><span>{mode === 'work' ? t('companion.roleWork') : t('companion.roleLife')}</span></div>
       <div className="looma-companion__status" role="status" aria-live="polite" aria-atomic="true"><span className="looma-companion__state"><i aria-hidden="true"/>{label}</span><span className="looma-companion__detail">{detail}</span></div>
     </div>
   </>;
-  return <section className={`looma-companion${compact ? ' looma-companion--compact' : ''}`} data-state={state} data-mode={mode} aria-label={`${displayName} 伴侣`}>
-    {compact && onToggle ? <button className="looma-companion__restore" type="button" onClick={onToggle} aria-label={`展开 ${displayName}`} title="展开工作台">{contents}</button> : <div className="looma-companion__presence">{contents}</div>}
+  return <section className={`looma-companion${compact ? ' looma-companion--compact' : ''}`} data-state={state} data-mode={mode} aria-label={`${displayName} ${t('companion.ariaSuffix')}`}>
+    {compact && onToggle ? <button className="looma-companion__restore" type="button" onClick={onToggle} aria-label={`${t('companion.expandAriaPrefix')} ${displayName}`} title={t('companion.expandTitle')}>{contents}</button> : <div className="looma-companion__presence">{contents}</div>}
     {onOpenMemory || (!compact && onToggle) ? <div className="looma-companion__actions">
-      {onOpenMemory ? <button className="looma-companion__memory" type="button" onClick={onOpenMemory} aria-label="打开记忆与档案" title="记忆与档案"><MemoryIcon/>{compact ? null : <span>记忆与档案</span>}</button> : null}
-      {!compact && onToggle ? <button className="looma-companion__fold" type="button" onClick={onToggle} aria-label="收起为伴侣胶囊" title="收起为伴侣胶囊"><span aria-hidden="true">↙</span><span>收起</span></button> : null}
+      {onOpenMemory ? <button className="looma-companion__memory" type="button" onClick={onOpenMemory} aria-label={t('companion.memoryAria')} title={t('companion.memoryTitle')}><MemoryIcon/>{compact ? null : <span>{t('companion.memoryLabel')}</span>}</button> : null}
+      {!compact && onToggle ? <button className="looma-companion__fold" type="button" onClick={onToggle} aria-label={t('companion.foldAria')} title={t('companion.foldTitle')}><span aria-hidden="true">↙</span><span>{t('companion.foldLabel')}</span></button> : null}
     </div> : null}
   </section>;
 }
