@@ -81,19 +81,29 @@ function ensureSigningKeystore({
 
 function packageAndroidApk(options = {}) {
   const rootDir = options.rootDir || path.resolve(__dirname, '..');
-  const sdkRoot = options.sdkRoot || process.env.ANDROID_HOME || 'D:\\DevEnv\\apps\\android-sdk';
-  const buildToolsDir = findSubdirWithFile(path.join(sdkRoot, 'build-tools'), 'aapt2.exe');
+  const isWin = process.platform === 'win32';
+  const sdkRoot = options.sdkRoot || process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || 'D:\\DevEnv\\apps\\android-sdk';
+  const aapt2Name = isWin ? 'aapt2.exe' : 'aapt2';
+  const d8Name = isWin ? 'd8.bat' : 'd8';
+  const zipalignName = isWin ? 'zipalign.exe' : 'zipalign';
+  const apksignerName = isWin ? 'apksigner.bat' : 'apksigner';
+  const buildToolsDir = findSubdirWithFile(path.join(sdkRoot, 'build-tools'), aapt2Name);
   const platformDir = findSubdirWithFile(path.join(sdkRoot, 'platforms'), 'android.jar');
 
   if (!buildToolsDir || !platformDir) {
     throw new Error(`未找到 Android SDK 构建工具或平台库: ${sdkRoot}`);
   }
 
-  const aapt2 = path.join(buildToolsDir, 'aapt2.exe');
-  const d8Bat = path.join(buildToolsDir, 'd8.bat');
-  const zipalign = path.join(buildToolsDir, 'zipalign.exe');
-  const apksignerBat = path.join(buildToolsDir, 'apksigner.bat');
+  const aapt2 = path.join(buildToolsDir, aapt2Name);
+  const d8Bin = path.join(buildToolsDir, d8Name);
+  const zipalign = path.join(buildToolsDir, zipalignName);
+  const apksignerBin = path.join(buildToolsDir, apksignerName);
   const androidJar = path.join(platformDir, 'android.jar');
+  const execTool = (toolPath, args, opts = { stdio: 'inherit' }) => (
+    isWin && /\.(bat|cmd)$/i.test(toolPath)
+      ? execFileSync('cmd.exe', ['/c', toolPath, ...args], opts)
+      : execFileSync(toolPath, args, opts)
+  );
 
   // 1. 同步前端生产构建产物到 android/app/src/main/assets/www
   const assetIntegrity = syncAndroidAssets({ rootDir });
@@ -155,14 +165,13 @@ function packageAndroidApk(options = {}) {
     .filter(f => f.endsWith('.class'))
     .map(f => path.join(classesDir, 'com', 'looma', 'agent', f));
 
-  execFileSync('cmd.exe', [
-    '/c', d8Bat,
+  execTool(d8Bin, [
     '--release',
     '--min-api', '26',
     '--lib', androidJar,
     '--output', workDir,
     ...classFiles,
-  ], { stdio: 'inherit' });
+  ]);
 
   // 5. 将 classes.dex 与 POSIX 正斜杠路径的 assets/ 注入 APK
   execFileSync('jar', [
@@ -179,6 +188,9 @@ function packageAndroidApk(options = {}) {
   ], { stdio: 'inherit' });
 
   // 7. 固定签名证书防误重签校验 + RSA-2048 v1+v2+v3 全量签名
+  if (process.env.CI === 'true' && !process.env.LOOMA_KEYSTORE_PASS) {
+    throw new Error('CI 环境打包必须通过 Secret 提供 LOOMA_KEYSTORE_PASS。');
+  }
   const {
     keystorePath,
     keystorePass,
@@ -191,8 +203,8 @@ function packageAndroidApk(options = {}) {
     keyAlias: process.env.LOOMA_KEY_ALIAS || 'looma_release',
   });
 
-  execFileSync('cmd.exe', [
-    '/c', apksignerBat, 'sign',
+  execTool(apksignerBin, [
+    'sign',
     '--ks', keystorePath,
     '--ks-key-alias', keyAlias,
     '--ks-pass', `pass:${keystorePass}`,
@@ -202,11 +214,11 @@ function packageAndroidApk(options = {}) {
     '--v3-signing-enabled', 'true',
     '--out', finalApk,
     alignedApk,
-  ], { stdio: 'inherit' });
+  ]);
 
   // 8. 校验 APK 签名合法性
-  const verifyOutput = execFileSync('cmd.exe', [
-    '/c', apksignerBat, 'verify', '--verbose', finalApk,
+  const verifyOutput = execTool(apksignerBin, [
+    'verify', '--verbose', finalApk,
   ], { encoding: 'utf8' });
 
   const apkBuffer = fs.readFileSync(finalApk);

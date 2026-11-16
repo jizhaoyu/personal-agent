@@ -1,0 +1,135 @@
+name: Release Dual Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build & publish (leave blank to use ref)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Android + Windows Release
+    runs-on: windows-latest
+    env:
+      CI: 'true'
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.event.inputs.tag }}" -ne "") { "${{ github.event.inputs.tag }}".Trim() } else { "${{ github.ref_name }}".Trim() }
+          if (-not $tag.StartsWith("v")) { throw "Release tag must start with 'v', got '$tag'" }
+          "value=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Ensure Android SDK 34 platform & build-tools
+        shell: pwsh
+        run: |
+          $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { $env:ANDROID_SDK_ROOT }
+          if (-not $sdk) { throw "ANDROID_HOME not found on runner" }
+          "ANDROID_HOME=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $sdkmanager = Join-Path $sdk "cmdline-tools\latest\bin\sdkmanager.bat"
+          if (-not (Test-Path $sdkmanager)) {
+            $sdkmanager = Get-ChildItem -Path $sdk -Filter "sdkmanager.bat" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not (Test-Path (Join-Path $sdk "platforms\android-34\android.jar")) -or -not (Get-ChildItem (Join-Path $sdk "build-tools") -Filter "aapt2.exe" -Recurse -ErrorAction SilentlyContinue)) {
+            if (-not $sdkmanager) { throw "sdkmanager.bat not found to install Android SDK 34" }
+            & $sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          }
+
+      - name: Decode locked Android release keystore from Secret
+        shell: pwsh
+        env:
+          LOOMA_KEYSTORE_B64: ${{ secrets.LOOMA_KEYSTORE_B64 }}
+          LOOMA_KEYSTORE_PASS_SECRET: ${{ secrets.LOOMA_KEYSTORE_PASS }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:LOOMA_KEYSTORE_B64) -or [string]::IsNullOrWhiteSpace($env:LOOMA_KEYSTORE_PASS_SECRET)) {
+            throw "Missing required GitHub Repository Secrets: LOOMA_KEYSTORE_B64 and LOOMA_KEYSTORE_PASS. Add them under Settings -> Secrets and variables -> Actions before triggering a tag release so Android upgrades preserve user data."
+          }
+          $ksDir = "android\keystore"
+          New-Item -ItemType Directory -Force -Path $ksDir | Out-Null
+          $bytes = [Convert]::FromBase64String(($env:LOOMA_KEYSTORE_B64 -replace '\s+', ''))
+          [IO.File]::WriteAllBytes((Join-Path $ksDir "looma-release.jks"), $bytes)
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify TypeScript
+        run: npx tsc --noEmit
+
+      - name: Build Windows portable package
+        run: npm run package:trial
+
+      - name: Build & sign Android APK (verified against locked fingerprint)
+        shell: pwsh
+        env:
+          LOOMA_KEYSTORE_PASS: ${{ secrets.LOOMA_KEYSTORE_PASS }}
+          LOOMA_KEY_ALIAS: ${{ secrets.LOOMA_KEY_ALIAS }}
+        run: |
+          if (-not $env:LOOMA_KEY_ALIAS) { $env:LOOMA_KEY_ALIAS = "looma_release" }
+          node scripts/package-android.cjs
+
+      - name: Run full Node & APK E2E verification tests
+        run: npm test
+
+      - name: Run native SQLite tests
+        run: npm run test:native
+
+      - name: Prepare zip, SHA-256 checksums, and release notes
+        id: prep
+        shell: pwsh
+        run: |
+          $json = node scripts/prepare-release-assets.cjs --tag "${{ steps.tag.outputs.value }}" | Out-String
+          $data = $json | ConvertFrom-Json
+          "apk=$($data.apkPath)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "zip=$($data.zipPath)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "notes=$($data.notesPath)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Publish GitHub Release with attached APK & Windows zip
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.tag.outputs.value }}"
+          $apk = "${{ steps.prep.outputs.apk }}"
+          $zip = "${{ steps.prep.outputs.zip }}"
+          $notes = "${{ steps.prep.outputs.notes }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $apk $zip --clobber
+            gh release edit $tag --title "Looma $tag" --notes-file $notes --draft=false
+          } else {
+            gh release create $tag $apk $zip --verify-tag --title "Looma $tag" --notes-file $notes
+          }
+
+      - name: Remove temporary keystore from runner
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "android\keystore\looma-release.jks") {
+            Remove-Item -Force "android\keystore\looma-release.jks"
+          }

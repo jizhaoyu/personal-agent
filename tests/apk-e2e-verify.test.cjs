@@ -7,15 +7,36 @@ const crypto = require('node:crypto');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const rootDir = process.cwd();
-const apkPath = path.join(rootDir, 'output', 'android', 'Looma-v5.2.0-release-signed.apk');
-const sdkRoot = process.env.ANDROID_HOME || 'D:\\DevEnv\\apps\\android-sdk';
-const buildToolsDir = path.join(sdkRoot, 'build-tools', 'android-14');
-const platformJar = path.join(sdkRoot, 'platforms', 'android-34', 'android.jar');
+const manifestXml = fs.readFileSync(path.join(rootDir, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
+const versionCodeMatch = manifestXml.match(/android:versionCode="(\d+)"/);
+const versionNameMatch = manifestXml.match(/android:versionName="([^"]+)"/);
+const expectedVersionCode = versionCodeMatch ? versionCodeMatch[1] : '520';
+const expectedVersionName = versionNameMatch ? versionNameMatch[1] : '5.2.0';
+const apkPath = path.join(rootDir, 'output', 'android', `Looma-v${expectedVersionName}-release-signed.apk`);
 
-const aapt = path.join(buildToolsDir, 'aapt.exe');
-const dexdump = path.join(buildToolsDir, 'dexdump.exe');
-const zipalign = path.join(buildToolsDir, 'zipalign.exe');
-const apksigner = path.join(buildToolsDir, 'apksigner.bat');
+function findSubdirWithFile(baseDir, targetFile) {
+  if (!fs.existsSync(baseDir)) return null;
+  if (fs.existsSync(path.join(baseDir, targetFile))) return baseDir;
+  for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      const candidate = path.join(baseDir, entry.name);
+      if (fs.existsSync(path.join(candidate, targetFile))) return candidate;
+    }
+  }
+  return null;
+}
+
+const isWin = process.platform === 'win32';
+const sdkRoot = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || 'D:\\DevEnv\\apps\\android-sdk';
+const aaptName = isWin ? 'aapt.exe' : 'aapt';
+const buildToolsDir = findSubdirWithFile(path.join(sdkRoot, 'build-tools'), aaptName) || path.join(sdkRoot, 'build-tools', 'android-14');
+const platformDir = findSubdirWithFile(path.join(sdkRoot, 'platforms'), 'android.jar') || path.join(sdkRoot, 'platforms', 'android-34');
+const platformJar = path.join(platformDir, 'android.jar');
+
+const aapt = path.join(buildToolsDir, aaptName);
+const dexdump = path.join(buildToolsDir, isWin ? 'dexdump.exe' : 'dexdump');
+const zipalign = path.join(buildToolsDir, isWin ? 'zipalign.exe' : 'zipalign');
+const apksigner = path.join(buildToolsDir, isWin ? 'apksigner.bat' : 'apksigner');
 
 if (!fs.existsSync(apkPath)) {
   test('APK binary tests', { skip: 'APK not packaged yet' }, () => {});
@@ -31,9 +52,9 @@ test('1. APK binary exists, passes 4-byte zipalign check and v1/v2/v3 cryptograp
   execFileSync(zipalign, ['-c', '4', apkPath], { stdio: 'pipe' });
 
   // 校验 v2 / v3 块签名 (minSdk 26 默认启用防 Janus 漏洞的 v2/v3 整包块校验)
-  const sigOut = execFileSync('cmd.exe', ['/c', apksigner, 'verify', '--verbose', '--print-certs', apkPath], {
-    encoding: 'utf8',
-  });
+  const sigOut = isWin && /\.(bat|cmd)$/i.test(apksigner)
+    ? execFileSync('cmd.exe', ['/c', apksigner, 'verify', '--verbose', '--print-certs', apkPath], { encoding: 'utf8' })
+    : execFileSync(apksigner, ['verify', '--verbose', '--print-certs', apkPath], { encoding: 'utf8' });
   assert.match(sigOut, /^Verifies/m);
   assert.match(sigOut, /Verified using v2 scheme \(APK Signature Scheme v2\): true/);
   assert.match(sigOut, /Verified using v3 scheme \(APK Signature Scheme v3\): true/);
@@ -42,7 +63,8 @@ test('1. APK binary exists, passes 4-byte zipalign check and v1/v2/v3 cryptograp
 
 test('2. APK badging & binary AndroidManifest enforce security policies and launchable MainActivity', () => {
   const badging = execFileSync(aapt, ['dump', 'badging', apkPath], { encoding: 'utf8' });
-  assert.match(badging, /package: name='com\.looma\.agent' versionCode='520' versionName='5\.2\.0'/);
+  const escapedVersionName = expectedVersionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(badging, new RegExp(`package: name='com\\.looma\\.agent' versionCode='${expectedVersionCode}' versionName='${escapedVersionName}'`));
   assert.match(badging, /sdkVersion:'26'/);
   assert.match(badging, /targetSdkVersion:'34'/);
   assert.match(badging, /launchable-activity: name='com\.looma\.agent\.MainActivity'/);
