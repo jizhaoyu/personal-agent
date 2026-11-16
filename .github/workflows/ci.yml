@@ -38,8 +38,16 @@ jobs:
           if (-not (Test-Path $sdkmanager)) {
             $sdkmanager = Get-ChildItem -Path $sdk -Filter "sdkmanager.bat" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           }
-          if ($sdkmanager -and (-not (Test-Path (Join-Path $sdk "platforms\android-34\android.jar")))) {
-            & $sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          $hasBuildTools = (Get-ChildItem -Path (Join-Path $sdk "build-tools") -Directory -ErrorAction SilentlyContinue | Where-Object {
+            (Test-Path (Join-Path $_.FullName "aapt2.exe")) -and
+            (Test-Path (Join-Path $_.FullName "aapt.exe")) -and
+            (Test-Path (Join-Path $_.FullName "d8.bat")) -and
+            (Test-Path (Join-Path $_.FullName "dexdump.exe")) -and
+            (Test-Path (Join-Path $_.FullName "zipalign.exe")) -and
+            (Test-Path (Join-Path $_.FullName "apksigner.bat"))
+          }).Count -gt 0
+          if ($sdkmanager -and (-not (Test-Path (Join-Path $sdk "platforms\android-34\android.jar")) -or -not $hasBuildTools)) {
+            (@('y') * 20) -join "`n" | & $sdkmanager "platforms;android-34" "build-tools;34.0.0"
           }
 
       - name: Install dependencies

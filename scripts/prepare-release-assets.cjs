@@ -16,7 +16,7 @@ function zipPortableDirectory(sourceDir, targetZip, rootEntryName) {
     try {
       const stagedDir = path.join(stageParent, rootEntryName);
       fs.cpSync(sourceDir, stagedDir, { recursive: true });
-      execFileSync('tar.exe', ['-a', '-c', '-f', targetZip, '-C', stageParent, rootEntryName], { stdio: 'inherit' });
+      execFileSync('tar.exe', ['-a', '-c', '-f', targetZip, '-C', stageParent, rootEntryName], { stdio: ['ignore', 'ignore', 'inherit'] });
     } finally {
       fs.rmSync(stageParent, { recursive: true, force: true });
     }
@@ -26,7 +26,7 @@ function zipPortableDirectory(sourceDir, targetZip, rootEntryName) {
   try {
     const stagedDir = path.join(stageParent, rootEntryName);
     fs.cpSync(sourceDir, stagedDir, { recursive: true });
-    execFileSync('zip', ['-r', '-q', targetZip, rootEntryName], { cwd: stageParent, stdio: 'inherit' });
+    execFileSync('zip', ['-r', '-q', targetZip, rootEntryName], { cwd: stageParent, stdio: ['ignore', 'ignore', 'inherit'] });
   } finally {
     fs.rmSync(stageParent, { recursive: true, force: true });
   }

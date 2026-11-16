@@ -3,7 +3,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { checkedFile, digest, runtimeInventory } = require('./trial-files.cjs');
 
-const PRODUCT_VERSION = '5.2.0-trial';
+const PRODUCT_VERSION = '5.2.1-trial';
 const CHANNEL = 'internal-trial';
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.css', '.js', '.cjs', '.mjs', '.json']);
 function walk(directory, accept, prefix = '') {
@@ -97,4 +97,4 @@ if (require.main === module) {
   if (process.argv.includes('--stamp-dist')) { const manifest = stampDist(root); console.log(`Stamped ${manifest.buildId}: ${manifest.files.length} production files`); }
   else { const info = createBuildInfo(root); prepareDist(root); fs.mkdirSync(path.join(root, 'shared'), { recursive: true }); fs.writeFileSync(path.join(root, 'shared/build-info.json'), JSON.stringify(info, null, 2) + '\n'); console.log(info.buildId); }
 }
-module.exports = { createBuildInfo, sourceFingerprint, distFiles, stampDist, prepareDist };
+module.exports = { PRODUCT_VERSION, createBuildInfo, sourceFingerprint, distFiles, stampDist, prepareDist };

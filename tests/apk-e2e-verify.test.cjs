@@ -10,18 +10,21 @@ const rootDir = process.cwd();
 const manifestXml = fs.readFileSync(path.join(rootDir, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
 const versionCodeMatch = manifestXml.match(/android:versionCode="(\d+)"/);
 const versionNameMatch = manifestXml.match(/android:versionName="([^"]+)"/);
-const expectedVersionCode = versionCodeMatch ? versionCodeMatch[1] : '520';
-const expectedVersionName = versionNameMatch ? versionNameMatch[1] : '5.2.0';
+const expectedVersionCode = versionCodeMatch ? versionCodeMatch[1] : '521';
+const expectedVersionName = versionNameMatch ? versionNameMatch[1] : '5.2.1';
 const apkPath = path.join(rootDir, 'output', 'android', `Looma-v${expectedVersionName}-release-signed.apk`);
 
-function findSubdirWithFile(baseDir, targetFile) {
+function findSubdirWithFiles(baseDir, requiredFiles) {
   if (!fs.existsSync(baseDir)) return null;
-  if (fs.existsSync(path.join(baseDir, targetFile))) return baseDir;
-  for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      const candidate = path.join(baseDir, entry.name);
-      if (fs.existsSync(path.join(candidate, targetFile))) return candidate;
-    }
+  const hasAll = dir => requiredFiles.every(file => fs.existsSync(path.join(dir, file)));
+  if (hasAll(baseDir)) return baseDir;
+  const dirs = fs.readdirSync(baseDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort((a, b) => a.localeCompare(b, 'en'));
+  for (const name of dirs) {
+    const candidate = path.join(baseDir, name);
+    if (hasAll(candidate)) return candidate;
   }
   return null;
 }
@@ -29,14 +32,19 @@ function findSubdirWithFile(baseDir, targetFile) {
 const isWin = process.platform === 'win32';
 const sdkRoot = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || 'D:\\DevEnv\\apps\\android-sdk';
 const aaptName = isWin ? 'aapt.exe' : 'aapt';
-const buildToolsDir = findSubdirWithFile(path.join(sdkRoot, 'build-tools'), aaptName) || path.join(sdkRoot, 'build-tools', 'android-14');
-const platformDir = findSubdirWithFile(path.join(sdkRoot, 'platforms'), 'android.jar') || path.join(sdkRoot, 'platforms', 'android-34');
+const dexdumpName = isWin ? 'dexdump.exe' : 'dexdump';
+const zipalignName = isWin ? 'zipalign.exe' : 'zipalign';
+const apksignerName = isWin ? 'apksigner.bat' : 'apksigner';
+const buildToolsDir = findSubdirWithFiles(path.join(sdkRoot, 'build-tools'), [aaptName, dexdumpName, zipalignName, apksignerName])
+  || path.join(sdkRoot, 'build-tools', 'android-14');
+const platformDir = findSubdirWithFiles(path.join(sdkRoot, 'platforms'), ['android.jar'])
+  || path.join(sdkRoot, 'platforms', 'android-34');
 const platformJar = path.join(platformDir, 'android.jar');
 
 const aapt = path.join(buildToolsDir, aaptName);
-const dexdump = path.join(buildToolsDir, isWin ? 'dexdump.exe' : 'dexdump');
-const zipalign = path.join(buildToolsDir, isWin ? 'zipalign.exe' : 'zipalign');
-const apksigner = path.join(buildToolsDir, isWin ? 'apksigner.bat' : 'apksigner');
+const dexdump = path.join(buildToolsDir, dexdumpName);
+const zipalign = path.join(buildToolsDir, zipalignName);
+const apksigner = path.join(buildToolsDir, apksignerName);
 
 if (!fs.existsSync(apkPath)) {
   test('APK binary tests', { skip: 'APK not packaged yet' }, () => {});

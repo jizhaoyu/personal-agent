@@ -20,12 +20,12 @@ function fixture(t) {
   return { root, put };
 }
 test('build identity includes working source contents instead of relying on git HEAD', t => {
-  const { root, put } = fixture(t); const { createBuildInfo } = optionalScript('build-info.cjs');
+  const { root, put } = fixture(t); const { PRODUCT_VERSION, createBuildInfo } = optionalScript('build-info.cjs');
   assert.equal(typeof createBuildInfo, 'function');
   const now = '2026-10-29T04:00:00.000Z';
   const first = createBuildInfo(root, { now });
   assert.deepEqual(first, createBuildInfo(root, { now }));
-  assert.equal(first.productVersion, '5.2.0-trial'); assert.equal(first.channel, 'internal-trial'); assert.equal(first.builtAt, now);
+  assert.equal(first.productVersion, PRODUCT_VERSION || '5.2.1-trial'); assert.equal(first.channel, 'internal-trial'); assert.equal(first.builtAt, now);
   put('src/App.tsx', 'changed uncommitted source');
   assert.notEqual(createBuildInfo(root, { now }).buildId, first.buildId);
   const beforeSecretChange = createBuildInfo(root, { now }).buildId;
@@ -33,7 +33,7 @@ test('build identity includes working source contents instead of relying on git 
   assert.equal(createBuildInfo(root, { now }).buildId, beforeSecretChange);
 });
 test('portable package copies only runtime allowlisted files and never overwrites an existing build', t => {
-  const { root, put } = fixture(t); const { createBuildInfo, stampDist } = optionalScript('build-info.cjs');
+  const { root, put } = fixture(t); const { PRODUCT_VERSION, createBuildInfo, stampDist } = optionalScript('build-info.cjs');
   const { packageTrial } = optionalScript('package-trial.cjs');
   assert.equal(typeof createBuildInfo, 'function'); assert.equal(typeof stampDist, 'function'); assert.equal(typeof packageTrial, 'function');
   put('shared/build-info.json', JSON.stringify(createBuildInfo(root, { now: '2026-10-29T04:00:00.000Z' })));
@@ -48,7 +48,7 @@ test('portable package copies only runtime allowlisted files and never overwrite
   for (const forbidden of ['.env', 'credentials.json', 'looma.sqlite', 'full-backup.jsonl', 'private-key.pem', 'secret.json', 'default_app.asar']) assert.ok(!files.some(name => name.split(path.sep).at(-1) === forbidden), forbidden);
   assert.equal(files.some(name => name.endsWith('package-lock.json')), false);
   const packaged = JSON.parse(fs.readFileSync(path.join(result.directory, 'resources/app/package.json'), 'utf8'));
-  assert.equal(packaged.main, 'electron/main.cjs'); assert.equal(packaged.version, '5.2.0-trial'); assert.equal(packaged.scripts, undefined);
+  assert.equal(packaged.main, 'electron/main.cjs'); assert.equal(packaged.version, PRODUCT_VERSION || '5.2.1-trial'); assert.equal(packaged.scripts, undefined);
   assert.match(fs.readFileSync(path.join(result.directory, '试用前请读.txt'), 'utf8'), /安全发布门槛尚未完成/);
   assert.throws(() => packageTrial(root, { outputRoot: path.join(root, 'out') }), /已存在/);
 });

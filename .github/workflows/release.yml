@@ -56,9 +56,17 @@ jobs:
           if (-not (Test-Path $sdkmanager)) {
             $sdkmanager = Get-ChildItem -Path $sdk -Filter "sdkmanager.bat" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           }
-          if (-not (Test-Path (Join-Path $sdk "platforms\android-34\android.jar")) -or -not (Get-ChildItem (Join-Path $sdk "build-tools") -Filter "aapt2.exe" -Recurse -ErrorAction SilentlyContinue)) {
+          $hasBuildTools = (Get-ChildItem -Path (Join-Path $sdk "build-tools") -Directory -ErrorAction SilentlyContinue | Where-Object {
+            (Test-Path (Join-Path $_.FullName "aapt2.exe")) -and
+            (Test-Path (Join-Path $_.FullName "aapt.exe")) -and
+            (Test-Path (Join-Path $_.FullName "d8.bat")) -and
+            (Test-Path (Join-Path $_.FullName "dexdump.exe")) -and
+            (Test-Path (Join-Path $_.FullName "zipalign.exe")) -and
+            (Test-Path (Join-Path $_.FullName "apksigner.bat"))
+          }).Count -gt 0
+          if (-not (Test-Path (Join-Path $sdk "platforms\android-34\android.jar")) -or -not $hasBuildTools) {
             if (-not $sdkmanager) { throw "sdkmanager.bat not found to install Android SDK 34" }
-            & $sdkmanager "platforms;android-34" "build-tools;34.0.0"
+            (@('y') * 20) -join "`n" | & $sdkmanager "platforms;android-34" "build-tools;34.0.0"
           }
 
       - name: Decode locked Android release keystore from Secret
@@ -118,8 +126,12 @@ jobs:
           $apk = "${{ steps.prep.outputs.apk }}"
           $zip = "${{ steps.prep.outputs.zip }}"
           $notes = "${{ steps.prep.outputs.notes }}"
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $prevPref = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & gh release view $tag *> $null
+          $releaseExists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $prevPref
+          if ($releaseExists) {
             gh release upload $tag $apk $zip --clobber
             gh release edit $tag --title "Looma $tag" --notes-file $notes --draft=false
           } else {
