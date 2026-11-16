@@ -1,6 +1,6 @@
 {
-  "_ClosureReceipt-BGRoH9El.js": {
-    "file": "assets/ClosureReceipt-BGRoH9El.js",
+  "_ClosureReceipt-CResm81L.js": {
+    "file": "assets/ClosureReceipt-CResm81L.js",
     "name": "ClosureReceipt",
     "imports": [
       "_vendor-react-CAH2-Xdv.js",
@@ -20,7 +20,7 @@
     "name": "vendor-react"
   },
   "index.html": {
-    "file": "assets/index-DutpE7p1.js",
+    "file": "assets/index-C8-7pWWl.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -47,7 +47,7 @@
       "src/services/appUpdate.ts"
     ],
     "css": [
-      "assets/index-j4sqUyEF.css"
+      "assets/index-Ba-OPuQj.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -57,7 +57,7 @@
     "isDynamicEntry": true
   },
   "src/components/AlignmentModal.tsx": {
-    "file": "assets/AlignmentModal-C1F1VmD0.js",
+    "file": "assets/AlignmentModal-DfMGvXmz.js",
     "name": "AlignmentModal",
     "src": "src/components/AlignmentModal.tsx",
     "isDynamicEntry": true,
@@ -71,7 +71,7 @@
     ]
   },
   "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-tdPxeO_-.js",
+    "file": "assets/ChatPill-COxQJABg.js",
     "name": "ChatPill",
     "src": "src/components/ChatPill.tsx",
     "isDynamicEntry": true,
@@ -82,7 +82,7 @@
     ]
   },
   "src/components/CheckinBoard.tsx": {
-    "file": "assets/CheckinBoard-C5R4s_MN.js",
+    "file": "assets/CheckinBoard-6Uw2I03U.js",
     "name": "CheckinBoard",
     "src": "src/components/CheckinBoard.tsx",
     "isDynamicEntry": true,
@@ -96,7 +96,7 @@
     ]
   },
   "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-Cy9hZJty.js",
+    "file": "assets/LivingCardsBoard-BYMSW3ig.js",
     "name": "LivingCardsBoard",
     "src": "src/components/LivingCardsBoard.tsx",
     "isDynamicEntry": true,
@@ -107,7 +107,7 @@
     ]
   },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-gcgZLfqx.js",
+    "file": "assets/MemoryCenter-BgUPUQ88.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
@@ -124,14 +124,14 @@
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-C_De91BU.js",
+    "file": "assets/PracticeModal-DwBqYZ2i.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,
     "imports": [
       "_vendor-react-CAH2-Xdv.js",
       "index.html",
-      "_ClosureReceipt-BGRoH9El.js",
+      "_ClosureReceipt-CResm81L.js",
       "_vendor-icons-BwHIlTls.js"
     ],
     "css": [
@@ -139,7 +139,7 @@
     ]
   },
   "src/components/SettingsModal.tsx": {
-    "file": "assets/SettingsModal-JX5qKss4.js",
+    "file": "assets/SettingsModal-DuSgzsoA.js",
     "name": "SettingsModal",
     "src": "src/components/SettingsModal.tsx",
     "isDynamicEntry": true,
@@ -150,7 +150,7 @@
     ]
   },
   "src/components/TrialInfoModal.tsx": {
-    "file": "assets/TrialInfoModal-MiaLz4r7.js",
+    "file": "assets/TrialInfoModal-Ckr27H20.js",
     "name": "TrialInfoModal",
     "src": "src/components/TrialInfoModal.tsx",
     "isDynamicEntry": true,
@@ -164,14 +164,14 @@
     ]
   },
   "src/components/WorkBench.tsx": {
-    "file": "assets/WorkBench-fHw8UjDG.js",
+    "file": "assets/WorkBench-BLRuwycG.js",
     "name": "WorkBench",
     "src": "src/components/WorkBench.tsx",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
       "_vendor-react-CAH2-Xdv.js",
-      "_ClosureReceipt-BGRoH9El.js",
+      "_ClosureReceipt-CResm81L.js",
       "_vendor-icons-BwHIlTls.js"
     ],
     "dynamicImports": [
@@ -182,7 +182,7 @@
     ]
   },
   "src/persistence/indexedDb.ts": {
-    "file": "assets/indexedDb-B4qANcZs.js",
+    "file": "assets/indexedDb-C06UdaML.js",
     "name": "indexedDb",
     "src": "src/persistence/indexedDb.ts",
     "isDynamicEntry": true,

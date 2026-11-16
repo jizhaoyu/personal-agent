@@ -111,7 +111,7 @@ function packageAndroidApk(options = {}) {
   const mainDir = path.join(rootDir, 'android', 'app', 'src', 'main');
   const manifestXml = fs.readFileSync(path.join(mainDir, 'AndroidManifest.xml'), 'utf8');
   const versionMatch = manifestXml.match(/android:versionName="([^"]+)"/);
-  const apkVersionName = versionMatch ? versionMatch[1] : '5.2.2';
+  const apkVersionName = versionMatch ? versionMatch[1] : '5.2.3';
   const workDir = path.join(rootDir, 'android', 'app', 'build', 'apk-work');
   const classesDir = path.join(workDir, 'classes');
   const genDir = path.join(workDir, 'gen');

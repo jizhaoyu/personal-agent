@@ -10,8 +10,8 @@ const rootDir = process.cwd();
 const manifestXml = fs.readFileSync(path.join(rootDir, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
 const versionCodeMatch = manifestXml.match(/android:versionCode="(\d+)"/);
 const versionNameMatch = manifestXml.match(/android:versionName="([^"]+)"/);
-const expectedVersionCode = versionCodeMatch ? versionCodeMatch[1] : '522';
-const expectedVersionName = versionNameMatch ? versionNameMatch[1] : '5.2.2';
+const expectedVersionCode = versionCodeMatch ? versionCodeMatch[1] : '523';
+const expectedVersionName = versionNameMatch ? versionNameMatch[1] : '5.2.3';
 const apkPath = path.join(rootDir, 'output', 'android', `Looma-v${expectedVersionName}-release-signed.apk`);
 
 function findSubdirWithFiles(baseDir, requiredFiles) {

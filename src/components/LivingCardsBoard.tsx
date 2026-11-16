@@ -86,6 +86,37 @@ export function normalizeWallet(
   };
 }
 
+export function applyWishDelta(
+  w: WalletCardState,
+  delta: number,
+): WalletCardState {
+  const base = normalizeWallet(w);
+  if (!Number.isFinite(delta) || delta === 0) return base;
+  const rawWishes = base.wishes || [];
+  let targetId = base.activeWishId;
+  if (delta < 0) {
+    const active = rawWishes.find(item => item.id === targetId) || rawWishes[0];
+    if (active && (active.savedAmount || 0) < Math.abs(delta)) {
+      const fallback = rawWishes.find(item => (item.savedAmount || 0) >= Math.abs(delta))
+        || rawWishes.find(item => (item.savedAmount || 0) > (active.savedAmount || 0));
+      if (fallback) targetId = fallback.id;
+    }
+  }
+  const wishes = rawWishes.map(item =>
+    item.id === targetId
+      ? { ...item, savedAmount: Math.max(0, +((item.savedAmount || 0) + delta).toFixed(2)) }
+      : item,
+  );
+  const activeWish = wishes.find(item => item.id === base.activeWishId) || wishes[0];
+  return normalizeWallet({
+    ...base,
+    wishSaved: activeWish
+      ? activeWish.savedAmount
+      : Math.max(0, +((base.wishSaved || 0) + delta).toFixed(2)),
+    wishes,
+  });
+}
+
 export function monthlyExpenseTotal(entries: WalletCardState['entries'], now = Date.now()): number {
   const month = monthFormatter.format(now);
   return entries.filter(entry => entry.type === 'expense' && Number.isFinite(entry.timestamp) &&
@@ -146,6 +177,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   const [budgetInput, setBudgetInput] = useState('');
   const [editingWish, setEditingWish] = useState(false);
   const [wishTitleInput, setWishTitleInput] = useState('');
+  const [wishSavedInput, setWishSavedInput] = useState('');
   const [wishTargetInput, setWishTargetInput] = useState('');
   const [addingWish, setAddingWish] = useState(false);
   const [newWishTitle, setNewWishTitle] = useState('');
@@ -156,6 +188,11 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   const [entryAmount, setEntryAmount] = useState('');
   const [entryType, setEntryType] = useState<ExpenseEntry['type']>('expense');
   const [entryCategory, setEntryCategory] = useState<ExpenseEntry['category']>('餐饮☕');
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editingEntryTitle, setEditingEntryTitle] = useState('');
+  const [editingEntryAmount, setEditingEntryAmount] = useState('');
+  const [editingEntryType, setEditingEntryType] = useState<ExpenseEntry['type']>('expense');
+  const [editingEntryCategory, setEditingEntryCategory] = useState<ExpenseEntry['category']>('餐饮☕');
   const [showAllEntries, setShowAllEntries] = useState(false);
   const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
   const [walletError, setWalletError] = useState('');
@@ -231,13 +268,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   };
 
   const applyDepositToWallet = (amount: number, entryTitleText: string): WalletCardState => {
-    const base = normalizeWallet(wallet);
-    const wishes = (base.wishes || []).map(item =>
-      item.id === base.activeWishId
-        ? { ...item, savedAmount: Math.max(0, (item.savedAmount || 0) + amount) }
-        : item,
-    );
-    const activeWish = wishes.find(item => item.id === base.activeWishId) || wishes[0];
+    const adjusted = applyWishDelta(wallet, amount);
     const nextEntry: ExpenseEntry = {
       id: makeLocalId('exp'),
       title: entryTitleText,
@@ -247,10 +278,8 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       timestamp: Date.now(),
     };
     return normalizeWallet({
-      ...base,
-      wishSaved: activeWish ? activeWish.savedAmount : base.wishSaved + amount,
-      wishes,
-      entries: [nextEntry, ...base.entries],
+      ...adjusted,
+      entries: [nextEntry, ...adjusted.entries],
     });
   };
 
@@ -321,6 +350,8 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
     e.preventDefault();
     const title = wishTitleInput.trim();
     const target = Number(wishTargetInput);
+    const base = normalizeWallet(wallet);
+    const saved = wishSavedInput.trim() === '' ? base.wishSaved : Number(wishSavedInput);
     if (!title) {
       setWalletError(tr('cards.errWishTitleRequired', { zh: '请填写心愿名称。', en: 'Enter a wish title.' }));
       return;
@@ -329,16 +360,23 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       setWalletError(tr('cards.errWishTargetPositive', { zh: '目标金额需大于 0。', en: 'Target amount must be greater than 0.' }));
       return;
     }
+    if (!Number.isFinite(saved) || saved < 0) {
+      setWalletError(tr('cards.errWishSavedNonNeg', { zh: '已攒金额不能为负数。', en: 'Saved amount cannot be negative.' }));
+      return;
+    }
     setWalletError('');
-    const base = normalizeWallet(wallet);
     const roundedTarget = +target.toFixed(2);
+    const roundedSaved = +saved.toFixed(2);
     const wishes = (base.wishes || []).map(item =>
-      item.id === base.activeWishId ? { ...item, title, targetAmount: roundedTarget } : item,
+      item.id === base.activeWishId
+        ? { ...item, title, targetAmount: roundedTarget, savedAmount: roundedSaved }
+        : item,
     );
     const next = normalizeWallet({
       ...base,
       wishTitle: title,
       wishTarget: roundedTarget,
+      wishSaved: roundedSaved,
       wishes,
     });
     return persistUpdate(
@@ -437,7 +475,6 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
     }
     setWalletError('');
     const rounded = +amount.toFixed(2);
-    const base = normalizeWallet(wallet);
     const created: ExpenseEntry = {
       id: makeLocalId('exp'),
       title,
@@ -447,17 +484,10 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
       timestamp: Date.now(),
     };
     const delta = entryType === 'saving' || entryType === 'income' ? rounded : 0;
-    const wishes = (base.wishes || []).map(item =>
-      delta > 0 && item.id === base.activeWishId
-        ? { ...item, savedAmount: Math.max(0, (item.savedAmount || 0) + delta) }
-        : item,
-    );
-    const activeWish = wishes.find(item => item.id === base.activeWishId) || wishes[0];
+    const adjusted = applyWishDelta(wallet, delta);
     const next = normalizeWallet({
-      ...base,
-      wishSaved: delta > 0 ? (activeWish ? activeWish.savedAmount : base.wishSaved + delta) : base.wishSaved,
-      wishes,
-      entries: [created, ...base.entries],
+      ...adjusted,
+      entries: [created, ...adjusted.entries],
     });
     return persistUpdate(
       () => Repository.saveWalletCard(next),
@@ -474,29 +504,117 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
     );
   };
 
+  const resetEntryEdit = () => {
+    setEditingEntryId(null);
+    setEditingEntryTitle('');
+    setEditingEntryAmount('');
+    setEditingEntryType('expense');
+    setEditingEntryCategory('餐饮☕');
+  };
+
+  const openEntryEdit = (entry: ExpenseEntry) => {
+    setConfirmDeleteEntryId(null);
+    setEditingEntryId(entry.id);
+    setEditingEntryTitle(entry.title);
+    setEditingEntryAmount(String(entry.amount));
+    setEditingEntryType(entry.type);
+    setEditingEntryCategory(entry.category === '金库✨' && entry.type === 'expense' ? '餐饮☕' : entry.category);
+    setWalletError('');
+  };
+
+  const handleSaveEditedEntry = (e: React.FormEvent, original: ExpenseEntry) => {
+    e.preventDefault();
+    const title = editingEntryTitle.trim();
+    const amount = Number(editingEntryAmount);
+    if (!title) {
+      setWalletError(tr('cards.errEntryTitleRequired', { zh: '请填写账单名称。', en: 'Enter a description.' }));
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setWalletError(tr('cards.errPositiveAmount', { zh: '请输入大于 0 的金额。', en: 'Enter an amount greater than 0.' }));
+      return;
+    }
+    setWalletError('');
+    const rounded = +amount.toFixed(2);
+    const updatedCategory: ExpenseEntry['category'] = editingEntryType === 'expense'
+      ? (editingEntryCategory === '金库✨' ? '餐饮☕' : editingEntryCategory)
+      : '金库✨';
+    const updatedEntry: ExpenseEntry = {
+      ...original,
+      title,
+      amount: rounded,
+      type: editingEntryType,
+      category: updatedCategory,
+    };
+    const oldWishContribution = original.type === 'saving' || original.type === 'income' ? original.amount : 0;
+    const newWishContribution = updatedEntry.type === 'saving' || updatedEntry.type === 'income' ? updatedEntry.amount : 0;
+    const wishDelta = +(newWishContribution - oldWishContribution).toFixed(2);
+    const adjusted = applyWishDelta(wallet, wishDelta);
+    const next = normalizeWallet({
+      ...adjusted,
+      entries: adjusted.entries.map(item => (item.id === original.id ? updatedEntry : item)),
+    });
+    return persistUpdate(
+      () => Repository.saveWalletCard(next),
+      () => {
+        setWallet(next);
+        resetEntryEdit();
+      },
+      tr('cards.entryUpdatedToast', {
+        zh: '已更新账单「{title}」为 {amount}。',
+        en: 'Updated entry "{title}" to {amount}.',
+      }, { title, amount: formatBudgetAmount(rounded, lang) }),
+    );
+  };
+
   const handleDeleteEntry = (entry: ExpenseEntry) => {
     setConfirmDeleteEntryId(null);
+    const wishDelta = entry.type === 'saving' || entry.type === 'income' ? -entry.amount : 0;
+    const adjusted = applyWishDelta(wallet, wishDelta);
+    const nextWallet = normalizeWallet({
+      ...adjusted,
+      entries: adjusted.entries.filter(item => item.id !== entry.id),
+    });
     return persistUpdate(
       async () => {
         if (typeof Repository.transaction === 'function') {
-          const before = typeof Repository.get === 'function'
+          const mutations: Array<{ kind: 'expense' | 'wallet'; id: string; before: any; after: any }> = [];
+          const beforeExpense = typeof Repository.get === 'function'
             ? await Repository.get<ExpenseEntry>('life', 'expense', entry.id)
             : entry;
-          if (before) {
+          if (beforeExpense) {
+            mutations.push({ kind: 'expense', id: entry.id, before: beforeExpense, after: null });
+          }
+          if (wishDelta !== 0) {
+            const { entries: _entries, ...nextConfig } = nextWallet;
+            const beforeWallet = typeof Repository.get === 'function'
+              ? await Repository.get<Omit<WalletCardState, 'entries'>>('life', 'wallet', 'wallet')
+              : null;
+            if (JSON.stringify(beforeWallet) !== JSON.stringify(nextConfig)) {
+              mutations.push({ kind: 'wallet', id: 'wallet', before: beforeWallet, after: nextConfig });
+            }
+          }
+          if (mutations.length > 0) {
             const res = await Repository.transaction(
               'life',
-              [{ kind: 'expense', id: entry.id, before, after: null }],
+              mutations,
               { event: true, sourceText: '删除生活账单记录' },
             );
             if (!res.ok) throw new Error(res.error);
           }
+        } else if (typeof Repository.saveWalletCard === 'function') {
+          await Repository.saveWalletCard(nextWallet);
         }
       },
       () => {
-        setWallet(prev => normalizeWallet({
-          ...prev,
-          entries: prev.entries.filter(item => item.id !== entry.id),
-        }));
+        setWallet(prev => {
+          const nextAdjusted = applyWishDelta(prev, wishDelta);
+          return normalizeWallet({
+            ...nextAdjusted,
+            entries: nextAdjusted.entries.filter(item => item.id !== entry.id),
+          });
+        });
+        if (editingEntryId === entry.id) resetEntryEdit();
       },
       tr('cards.entryDeletedToast', { zh: '已删除账单「{title}」。', en: 'Deleted entry "{title}".' }, { title: entry.title }),
     );
@@ -628,7 +746,8 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   const budgetUsedPct = boundedProgress(totalSpent, wallet.monthlyBudget);
   const wishPct = boundedProgress(wallet.wishSaved, wallet.wishTarget);
   const wishes = wallet.wishes || [];
-  const visibleEntries = showAllEntries ? wallet.entries : wallet.entries.slice(0, 6);
+  const sortedEntries = [...wallet.entries].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  const visibleEntries = showAllEntries ? sortedEntries : sortedEntries.slice(0, 6);
 
   const renderDeleteConfirm = (prompt: string, onConfirm: () => void, onCancel: () => void) => (
     <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--line-hairline)]">
@@ -850,6 +969,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                       setEditingWish(!editingWish);
                       setAddingWish(false);
                       setWishTitleInput(wallet.wishTitle);
+                      setWishSavedInput(String(wallet.wishSaved));
                       setWishTargetInput(String(wallet.wishTarget));
                       setWalletError('');
                     }}
@@ -909,13 +1029,24 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   />
                   <input
                     type="number"
+                    min={0}
+                    step="any"
+                    aria-label={tr('cards.wishSavedInputAria', { zh: '心愿已攒金额', en: 'Wish saved amount' })}
+                    placeholder={tr('cards.wishSavedPlaceholder', { zh: '已攒金额', en: 'Saved' })}
+                    value={wishSavedInput}
+                    onChange={e => setWishSavedInput(e.target.value)}
+                    style={{ width: '100px' }}
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
+                  />
+                  <input
+                    type="number"
                     min={1}
                     step="any"
                     aria-label={tr('cards.wishTargetInputAria', { zh: '心愿目标金额', en: 'Wish target amount' })}
                     placeholder={tr('cards.wishTargetPlaceholder', { zh: '目标金额', en: 'Target' })}
                     value={wishTargetInput}
                     onChange={e => setWishTargetInput(e.target.value)}
-                    style={{ width: '110px' }}
+                    style={{ width: '100px' }}
                     className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
                   />
                   <button
@@ -1069,6 +1200,7 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                   {visibleEntries.map((item) => {
                     const isPositive = item.type === 'saving' || item.type === 'income';
                     const isConfirming = confirmDeleteEntryId === item.id;
+                    const isEditingItem = editingEntryId === item.id;
                     return (
                       <div
                         key={item.id}
@@ -1081,9 +1213,9 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                             </span>
                             <span className="font-medium text-[var(--ink-primary)] truncate">{item.title}</span>
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="flex items-center gap-1 shrink-0">
                             <span
-                              className={`font-mono font-semibold tabular-nums ${
+                              className={`font-mono font-semibold tabular-nums mr-0.5 ${
                                 isPositive ? 'text-[#215936]' : 'text-[var(--ink-primary)]'
                               }`}
                             >
@@ -1091,14 +1223,96 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
                             </span>
                             <button
                               type="button"
+                              aria-label={tr('cards.editEntryAria', { zh: '编辑记录 {title}', en: 'Edit entry {title}' }, { title: item.title })}
+                              onClick={() => (isEditingItem ? resetEntryEdit() : openEntryEdit(item))}
+                              className="min-h-[var(--touch-target-min,34px)] min-w-[var(--touch-target-min,34px)] p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink-primary)] flex items-center justify-center cursor-pointer"
+                            >
+                              <Pencil size={13} aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
                               aria-label={tr('cards.deleteEntryAria', { zh: '删除记录 {title}', en: 'Delete entry {title}' }, { title: item.title })}
-                              onClick={() => setConfirmDeleteEntryId(isConfirming ? null : item.id)}
+                              onClick={() => {
+                                if (isEditingItem) resetEntryEdit();
+                                setConfirmDeleteEntryId(isConfirming ? null : item.id);
+                              }}
                               className="min-h-[var(--touch-target-min,34px)] min-w-[var(--touch-target-min,34px)] p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--danger-ink)] hover:bg-[var(--danger-soft)] flex items-center justify-center cursor-pointer"
                             >
                               <Trash2 size={13} aria-hidden="true" />
                             </button>
                           </div>
                         </div>
+                        {isEditingItem && (
+                          <form
+                            onSubmit={(e) => handleSaveEditedEntry(e, item)}
+                            className="pt-2 border-t border-[var(--line-hairline)] space-y-2"
+                          >
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                maxLength={40}
+                                aria-label={tr('cards.entryTitleAria', { zh: '账单名称', en: 'Entry title' })}
+                                placeholder={tr('cards.entryTitlePlaceholder', { zh: '例如：午饭 / 咖啡 / 工资', en: 'e.g. Lunch / Coffee / Salary' })}
+                                value={editingEntryTitle}
+                                onChange={e => setEditingEntryTitle(e.target.value)}
+                                className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                              />
+                              <input
+                                type="number"
+                                min={0.01}
+                                step="any"
+                                aria-label={tr('cards.entryAmountAria', { zh: '账单金额', en: 'Entry amount' })}
+                                placeholder={tr('cards.entryAmountPlaceholder', { zh: '金额', en: 'Amount' })}
+                                value={editingEntryAmount}
+                                onChange={e => setEditingEntryAmount(e.target.value)}
+                                className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
+                              />
+                            </div>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <select
+                                  aria-label={tr('cards.entryTypeAria', { zh: '账单类型', en: 'Entry type' })}
+                                  value={editingEntryType}
+                                  onChange={e => setEditingEntryType(e.target.value as ExpenseEntry['type'])}
+                                  style={{ width: 'auto' }}
+                                  className="min-h-[var(--touch-target-min,34px)] px-2 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                                >
+                                  <option value="expense">{tr('cards.entryTypeExpense', { zh: '支出', en: 'Expense' })}</option>
+                                  <option value="saving">{tr('cards.entryTypeSaving', { zh: '储蓄', en: 'Saving' })}</option>
+                                  <option value="income">{tr('cards.entryTypeIncome', { zh: '收入', en: 'Income' })}</option>
+                                </select>
+                                {editingEntryType === 'expense' && (
+                                  <select
+                                    aria-label={tr('cards.entryCategoryAria', { zh: '账单分类', en: 'Category' })}
+                                    value={editingEntryCategory}
+                                    onChange={e => setEditingEntryCategory(e.target.value as ExpenseEntry['category'])}
+                                    style={{ width: 'auto' }}
+                                    className="min-h-[var(--touch-target-min,34px)] px-2 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                                  >
+                                    {EXPENSE_CATEGORIES.map(cat => (
+                                      <option key={cat} value={cat}>{formatExpenseCategory(cat, lang)}</option>
+                                    ))}
+                                  </select>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="submit"
+                                  className="min-h-[var(--touch-target-min,34px)] px-3 py-1 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
+                                >
+                                  {t('common.save')}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={resetEntryEdit}
+                                  className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg text-xs text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] cursor-pointer"
+                                >
+                                  {t('common.cancel')}
+                                </button>
+                              </div>
+                            </div>
+                          </form>
+                        )}
                         {isConfirming && renderDeleteConfirm(
                           tr('cards.confirmDeleteEntryPrompt', { zh: '确认删除这条流水？', en: 'Delete this entry?' }),
                           () => handleDeleteEntry(item),

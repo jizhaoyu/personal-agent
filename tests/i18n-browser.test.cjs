@@ -111,7 +111,7 @@ test('real browser: update banner, settings dot badge, direct Updates tab jump, 
     await page.goto(origin);
     await page.getByPlaceholder('随手记录…').waitFor();
 
-    // Seed cached update newer than 5.2.2 (safe GitHub URLs + recent lastCheckedAt)
+    // Seed cached update newer than 5.2.3 (safe GitHub URLs + recent lastCheckedAt)
     await page.evaluate(() => {
       localStorage.setItem('looma.updateCache.v1', JSON.stringify({
         lastCheckedAt: Date.now(),
@@ -119,7 +119,7 @@ test('real browser: update banner, settings dot badge, direct Updates tab jump, 
           outcome: 'update-available',
           platform: 'desktop',
           checkedAt: new Date().toISOString(),
-          currentVersion: '5.2.2-trial',
+          currentVersion: '5.2.3-trial',
           latestVersion: 'v9.9.9',
           releaseTitle: 'Looma v9.9.9',
           notesSummary: '新增端内轻量更新提醒与缓存校验。',

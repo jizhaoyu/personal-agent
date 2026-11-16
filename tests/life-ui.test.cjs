@@ -226,3 +226,116 @@ test('image renderer is not loaded while opening living cards board', () => {
   const view = component('LivingCardsBoard');
   assert.equal(view.loads.includes('html2canvas'), false);
 });
+
+test('deleting a quick-saved +200 entry also deducts 200 from wishSaved and persists wallet config', async () => {
+  const transactions = [];
+  let savedWallet = null;
+  const view = component('LivingCardsBoard', {}, {
+    saveWalletCard: async (w) => { savedWallet = w; },
+    get: async (_space, kind, id) => {
+      if (kind === 'expense' && savedWallet) return savedWallet.entries.find(e => e.id === id) || null;
+      if (kind === 'wallet' && savedWallet) {
+        const { entries: _e, ...cfg } = savedWallet;
+        return cfg;
+      }
+      return null;
+    },
+    transaction: async (space, mutations, opts) => {
+      transactions.push({ space, mutations, opts });
+      return { ok: true };
+    },
+  });
+  const props = { mode: 'life', onCompanionToast() {} };
+  let tree = view.render(props);
+
+  // 1. Click +攒 ¥200
+  const quickSaveBtn = find(tree, node => node.type === 'button' && text(node).includes('+攒'));
+  assert.ok(quickSaveBtn);
+  await quickSaveBtn.props.onClick();
+
+  tree = view.render(props);
+  assert.match(text(tree), /已攒 ¥200/);
+  assert.match(text(tree), /\+¥200/);
+
+  // 2. Click delete button on the +200 entry and confirm deletion
+  const deleteBtn = find(tree, node => node.type === 'button' && String(node.props?.['aria-label'] || '').includes('删除记录'));
+  assert.ok(deleteBtn, 'entry must have a delete button');
+  deleteBtn.props.onClick();
+
+  tree = view.render(props);
+  const confirmBtn = find(tree, node => node.type === 'button' && text(node) === '确认');
+  assert.ok(confirmBtn, 'delete confirmation button must render');
+  await confirmBtn.props.onClick();
+
+  tree = view.render(props);
+  assert.match(text(tree), /已攒 ¥0/, 'wishSaved must return to 0 after deleting the +200 saving entry');
+  assert.doesNotMatch(text(tree), /\+¥200/, 'deleted +200 entry must no longer be displayed');
+  assert.equal(transactions.length, 1);
+  const walletMut = transactions[0].mutations.find(m => m.kind === 'wallet');
+  assert.ok(walletMut, 'transaction must also update wallet config');
+  assert.equal(walletMut.after.wishSaved, 0);
+  assert.equal(walletMut.after.wishes[0].savedAmount, 0);
+});
+
+test('recorded ledger entry amount and type can be edited inline and syncs wishSaved / monthly spent', async () => {
+  let savedWallet = null;
+  const notifications = [];
+  const view = component('LivingCardsBoard', {}, {
+    saveWalletCard: async (w) => { savedWallet = w; },
+  });
+  view.snapshot.partitions.life.wallet = {
+    monthlyBudget: 5000,
+    wishTitle: '旅行基金',
+    wishTarget: 10000,
+    wishSaved: 400,
+    wishes: [{ id: 'wish-1', title: '旅行基金', targetAmount: 10000, savedAmount: 400, group: '品质生活', isPrimary: true }],
+    activeWishId: 'wish-1',
+    entries: [
+      { id: 'exp-1', title: '买衣服', amount: 400, type: 'expense', category: '购物🛍️', timestamp: Date.now() },
+      { id: 'exp-2', title: '随手攒入心愿金库', amount: 400, type: 'saving', category: '金库✨', timestamp: Date.now() - 1000 },
+    ],
+  };
+  const props = { mode: 'life', onCompanionToast: msg => notifications.push(msg) };
+  let tree = view.render(props);
+  assert.match(text(tree), /已支出 ¥400/);
+  assert.match(text(tree), /已攒 ¥400/);
+
+  // 1. Edit expense entry '买衣服' from 400 to 40
+  const editExpenseBtn = find(tree, node => node.type === 'button' && node.props?.['aria-label'] === '编辑记录 买衣服');
+  assert.ok(editExpenseBtn, 'expense entry must have an edit button');
+  editExpenseBtn.props.onClick();
+
+  tree = view.render(props);
+  const amountInput = find(tree, node => node.type === 'input' && node.props?.['aria-label'] === '账单金额');
+  assert.ok(amountInput);
+  assert.equal(amountInput.props.value, '400');
+  amountInput.props.onChange({ target: { value: '40' } });
+
+  tree = view.render(props);
+  const editForm = find(tree, node => node.type === 'form' && find(node, child => child.type === 'input' && child.props?.['aria-label'] === '账单金额'));
+  assert.ok(editForm);
+  await editForm.props.onSubmit({ preventDefault() {} });
+
+  tree = view.render(props);
+  assert.match(text(tree), /已支出 ¥40 /);
+  assert.equal(savedWallet.entries.find(e => e.id === 'exp-1').amount, 40);
+
+  // 2. Edit saving entry '随手攒入心愿金库' from 400 to 150
+  const editSavingBtn = find(tree, node => node.type === 'button' && node.props?.['aria-label'] === '编辑记录 随手攒入心愿金库');
+  assert.ok(editSavingBtn, 'saving entry must have an edit button');
+  editSavingBtn.props.onClick();
+
+  tree = view.render(props);
+  const savingAmountInput = find(tree, node => node.type === 'input' && node.props?.['aria-label'] === '账单金额');
+  savingAmountInput.props.onChange({ target: { value: '150' } });
+
+  tree = view.render(props);
+  const savingEditForm = find(tree, node => node.type === 'form' && find(node, child => child.type === 'input' && child.props?.['aria-label'] === '账单金额'));
+  await savingEditForm.props.onSubmit({ preventDefault() {} });
+
+  tree = view.render(props);
+  assert.match(text(tree), /已攒 ¥150/);
+  assert.equal(savedWallet.wishSaved, 150);
+  assert.equal(savedWallet.wishes[0].savedAmount, 150);
+  assert.equal(savedWallet.entries.find(e => e.id === 'exp-2').amount, 150);
+});
