@@ -12,14 +12,31 @@ function sha256File(filePath) {
 function zipPortableDirectory(sourceDir, targetZip, rootEntryName) {
   if (fs.existsSync(targetZip)) fs.unlinkSync(targetZip);
   if (process.platform === 'win32') {
-    const stageParent = fs.mkdtempSync(path.join(path.dirname(targetZip), 'zip-stage-'));
-    try {
-      const stagedDir = path.join(stageParent, rootEntryName);
-      fs.cpSync(sourceDir, stagedDir, { recursive: true });
-      execFileSync('tar.exe', ['-a', '-c', '-f', targetZip, '-C', stageParent, rootEntryName], { stdio: ['ignore', 'ignore', 'inherit'] });
-    } finally {
-      fs.rmSync(stageParent, { recursive: true, force: true });
-    }
+    const psLiteral = value => `'${String(value).replace(/'/g, "''")}'`;
+    const psScript = [
+      '$ErrorActionPreference = "Stop"',
+      '$ProgressPreference = "SilentlyContinue"',
+      'Add-Type -AssemblyName System.IO.Compression',
+      'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+      `$src = [System.IO.Path]::GetFullPath(${psLiteral(sourceDir)})`,
+      `$zipPath = [System.IO.Path]::GetFullPath(${psLiteral(targetZip)})`,
+      `$prefix = ${psLiteral(rootEntryName)}`,
+      '$archive = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create, [System.Text.Encoding]::UTF8)',
+      'try {',
+      '  $files = [System.IO.Directory]::EnumerateFiles($src, "*", [System.IO.SearchOption]::AllDirectories)',
+      '  foreach ($file in $files) {',
+      "    $rel = $file.Substring($src.Length).TrimStart([char[]]@('\\', '/')).Replace('\\', '/')",
+      '    $entryName = "$prefix/$rel"',
+      '    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file, $entryName, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null',
+      '  }',
+      '} finally {',
+      '  $archive.Dispose()',
+      '}',
+    ].join('\n');
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand', encoded], {
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
     return;
   }
   const stageParent = fs.mkdtempSync(path.join(path.dirname(targetZip), 'zip-stage-'));
