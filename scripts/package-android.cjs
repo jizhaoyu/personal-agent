@@ -99,6 +99,9 @@ function packageAndroidApk(options = {}) {
   const assetIntegrity = syncAndroidAssets({ rootDir });
 
   const mainDir = path.join(rootDir, 'android', 'app', 'src', 'main');
+  const manifestXml = fs.readFileSync(path.join(mainDir, 'AndroidManifest.xml'), 'utf8');
+  const versionMatch = manifestXml.match(/android:versionName="([^"]+)"/);
+  const apkVersionName = versionMatch ? versionMatch[1] : '5.2.0';
   const workDir = path.join(rootDir, 'android', 'app', 'build', 'apk-work');
   const classesDir = path.join(workDir, 'classes');
   const genDir = path.join(workDir, 'gen');
@@ -106,7 +109,7 @@ function packageAndroidApk(options = {}) {
   const unalignedApk = path.join(workDir, 'Looma-unaligned.apk');
   const alignedApk = path.join(workDir, 'Looma-aligned.apk');
   const outDir = path.join(rootDir, 'output', 'android');
-  const finalApk = path.join(outDir, 'Looma-v5.1.0-release-signed.apk');
+  const finalApk = path.join(outDir, `Looma-v${apkVersionName}-release-signed.apk`);
 
   fs.rmSync(workDir, { recursive: true, force: true });
   fs.mkdirSync(classesDir, { recursive: true });

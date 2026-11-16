@@ -9,6 +9,7 @@ import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Base64;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
@@ -40,7 +41,7 @@ public class MainActivity extends Activity {
     private float cachedImeBottomDp = 0f;
     private ValueCallback<Uri[]> pendingFileChooserCallback;
     private String pendingExportRequestId;
-    private String pendingExportContent;
+    private byte[] pendingExportBytes;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -388,30 +389,93 @@ public class MainActivity extends Activity {
     }
 
     void launchExportBackup(final String requestId, final String suggestedName, final String jsonContent) {
+        launchSaveDocument(requestId, suggestedName, "application/json", jsonContent, false);
+    }
+
+    private static String normalizeDocumentMimeType(String mimeType, String suggestedName, boolean isBase64) {
+        String lowerMime = mimeType != null ? mimeType.trim().toLowerCase(Locale.US) : "";
+        if ("image/png".equals(lowerMime)) return "image/png";
+        if ("text/plain".equals(lowerMime)) return "text/plain";
+        if ("application/json".equals(lowerMime) || "application/x-ndjson".equals(lowerMime) || "application/jsonl".equals(lowerMime)) {
+            return "application/json";
+        }
+        String lowerName = suggestedName != null ? suggestedName.trim().toLowerCase(Locale.US) : "";
+        if (lowerName.endsWith(".png")) return "image/png";
+        if (lowerName.endsWith(".json") || lowerName.endsWith(".jsonl")) return "application/json";
+        if (lowerName.endsWith(".txt")) return "text/plain";
+        return isBase64 ? "image/png" : "text/plain";
+    }
+
+    void launchSaveDocument(
+            final String requestId,
+            final String suggestedName,
+            final String mimeType,
+            final String content,
+            final boolean isBase64
+    ) {
+        if (requestId == null || requestId.trim().isEmpty()) return;
         runOnUiThread(() -> {
             if (isFinishing() || isDestroyed()) return;
             if (pendingExportRequestId != null) {
                 notifyBackupExportResult(requestId, false, false, "已有导出窗口打开中，请先完成当前保存。");
                 return;
             }
-            if (jsonContent == null || jsonContent.isEmpty()) {
-                notifyBackupExportResult(requestId, false, false, "备份内容为空。");
+            if (content == null || content.isEmpty()) {
+                notifyBackupExportResult(requestId, false, false, "保存内容为空。");
                 return;
             }
+
+            final String safeMime = normalizeDocumentMimeType(mimeType, suggestedName, isBase64);
+            final byte[] bytes;
+            final int maxBytes = 16 * 1024 * 1024;
+            if (isBase64) {
+                String raw = content.trim();
+                int marker = raw.indexOf(";base64,");
+                if (raw.regionMatches(true, 0, "data:", 0, 5) && marker > 0) {
+                    raw = raw.substring(marker + 8);
+                }
+                if (raw.isEmpty() || raw.length() > 22 * 1024 * 1024) {
+                    notifyBackupExportResult(requestId, false, false, "文件内容编码无效或超出 16MB 限制。");
+                    return;
+                }
+                try {
+                    bytes = Base64.decode(raw, Base64.DEFAULT);
+                } catch (IllegalArgumentException e) {
+                    notifyBackupExportResult(requestId, false, false, "文件内容编码解析失败。");
+                    return;
+                }
+                if (bytes == null || bytes.length == 0 || bytes.length > maxBytes) {
+                    notifyBackupExportResult(requestId, false, false, "文件大小超出 16MB 限制。");
+                    return;
+                }
+            } else {
+                bytes = content.getBytes(StandardCharsets.UTF_8);
+                if (bytes.length == 0 || bytes.length > maxBytes) {
+                    notifyBackupExportResult(requestId, false, false, "文件大小超出 16MB 限制。");
+                    return;
+                }
+            }
+
+            String defaultName = "image/png".equals(safeMime)
+                    ? "Looma-export.png"
+                    : ("text/plain".equals(safeMime) ? "Looma-report.txt" : "Looma-v5-backup.json");
             String safeName = (suggestedName != null && !suggestedName.trim().isEmpty())
-                    ? suggestedName.trim().replaceAll("[\\\\/:*?\"<>|]", "_")
-                    : "Looma-v5-backup.json";
+                    ? suggestedName.trim().replaceAll("[\\\\/:*?\"<>|\\x00-\\x1F]", "_").replaceAll("^\\.+", "")
+                    : defaultName;
+            if (safeName.isEmpty()) safeName = defaultName;
+            if (safeName.length() > 120) safeName = safeName.substring(0, 120);
+
             pendingExportRequestId = requestId;
-            pendingExportContent = jsonContent;
+            pendingExportBytes = bytes;
             try {
                 Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("application/json");
+                intent.setType(safeMime);
                 intent.putExtra(Intent.EXTRA_TITLE, safeName);
                 startActivityForResult(intent, REQUEST_EXPORT_BACKUP);
             } catch (Throwable t) {
                 pendingExportRequestId = null;
-                pendingExportContent = null;
+                pendingExportBytes = null;
                 notifyBackupExportResult(requestId, false, false, "无法打开系统文件保存器，请检查系统文档权限。");
             }
         });
@@ -469,25 +533,38 @@ public class MainActivity extends Activity {
         }
         if (requestCode == REQUEST_EXPORT_BACKUP) {
             String requestId = pendingExportRequestId;
-            String content = pendingExportContent;
+            byte[] bytes = pendingExportBytes;
             pendingExportRequestId = null;
-            pendingExportContent = null;
+            pendingExportBytes = null;
             if (requestId == null) return;
             if (resultCode != RESULT_OK || data == null || data.getData() == null) {
                 notifyBackupExportResult(requestId, false, true, "");
                 return;
             }
             Uri uri = data.getData();
-            try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
+            OutputStream out = null;
+            try {
+                try {
+                    out = getContentResolver().openOutputStream(uri, "wt");
+                } catch (Throwable ignored) {
+                    out = getContentResolver().openOutputStream(uri);
+                }
                 if (out == null) {
                     notifyBackupExportResult(requestId, false, false, "无法写入所选文件位置。");
                     return;
                 }
-                out.write((content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
+                out.write(bytes != null ? bytes : new byte[0]);
                 out.flush();
                 notifyBackupExportResult(requestId, true, false, "");
             } catch (Throwable t) {
-                notifyBackupExportResult(requestId, false, false, "备份文件写入失败，请换一个目录重试。");
+                notifyBackupExportResult(requestId, false, false, "文件写入失败，请换一个目录重试。");
+            } finally {
+                if (out != null) {
+                    try {
+                        out.close();
+                    } catch (Throwable ignored) {
+                    }
+                }
             }
         }
     }
@@ -502,7 +579,7 @@ public class MainActivity extends Activity {
             pendingFileChooserCallback = null;
         }
         pendingExportRequestId = null;
-        pendingExportContent = null;
+        pendingExportBytes = null;
         if (webView != null) {
             try {
                 webView.removeJavascriptInterface("LoomaAndroid");

@@ -8,9 +8,8 @@ import { StorageService, SNAPSHOT_KEY, newId } from '../services/storage';
 import { shanghaiDateKey } from '../services/dates';
 import { extractClientNames } from '../services/stateEngine';
 import { evaluateFollowUpTransition, transitionConditionIntent, convertConditionToTaskOperations, type ConditionLifecycleAction } from '../services/conditionIntents';
-import { createIndexedDbBackend } from './indexedDb';
 import type { PersistenceBackend, RecordKind } from './indexedDb';
-import { DEFAULT_PUBLIC_SETTINGS, makeBootstrap, sameValue, searchTerms, flattenV3, validateRecord, recordAt } from '../../shared/persistence-core.mjs';
+import { DEFAULT_PUBLIC_SETTINGS, isBusinessKind, makeBootstrap, sameValue, searchTerms, flattenV3, validateRecord, recordAt } from '../../shared/persistence-core.mjs';
 
 export type AppSnapshotV5 = Omit<AppSnapshotV3, 'schemaVersion'> & { schemaVersion: 5 };
 /** Source compatibility for the v4 UI adapters; persisted/current snapshots are v5. */
@@ -19,6 +18,8 @@ export interface Bootstrap { snapshot: AppSnapshotV5; stats: any }
 export interface QueryOptions { limit?: number; cursor?: string; query?: string; ids?: string[]; names?: string[]; relatedId?: string; dueOnly?: boolean }
 export interface QueryPage<T = any> { items: T[]; nextCursor?: string | null; total?: number }
 export interface RecordMutation { kind: RecordKind; id: string; before: any | null; after: any | null }
+const LIFE_DRAFT_STORAGE_KEY = 'looma_life_capture_draft_v1';
+const MAX_LIFE_DRAFT_LENGTH = 12000;
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const emptyCurrent = (): AppSnapshotV4 => makeBootstrap({ settings: DEFAULT_PUBLIC_SETTINGS, mode: 'life', revisions: { life: 0, work: 0 } }, [], { space: 'life' }).snapshot;
 const onlyPublicSettings = (settings: AppSettings) => Object.fromEntries(Object.keys(DEFAULT_PUBLIC_SETTINGS).filter(key => settings[key] !== undefined).map(key => [key, settings[key]]));
@@ -36,16 +37,118 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
   let dataEpoch = 0;
   let restoreWarning: string | undefined;
   let restoring = false;
+  const loadedSpaces = new Set<WorkspaceMode>();
+  const spaceStats: Partial<Record<WorkspaceMode, any>> = {};
+  let memoryLifeDraft = '';
+  const draftSessionToken = newId('draft-session');
   const captures = new Map<string, { signature: string; intent: string; command: any; promise?: Promise<CaptureCommitResult>; uncertain?: boolean; completed?: boolean }>();
   const listeners = new Set<() => void>();
   const emit = () => { for (const listener of listeners) { try { listener(); } catch { /* UI cannot invalidate a committed write. */ } } };
   const restoredMessage = '工作区已从备份恢复，请按恢复后的资料重新核对这次操作。';
   const restoredReadWarning = '业务资料已从备份恢复，视图暂未读取成功。请重新读取或重开应用，勿重复导入。';
   const retiredCapture = (): CaptureCommitResult => ({ outcome: 'rejected', error: restoredMessage });
+  function clearStoredLifeDraft() {
+    memoryLifeDraft = '';
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.removeItem(LIFE_DRAFT_STORAGE_KEY);
+    } catch { /* ignore storage errors */ }
+  }
   function invalidateAfterRestore() {
     dataEpoch++; captures.clear();
+    loadedSpaces.clear();
+    delete spaceStats.life; delete spaceStats.work;
+    clearStoredLifeDraft();
     partitionRefreshSequence.life++; partitionRefreshSequence.work++;
     initialized = undefined; current = emptyCurrent(); stats = {};
+  }
+  function applySettingsUpdate(result: any, patch?: Record<string, any>) {
+    const nextSettings = result && typeof result === 'object' && !Array.isArray(result) && !('ok' in result)
+      ? { ...current.settings, ...result }
+      : patch
+        ? { ...current.settings, ...patch }
+        : current.settings;
+    current = { ...current, settings: nextSettings };
+    emit();
+  }
+  function canPatchTransactionLocally(space: WorkspaceMode, command: any, result: any): boolean {
+    if (!loadedSpaces.has(space)) return false;
+    if (result?.already) return true;
+    const mutations: RecordMutation[] = Array.isArray(command.mutations) ? command.mutations : [];
+    if (command.redactSourceIds?.length) return false;
+    if (mutations.some(m => m.kind === 'memory' && m.after?.status === 'retracted')) return false;
+    if (space === 'work') return !mutations.some(m => isBusinessKind(m.kind));
+    return true;
+  }
+  function applyLocalTransaction(space: WorkspaceMode, command: any, result: any) {
+    if (result?.already) return;
+    const mutations: RecordMutation[] = Array.isArray(command.mutations) ? command.mutations : [];
+    const nextPartition: any = copy(current.partitions[space]);
+    const upsertList = (items: any[], id: string, after: any | null, cap = 50) => {
+      const idx = items.findIndex(item => item.id === id);
+      if (after === null) {
+        if (idx >= 0) items.splice(idx, 1);
+        return;
+      }
+      const cloned = copy(after);
+      if (idx >= 0) items[idx] = cloned;
+      else items.push(cloned);
+      items.sort((a, b) => recordAt(a) - recordAt(b) || String(a.id).localeCompare(String(b.id)));
+      if (items.length > cap) items.splice(0, items.length - cap);
+    };
+    for (const m of mutations) {
+      if (m.kind === 'wallet' && space === 'life' && m.after) {
+        nextPartition.wallet = { ...copy(m.after), entries: nextPartition.wallet.entries };
+      } else if (m.kind === 'rpg' && space === 'life' && m.after) {
+        nextPartition.rpg = copy(m.after);
+      } else if (m.kind === 'expense' && space === 'life') {
+        upsertList(nextPartition.wallet.entries, m.id, m.after);
+      } else if (m.kind === 'message') {
+        upsertList(nextPartition.messages, m.id, m.after);
+      } else if (m.kind === 'memory') {
+        upsertList(nextPartition.memories, m.id, m.after);
+      } else if (m.kind === 'summary') {
+        upsertList((nextPartition.summaries ||= []), m.id, m.after);
+      } else if (m.kind === 'journal') {
+        upsertList(nextPartition.journals, m.id, m.after);
+      } else if (m.kind === 'custom') {
+        upsertList(nextPartition.customCards, m.id, m.after);
+      } else if (m.kind === 'person' && space === 'life') {
+        upsertList(nextPartition.persons, m.id, m.after);
+      } else if (m.kind === 'closure' && space === 'work') {
+        upsertList((nextPartition.closures ||= []), m.id, m.after);
+      }
+    }
+    if (command.event) {
+      const eventId = `event-${command.id}`;
+      const latestAt = nextPartition.events.reduce((max: number, e: any) => Math.max(max, recordAt(e)), 0);
+      upsertList(nextPartition.events, eventId, {
+        id: eventId,
+        proposalId: command.id,
+        mode: space,
+        sourceMessageId: command.sourceMessageId || command.id,
+        sourceText: command.sourceText || '',
+        mutations: copy(mutations),
+        createdAt: Math.max(Date.now(), latestAt + 1),
+      });
+    }
+    if (mutations.some(m => isBusinessKind(m.kind))) {
+      nextPartition.revision = (nextPartition.revision || 0) + 1;
+    }
+    current = {
+      ...current,
+      snapshotRevision: (current.snapshotRevision || 0) + 1,
+      partitions: { ...current.partitions, [space]: nextPartition },
+    };
+    if (spaceStats[space]?.counts) {
+      const nextStats = copy(spaceStats[space]);
+      for (const m of mutations) {
+        nextStats.counts[m.kind] = Math.max(0, (nextStats.counts[m.kind] || 0) + Number(m.after !== null) - Number(m.before !== null));
+      }
+      if (command.event) nextStats.counts.event = (nextStats.counts.event || 0) + 1;
+      spaceStats[space] = nextStats;
+      if (space === active) stats = nextStats;
+    }
+    emit();
   }
   const api = {
     async initialize(): Promise<Bootstrap> {
@@ -90,6 +193,8 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
         const metadata = metadataSequence >= acceptedMetadataSequence ? result.snapshot : current;
         if (metadataSequence >= acceptedMetadataSequence) acceptedMetadataSequence = metadataSequence;
         current = { ...metadata, activeMode: active, partitions: { ...current.partitions, [space]: result.snapshot.partitions[space] } };
+        loadedSpaces.add(space);
+        spaceStats[space] = result.stats;
         if (space === active) stats = result.stats;
         emit();
       }
@@ -108,7 +213,25 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
       if (epoch !== dataEpoch) return { ok: false, error: restoredMessage };
       if (command.op === 'restore' && result?.ok === true) invalidateAfterRestore();
       if (result?.ok !== false && ['transaction', 'undo', 'restore', 'migrate', 'settings', 'mode'].includes(command.op)) {
-        try { await api.refresh(command.space || active); }
+        const targetSpace = (command.space || active) as WorkspaceMode;
+        if (command.op === 'settings') {
+          applySettingsUpdate(result, command.patch);
+          return result;
+        }
+        if (command.op === 'mode') {
+          active = targetSpace;
+          current = { ...current, activeMode: targetSpace };
+          if (loadedSpaces.has(targetSpace)) {
+            if (spaceStats[targetSpace]) stats = spaceStats[targetSpace];
+            emit();
+            return result;
+          }
+        }
+        if (command.op === 'transaction' && canPatchTransactionLocally(targetSpace, command, result)) {
+          applyLocalTransaction(targetSpace, command, result);
+          return result;
+        }
+        try { await api.refresh(targetSpace); }
         catch (error) {
           if (result?.ok === true) return { ...result, refreshWarning: '写入已成功，但视图尚未刷新，请重试读取。' };
           throw error;
@@ -144,6 +267,40 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
       if (epoch !== dataEpoch) throw new Error(restoredMessage);
       if (!result?.ok) throw new Error(result?.error || '草稿未保存，请保留输入后重试。');
     },
+    getLifeDraft(): string {
+      try {
+        if (typeof localStorage === 'undefined') return memoryLifeDraft;
+        const raw = localStorage.getItem(LIFE_DRAFT_STORAGE_KEY);
+        if (!raw) return '';
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.text !== 'string') return '';
+        if (parsed.sessionToken === draftSessionToken && parsed.epoch !== dataEpoch) return '';
+        const capped = parsed.text.slice(0, MAX_LIFE_DRAFT_LENGTH);
+        memoryLifeDraft = capped;
+        return capped;
+      } catch {
+        return memoryLifeDraft;
+      }
+    },
+    saveLifeDraft(text: string): void {
+      const normalized = typeof text === 'string' ? text.slice(0, MAX_LIFE_DRAFT_LENGTH) : '';
+      memoryLifeDraft = normalized;
+      try {
+        if (typeof localStorage === 'undefined') return;
+        if (!normalized) {
+          localStorage.removeItem(LIFE_DRAFT_STORAGE_KEY);
+        } else {
+          localStorage.setItem(LIFE_DRAFT_STORAGE_KEY, JSON.stringify({
+            text: normalized,
+            epoch: dataEpoch,
+            sessionToken: draftSessionToken,
+            readIdentity: api.getReadIdentity(),
+            updatedAt: Date.now(),
+          }));
+        }
+      } catch { /* Graceful fallback to in-memory draft when localStorage is unavailable. */ }
+    },
+    clearLifeDraft(): void { clearStoredLifeDraft(); },
     async getWorkHome(now = Date.now()): Promise<WorkHome> {
       await api.initialize(); const result = await backend.request({ op: 'workHome', space: 'work', now, limit: 3 });
       if (result?.ok === false) throw new Error(result.error || '暂时无法读取工作接续。'); return result;
@@ -268,7 +425,12 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
     async saveWorkspaceMode(space: WorkspaceMode) {
       await api.initialize(); const result = await backend.request({ op: 'mode', space });
       if (result?.ok === false) throw new Error(result.error);
-      active = space; current = { ...current, activeMode: space }; await api.refresh(space);
+      active = space; current = { ...current, activeMode: space };
+      if (!loadedSpaces.has(space)) await api.refresh(space);
+      else {
+        if (spaceStats[space]) stats = spaceStats[space];
+        emit();
+      }
     },
     async getSettings(): Promise<PublicAppSettings> { await api.initialize(); return current.settings; },
     async saveSettings(settings: AppSettings) { const result = await api.request({ op: 'settings', patch: onlyPublicSettings(settings) });
@@ -346,6 +508,7 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
     },
     async undo(space: WorkspaceMode, eventId?: string): Promise<MutationResult> { return api.request({ op: 'undo', space, ...(eventId ? { eventId } : {}) }); },
     async getParseContext(text: string, selectedId?: string): Promise<WorkPartition> {
+      await api.initialize();
       const partition: WorkPartition = { revision: 0, messages: [], memories: [], journals: [], customCards: [], events: [], processedProposalIds: [], engagements: [], tasks: [], followUps: [], conditions: [], closures: [] };
       const tokens = searchTerms(text).filter(term => [...term].length >= 2).slice(0, 24);
       const names = extractClientNames(text).slice(0, 200);
@@ -359,10 +522,13 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
       partition.followUps = followUps.flatMap(page => page.items).slice(0, 200);
       const conditions = await Promise.all(partition.engagements.map(project => api.query<ConditionIntent>('work', 'condition', { relatedId: project.id, limit: 50 })));
       partition.conditions = conditions.flatMap(page => page.items).slice(0, 200);
-      await api.refresh('work'); partition.revision = current.partitions.work.revision; return partition;
+      if (!loadedSpaces.has('work')) await api.refresh('work');
+      partition.revision = current.partitions.work.revision; return partition;
     },
     async updateLifeAtomically(update: (life: LifePartition) => StateMutationReceipt[], sourceMessageId?: string, contextText?: string): Promise<StateMutationReceipt[]> {
-      await api.refresh('life'); const before = copy(current.partitions.life);
+      await api.initialize();
+      if (!loadedSpaces.has('life')) await api.refresh('life');
+      const before = copy(current.partitions.life);
       if (contextText) {
         const terms = searchTerms(contextText).filter(term => [...term].length >= 2).slice(0, 16);
         const related = await Promise.all(terms.map(query => api.query<PersonProfile>('life', 'person', { query, limit: 20 })));
@@ -399,6 +565,7 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
     async importAllData(json: string): Promise<boolean> {
       if (restoring) return false;
       restoring = true; dataEpoch++; initialized = undefined; captures.clear();
+      loadedSpaces.clear(); delete spaceStats.life; delete spaceStats.work; clearStoredLifeDraft();
       partitionRefreshSequence.life++; partitionRefreshSequence.work++;
       restoreWarning = undefined;
       let acknowledged = false;
@@ -452,9 +619,23 @@ export function createRepository(backend: PersistenceBackend, readLegacy = () =>
   return api;
 }
 
-const backend: PersistenceBackend = { request(command) {
-  const native = typeof window !== 'undefined' ? (window.electronAPI as any)?.storeRequest : undefined;
-  return native ? native(command) : webBackend.request(command);
-} };
-const webBackend = createIndexedDbBackend();
+let webBackendPromise: Promise<PersistenceBackend> | undefined;
+async function loadWebBackend(): Promise<PersistenceBackend> {
+  if (!webBackendPromise) {
+    webBackendPromise = import('./indexedDb').then(
+      ({ createIndexedDbBackend }) => createIndexedDbBackend(),
+      error => { webBackendPromise = undefined; throw error; },
+    );
+  }
+  return webBackendPromise;
+}
+
+const backend: PersistenceBackend = {
+  async request(command) {
+    const native = typeof window !== 'undefined' ? (window.electronAPI as any)?.storeRequest : undefined;
+    if (native) return native(command);
+    const webBackend = await loadWebBackend();
+    return webBackend.request(command);
+  },
+};
 export const Repository = createRepository(backend);

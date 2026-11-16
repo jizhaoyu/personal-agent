@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const rootDir = process.cwd();
-const apkPath = path.join(rootDir, 'output', 'android', 'Looma-v5.1.0-release-signed.apk');
+const apkPath = path.join(rootDir, 'output', 'android', 'Looma-v5.2.0-release-signed.apk');
 const sdkRoot = process.env.ANDROID_HOME || 'D:\\DevEnv\\apps\\android-sdk';
 const buildToolsDir = path.join(sdkRoot, 'build-tools', 'android-14');
 const platformJar = path.join(sdkRoot, 'platforms', 'android-34', 'android.jar');
@@ -42,7 +42,7 @@ test('1. APK binary exists, passes 4-byte zipalign check and v1/v2/v3 cryptograp
 
 test('2. APK badging & binary AndroidManifest enforce security policies and launchable MainActivity', () => {
   const badging = execFileSync(aapt, ['dump', 'badging', apkPath], { encoding: 'utf8' });
-  assert.match(badging, /package: name='com\.looma\.agent' versionCode='510' versionName='5\.1\.0'/);
+  assert.match(badging, /package: name='com\.looma\.agent' versionCode='520' versionName='5\.2\.0'/);
   assert.match(badging, /sdkVersion:'26'/);
   assert.match(badging, /targetSdkVersion:'34'/);
   assert.match(badging, /launchable-activity: name='com\.looma\.agent\.MainActivity'/);

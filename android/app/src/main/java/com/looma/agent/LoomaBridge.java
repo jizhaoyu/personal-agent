@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.os.Build;
+import android.util.Base64;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 
@@ -18,6 +19,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -117,12 +120,49 @@ public final class LoomaBridge {
         return contentProtected;
     }
 
+    public static String validateModelEndpoint(String rawUrl) {
+        if (rawUrl == null) return null;
+        String trimmed = rawUrl.trim();
+        if (trimmed.isEmpty() || trimmed.length() > 2048) return null;
+        for (int i = 0; i < trimmed.length(); i++) {
+            char ch = trimmed.charAt(i);
+            if (Character.isWhitespace(ch) || ch == '\\' || ch <= 0x1F || ch == 0x7F) return null;
+        }
+        try {
+            URL parsed = new URL(trimmed);
+            if (parsed.getUserInfo() != null && !parsed.getUserInfo().isEmpty()) return null;
+            if (parsed.getAuthority() != null && parsed.getAuthority().contains("@")) return null;
+            if (parsed.getQuery() != null || parsed.getRef() != null) return null;
+            String protocol = parsed.getProtocol() == null ? "" : parsed.getProtocol().toLowerCase(Locale.US);
+            String host = parsed.getHost() == null ? "" : parsed.getHost().toLowerCase(Locale.US);
+            if (host.isEmpty()) return null;
+            boolean allowed = "https".equals(protocol)
+                    || ("http".equals(protocol) && ("localhost".equals(host) || "127.0.0.1".equals(host) || "[::1]".equals(host) || "::1".equals(host)));
+            if (!allowed) return null;
+            return trimmed.replaceAll("/+$", "");
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static boolean isLoopbackUrl(String rawUrl) {
+        if (rawUrl == null) return false;
+        try {
+            URL parsed = new URL(rawUrl.trim());
+            if (!"http".equalsIgnoreCase(parsed.getProtocol())) return false;
+            String host = parsed.getHost() == null ? "" : parsed.getHost().toLowerCase(Locale.US);
+            return "localhost".equals(host) || "127.0.0.1".equals(host) || "[::1]".equals(host) || "::1".equals(host);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     @JavascriptInterface
     public String getModelStatus() {
         try {
             JSONObject out = new JSONObject();
             String baseUrl = vault.getApiBaseUrl();
-            boolean isLocal = baseUrl.startsWith("http://localhost") || baseUrl.startsWith("http://127.0.0.1");
+            boolean isLocal = isLoopbackUrl(baseUrl);
             out.put("configured", vault.hasApiKey() || isLocal);
             out.put("persistent", true);
             out.put("enabled", vault.isEnabled());
@@ -138,10 +178,29 @@ public final class LoomaBridge {
     public String saveModelConnection(String payloadJson) {
         try {
             JSONObject input = new JSONObject(payloadJson);
-            String apiBaseUrl = input.optString("apiBaseUrl", "https://api.deepseek.com/v1").trim();
-            String modelName = input.optString("modelName", "deepseek-chat").trim();
-            String apiKey = input.optString("apiKey", "");
+            String rawBaseUrl = (input.isNull("apiBaseUrl") ? "https://api.deepseek.com/v1" : input.optString("apiBaseUrl", "https://api.deepseek.com/v1")).trim();
+            String apiBaseUrl = validateModelEndpoint(rawBaseUrl);
+            if (apiBaseUrl == null) {
+                return "{\"error\":\"模型地址仅支持 HTTPS，或本机 Ollama 的 HTTP 地址；地址不能包含凭据、查询参数或片段\"}";
+            }
+            String modelName = (input.isNull("modelName") ? "deepseek-chat" : input.optString("modelName", "deepseek-chat")).trim();
+            if (modelName.isEmpty() || modelName.length() > 200) {
+                return "{\"error\":\"模型名称格式无效\"}";
+            }
+            String apiKey = input.isNull("apiKey") ? "" : input.optString("apiKey", "");
+            if (apiKey.length() > 8192 || apiKey.contains("\r") || apiKey.contains("\n")) {
+                return "{\"error\":\"API Key 格式无效\"}";
+            }
             boolean enabled = input.optBoolean("enabled", false);
+            String previousEndpoint = validateModelEndpoint(vault.getApiBaseUrl());
+            boolean sameEndpoint = apiBaseUrl.equals(previousEndpoint);
+            boolean hasEffectiveKey = !apiKey.trim().isEmpty() || (sameEndpoint && vault.hasApiKey());
+            if (enabled && !hasEffectiveKey && !isLoopbackUrl(apiBaseUrl)) {
+                return "{\"error\":\"请先配置 API Key 后启用模型\"}";
+            }
+            if (!sameEndpoint && apiKey.trim().isEmpty()) {
+                vault.clear();
+            }
             vault.saveConnection(apiBaseUrl, modelName, apiKey, enabled);
             return getModelStatus();
         } catch (Exception e) {
@@ -310,7 +369,10 @@ public final class LoomaBridge {
     }
 
     private String invokeChatCompletion(String userPrompt, String systemPrompt) throws Exception {
-        String baseUrl = vault.getApiBaseUrl().replaceAll("/+$", "");
+        String baseUrl = validateModelEndpoint(vault.getApiBaseUrl());
+        if (baseUrl == null) {
+            throw new IllegalArgumentException("模型地址无效");
+        }
         String apiKey = vault.readApiKey();
         URL url = new URL(baseUrl + "/chat/completions");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -403,11 +465,98 @@ public final class LoomaBridge {
 
     @JavascriptInterface
     public boolean exportBackupDocument(final String requestId, final String suggestedName, final String content) {
+        return saveDocument(requestId, suggestedName, "application/json", content, false);
+    }
+
+    @JavascriptInterface
+    public boolean saveDocument(
+            final String requestId,
+            final String suggestedName,
+            final String mimeType,
+            final String content,
+            final boolean isBase64
+    ) {
         if (activity instanceof MainActivity) {
-            ((MainActivity) activity).launchExportBackup(requestId, suggestedName, content);
+            ((MainActivity) activity).launchSaveDocument(requestId, suggestedName, mimeType, content, isBase64);
             return true;
         }
         return false;
+    }
+
+    private static String sanitizeSharePngName(String fileName) {
+        String cleaned = fileName != null
+                ? fileName.trim().replaceAll("[\\\\/:*?\"<>|\\x00-\\x1F\\s]+", "_").replaceAll("^\\.+", "")
+                : "";
+        if (cleaned.isEmpty()) cleaned = "looma-share.png";
+        if (!cleaned.toLowerCase(Locale.US).endsWith(".png")) {
+            cleaned = cleaned + ".png";
+        }
+        if (cleaned.length() > 80) {
+            cleaned = cleaned.substring(0, 76) + ".png";
+        }
+        return cleaned;
+    }
+
+    @JavascriptInterface
+    public boolean shareImage(final String base64Png, final String fileName, final String title) {
+        if (base64Png == null || base64Png.trim().isEmpty()) return false;
+        try {
+            String raw = base64Png.trim();
+            int marker = raw.indexOf(";base64,");
+            if (raw.regionMatches(true, 0, "data:", 0, 5) && marker > 0) {
+                raw = raw.substring(marker + 8);
+            }
+            if (raw.isEmpty() || raw.length() > 14_500_000) return false;
+
+            byte[] bytes = Base64.decode(raw, Base64.DEFAULT);
+            if (bytes == null || bytes.length == 0 || bytes.length > 10 * 1024 * 1024) return false;
+
+            File sharedDir = new File(activity.getCacheDir(), LoomaShareProvider.SHARED_DIR_NAME);
+            if (!sharedDir.exists() && !sharedDir.mkdirs()) return false;
+
+            long cutoff = System.currentTimeMillis() - 3600_000L;
+            File[] existing = sharedDir.listFiles();
+            if (existing != null) {
+                for (File stale : existing) {
+                    if (stale.isFile() && stale.lastModified() < cutoff) {
+                        stale.delete();
+                    }
+                }
+            }
+
+            String safeName = sanitizeSharePngName(fileName);
+            String baseCanonical = sharedDir.getCanonicalPath();
+            File outFile = new File(sharedDir, safeName);
+            String requiredPrefix = baseCanonical.endsWith(File.separator)
+                    ? baseCanonical
+                    : baseCanonical + File.separator;
+            if (!outFile.getCanonicalPath().startsWith(requiredPrefix)) return false;
+
+            try (FileOutputStream fos = new FileOutputStream(outFile, false)) {
+                fos.write(bytes);
+                fos.flush();
+            }
+
+            Uri uri = new Uri.Builder()
+                    .scheme("content")
+                    .authority(activity.getPackageName() + ".shareprovider")
+                    .appendPath(safeName)
+                    .build();
+
+            Intent sendIntent = new Intent(Intent.ACTION_SEND);
+            sendIntent.setType("image/png");
+            sendIntent.putExtra(Intent.EXTRA_STREAM, uri);
+            sendIntent.setClipData(ClipData.newRawUri("", uri));
+            sendIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            String chooserTitle = (title != null && !title.trim().isEmpty()) ? title.trim() : "分享图片";
+            Intent chooser = Intent.createChooser(sendIntent, chooserTitle);
+            chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            activity.startActivity(chooser);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     public static String validateReleaseExternalUrl(String rawUrl) {

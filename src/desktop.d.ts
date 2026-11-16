@@ -19,6 +19,9 @@ declare global {
       exportDataBackup?(): Promise<{canceled: boolean}>;
       importDataBackup?(): Promise<{canceled: boolean}>;
       saveBackupFile?(suggestedName: string, content: string): Promise<{canceled: boolean}>;
+      saveBinaryFile?(suggestedName: string, mimeType: string, dataOrBase64: string, isBase64?: boolean): Promise<{canceled: boolean}>;
+      saveTextFile?(suggestedName: string, content: string): Promise<{canceled: boolean}>;
+      shareImage?(base64Png: string, fileName: string, title?: string): Promise<{shared: boolean}>;
       getAppVersionInfo?(): Promise<{platform: 'android'|'desktop'; versionCode?: number; versionName?: string}>;
       checkForUpdates?(): Promise<{status: 'ok'|'no-release'|'rate-limited'|'error'; httpStatus?: number; message?: string; release?: unknown}>;
       openExternalUrl?(url: string): Promise<{opened: boolean; url?: string}>;

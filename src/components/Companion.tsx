@@ -66,7 +66,15 @@ export function Character({ state }: { state: CompanionState }) {
 }
 
 function MemoryIcon() {
-  return <svg viewBox="0 0 20 20" width="17" height="17" fill="none" aria-hidden="true" focusable="false"><path d="M10 5C7 3.5 4 4 2.5 4.5v11C5 15 7.5 15 10 16.5m0-11.5c3-1.5 6-1 7.5-.5v11c-2.5-.5-5-.5-7.5 1m0-11.5v11.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+  return <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true" focusable="false"><path d="M10 5C7 3.5 4 4 2.5 4.5v11C5 15 7.5 15 10 16.5m0-11.5c3-1.5 6-1 7.5-.5v11c-2.5-.5-5-.5-7.5 1m0-11.5v11.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+}
+
+function ExpandIcon() {
+  return <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true" focusable="false"><path d="M12.5 3.5h4v4M16.5 3.5l-5 5M7.5 16.5h-4v-4M3.5 16.5l5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+}
+
+function FoldIcon() {
+  return <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true" focusable="false"><path d="M15.5 4.5l-6 6M9.5 6v4.5H14M4.5 10.5v5h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
 
 export function Companion({ state, mode, name = 'Looma', compact = false, onToggle, onOpenMemory, reminderCount = 0, statusText }: CompanionProps) {
@@ -84,18 +92,19 @@ export function Companion({ state, mode, name = 'Looma', compact = false, onTogg
     : t('companion.detailError');
   // A desktop capsule is visible outside the main workspace: never include operation details.
   const detail = compact ? genericDetail : statusText?.trim() || genericDetail;
-  const contents = <>
-    <Character state={state}/>
-    <div className="looma-companion__copy">
-      <div className="looma-companion__identity"><strong>{displayName}</strong><span>{mode === 'work' ? t('companion.roleWork') : t('companion.roleLife')}</span></div>
-      <div className="looma-companion__status" role="status" aria-live="polite" aria-atomic="true"><span className="looma-companion__state"><i aria-hidden="true"/>{label}</span><span className="looma-companion__detail">{detail}</span></div>
-    </div>
-  </>;
+  const hasActions = Boolean((compact && onToggle) || onOpenMemory || (!compact && onToggle));
   return <section className={`looma-companion${compact ? ' looma-companion--compact' : ''}`} data-state={state} data-mode={mode} aria-label={`${displayName} ${t('companion.ariaSuffix')}`}>
-    {compact && onToggle ? <button className="looma-companion__restore" type="button" onClick={onToggle} aria-label={`${t('companion.expandAriaPrefix')} ${displayName}`} title={t('companion.expandTitle')}>{contents}</button> : <div className="looma-companion__presence">{contents}</div>}
-    {onOpenMemory || (!compact && onToggle) ? <div className="looma-companion__actions">
+    <div className="looma-companion__presence">
+      <Character state={state}/>
+      <div className="looma-companion__copy">
+        <div className="looma-companion__identity"><strong>{displayName}</strong><span>{mode === 'work' ? t('companion.roleWork') : t('companion.roleLife')}</span></div>
+        <div className="looma-companion__status" role="status" aria-live="polite" aria-atomic="true"><span className="looma-companion__state"><i aria-hidden="true"/>{label}</span><span className="looma-companion__detail">{detail}</span></div>
+      </div>
+    </div>
+    {hasActions ? <div className="looma-companion__actions">
+      {compact && onToggle ? <button className="looma-companion__restore" type="button" onClick={onToggle} aria-label={`${t('companion.expandAriaPrefix')} ${displayName}`} title={t('companion.expandTitle')}><ExpandIcon/></button> : null}
       {onOpenMemory ? <button className="looma-companion__memory" type="button" onClick={onOpenMemory} aria-label={t('companion.memoryAria')} title={t('companion.memoryTitle')}><MemoryIcon/>{compact ? null : <span>{t('companion.memoryLabel')}</span>}</button> : null}
-      {!compact && onToggle ? <button className="looma-companion__fold" type="button" onClick={onToggle} aria-label={t('companion.foldAria')} title={t('companion.foldTitle')}><span aria-hidden="true">↙</span><span>{t('companion.foldLabel')}</span></button> : null}
+      {!compact && onToggle ? <button className="looma-companion__fold" type="button" onClick={onToggle} aria-label={t('companion.foldAria')} title={t('companion.foldTitle')}><FoldIcon/><span>{t('companion.foldLabel')}</span></button> : null}
     </div> : null}
   </section>;
 }

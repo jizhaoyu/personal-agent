@@ -1,32 +1,117 @@
-.trial-info-sheet { width: min(660px, 100%); max-height: 90vh; background: #fffefa; border: 1px solid #d4dcc9; border-radius: 18px; overflow: hidden; box-shadow: 0 24px 90px #203b2924; display: flex; flex-direction: column; }
-.trial-info-sheet .sheet-body { overflow-y: auto; }
-.trial-build-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; padding: 12px 14px; border: 1px solid #dce3d2; border-radius: 10px; background: #f0f3e9; }
-.trial-build-summary strong { font-size: 15px; font-weight: 500; color: #34533c; }
-.trial-build-summary span { font-size: 11px; color: #6a7963; overflow-wrap: anywhere; }
-.trial-feedback-fields { display: grid; gap: 15px; margin: 20px 0; }
-.trial-info-sheet label { font-size: 12px; line-height: 1.8; color: #4d604d; }
-.trial-info-sheet textarea, .trial-info-sheet select { display: block; width: 100%; margin-top: 6px; border: 1px solid #d5ddca; background: #fcfcf7; border-radius: 8px; padding: 10px 12px; color: #344a3b; font: inherit; line-height: 1.8; }
-.trial-report-preview { display: block; margin: 18px 0; }
-.trial-report-preview textarea { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f5ed; }
-.trial-info-sheet .check-label { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; cursor: pointer; }
-.trial-info-sheet .check-label input[type="checkbox"] { width: 18px; min-width: 18px; height: 18px; padding: 0; margin: 2px 0 0; flex-shrink: 0; accent-color: #536c44; cursor: pointer; }
-.trial-info-sheet :is(button, textarea, select, input):focus-visible { outline: 2px solid #6d8956; outline-offset: 3px; }
-@media (max-width: 520px) {
-  .trial-info-sheet {
-    width: 100%;
-    max-height: 92vh;
-    max-height: calc(92dvh - var(--looma-safe-top, env(safe-area-inset-top, 0px)));
-    border-radius: 18px 18px 0 0;
-    border-bottom: 0;
-  }
-  .trial-info-sheet .sheet-header,
-  .trial-info-sheet .sheet-body { padding: 17px; }
-  .trial-info-sheet .sheet-footer {
-    padding: 14px 17px calc(17px + var(--looma-safe-bottom, env(safe-area-inset-bottom, 0px)));
-    flex-wrap: wrap;
-  }
+.trial-info-sheet {
+  --sheet-max-width: 660px;
+  display: flex;
+  flex-direction: column;
+  width: var(--sheet-width, min(660px, 100%));
+  max-height: calc(92dvh - var(--looma-safe-top, env(safe-area-inset-top, 0px)) - var(--looma-ime-bottom, 0px));
+  background: var(--surface-card, #FFFEFA);
+  color: var(--ink-primary, #1C2A22);
+  border: 1px solid var(--line-hairline, #D7DFD5);
+  border-bottom: var(--sheet-border-bottom, 1px solid var(--line-hairline, #D7DFD5));
+  border-radius: var(--sheet-radius, 14px);
+  box-shadow: 0 24px 64px rgba(28, 42, 34, 0.18);
+  overflow: hidden;
+}
+
+.trial-info-sheet .sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.trial-build-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-hairline, #D7DFD5);
+  border-radius: 10px;
+  background: var(--surface-subtle, #EFECE2);
+  font-variant-numeric: tabular-nums;
+}
+
+.trial-build-summary strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent-primary, #12624F);
+}
+
+.trial-build-summary span {
+  font-size: 12px;
+  color: var(--ink-muted, #55645A);
+  overflow-wrap: anywhere;
+}
+
+.trial-feedback-fields {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.trial-info-sheet label {
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-muted, #55645A);
+}
+
+.trial-info-sheet textarea,
+.trial-info-sheet select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid var(--line-hairline, #D7DFD5);
+  background: var(--surface-card, #FFFEFA);
+  border-radius: var(--radius-control, 8px);
+  padding: 9px 12px;
+  color: var(--ink-primary, #1C2A22);
+  font: inherit;
+  font-size: var(--input-font-size, 13.5px);
+  line-height: 1.65;
+}
+
+.trial-report-preview {
+  display: block;
+  margin: 16px 0;
+}
+
+.trial-report-preview textarea {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 68ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-subtle, #EFECE2);
+}
+
+.trial-info-sheet .check-label {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.trial-info-sheet .check-label input[type="checkbox"] {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent-primary, #12624F);
+  cursor: pointer;
+}
+
+.trial-info-sheet :is(button, textarea, select, input):focus-visible {
+  outline: 2px solid var(--focus-ring, #12624F);
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
   .trial-info-sheet .sheet-footer button {
-    min-height: 42px;
     flex: 1 1 120px;
   }
 }

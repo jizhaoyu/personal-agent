@@ -30,6 +30,15 @@ public final class TodoStore extends SQLiteOpenHelper {
 
     private TodoStore(Context context) { super(context, "looma-todos.db", null, 1); }
 
+    @Override public void onConfigure(SQLiteDatabase db) {
+        super.onConfigure(db);
+        try {
+            db.enableWriteAheadLogging();
+        } catch (RuntimeException ignored) {
+            // Fall back to default journal mode if WAL is unavailable on the device.
+        }
+    }
+
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE todos (space TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(space,id))");
         db.execSQL("CREATE TABLE todo_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");

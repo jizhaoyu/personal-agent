@@ -22,7 +22,18 @@ const DATE = '(?:\\d{4}[年\\-/]\\d{1,2}[月\\-/]\\d{1,2}[日号]?|\\d{1,2}月\\
 const CLOCK = '(?:\\s*(?:早上|上午|中午|下午|傍晚|晚上|凌晨)?\\s*(?:\\d{1,2}(?:[:：]\\d{2}|点(?:半|一刻|三刻|\\d{1,2}分?)?)|[一二两三四五六七八九十]{1,3}点(?:半|一刻|三刻)?))?';
 const NEGATIVE = /还没|尚未|未能|没有|不是|并非|未进入|不曾|未成交|未签|没签|没成交|未打款/;
 const HYPOTHETICAL = /如果|假如|假设|倘若|可能|或许|也许|预计|有望/;
-const CLIENT = /(?:[\u4e00-\u9fa5A-Za-z0-9]{1,12}?(?:工作室|科技|公司|集团|中心|研究院|研究所|事务所|医院|学校|大学|学院|银行|设计院))?[\u4e00-\u9fa5A-Za-z0-9]{1,5}?(?:总监|经理|主理人|老板|主任|院长|行长|会长|厂长|店长|处长|局长|科长|书记|教授|博士|老师|律师|顾问|合伙人|师傅|女士|先生|总|工|姐|哥|叔|姨|董)|[\u4e00-\u9fa5A-Za-z0-9]{1,12}?(?:工作室|科技|公司|集团|中心|研究院|研究所|事务所|设计院)/g;
+const STRONG_HYPOTHETICAL = /如果|假如|假设|倘若/;
+const WON_BLOCKER = /还没|尚未|未能|没有|不是|并非|没成交|未成交|未签|没签|未打款|可能|或许|也许|有望|预计|打算|计划|准备|下周|明天|后天/;
+const CLIENT = /(?:[\u4e00-\u9fa5A-Za-z0-9]{1,12}?(?:工作室|科技|公司|集团|中心|研究院|研究所|事务所|医院|学校|大学|学院|银行|设计院)(?:[\u4e00-\u9fa5]{0,5}?|[A-Za-z][A-Za-z0-9._-]{0,15})?|(?:[\u4e00-\u9fa5]{1,5}?|[A-Za-z][A-Za-z0-9._-]{0,15}))(?:总监|经理|主理人|老板|主任|院长|行长|会长|厂长|店长|处长|局长|科长|书记|教授|博士|老师|律师|顾问|合伙人|师傅|女士|先生|总|工|姐|哥|叔|姨|董)|[\u4e00-\u9fa5A-Za-z0-9]{1,12}?(?:工作室|科技|公司|集团|中心|研究院|研究所|事务所|设计院)/g;
+const EXPLICIT_PREFIXED_CLIENT_RE = /(?:新?客户)\s*([\u4e00-\u9fa5]{2,3})(?=[的，,。；;\s]|那边|这边|那头|这头|预算|报价|合同|项目|需求|说|表示|答应|确认|反馈|下周|明天|后天|今天)/g;
+const ENGLISH_CLIENT_STOPWORDS = new Set([
+  'UI', 'UX', 'API', 'SDK', 'PDF', 'PPT', 'DOC', 'DOCX', 'XLS', 'XLSX', 'APP', 'CRM', 'ERP', 'OA',
+  'SAAS', 'PAAS', 'IAAS', 'RMB', 'USD', 'EUR', 'AI', 'IT', 'HR', 'QA', 'PM', 'RD', 'OP', 'OK',
+  'VIP', 'SVIP', 'CEO', 'CTO', 'CFO', 'COO', 'VP', 'GM', 'BD', 'PR', 'SEO', 'SEM', 'H5', 'PC',
+  'IOS', 'APK', 'EXE', 'SQL', 'HTTP', 'HTTPS', 'JSON', 'HTML', 'CSS', 'JS', 'TS', 'KTV', 'WIFI',
+  'B2B', 'B2C', 'O2O', 'MVP', 'KPI', 'OKR', 'ROI', 'SLA', 'NDA', 'PO', 'RFQ', 'SOW', 'FAQ', 'TODO',
+]);
+const NON_CHINESE_CLIENT_NOUN_RE = /^(?:这边|那边|那头|这头|自己|本人|公司|单位|团队|领导|老板|经理|总监|专员|代表|姓名|名称|资料|材料|信息|需求|诉求|痛点|预算|报价|合同|订单|项目|款项|尾款|定金|预付款|问题|反馈|确认|表示|答应|承诺|说明|提到|今天|明天|后天|昨天|前天|本周|下周|这周|上周|本月|下月|月底|月初|上午|下午|晚上|早上|刚刚|刚才|已经|还没|没有|目前|现在|能否|是否|可以|如果|应该|大概|可能)/;
 const stripClientPrefix = (text: string) => {
   let clean = text.replace(/^(?:(?:如果|假如|假设|今天|昨天|前天|明天|后天|刚刚|刚才|另外|还有|新增客户|客户|新增|记一下|刚见完|刚见了|刚跟|刚和|刚才跟|拜访了|见了|那单|这单|那笔|这笔|项目|合同|订单|跟|和|给|找|收到|把))+/, '').trim();
   if (!/(?:工作室|科技|公司|集团|中心|研究院|研究所|事务所|医院|学校|大学|学院|银行|设计院)/.test(clean)) {
@@ -31,19 +42,28 @@ const stripClientPrefix = (text: string) => {
   return clean;
 };
 
+export function normalizeGroupedNumbers(text: string): string {
+  return text.replace(/\d{1,3}(?:[,，]\d{3})+(?:\.\d+)?/g, amount => amount.replace(/[,，]/g, ''));
+}
+
+function normalizeLifeClause(text: string): string {
+  return normalizeGroupedNumbers(text.trim()).replace(/(\d+)块([0-9])(?:毛)?$/, '$1.$2元');
+}
+
 const UNCERTAIN = '还没确认|尚未确认|未确认|没有确认|待确认|还没确定|尚未确定|未确定|没有确定|还没定|尚未定|未定|没定|待定|暂定|先别定|还没拍板|尚未拍板|未拍板|还没敲定|尚未敲定|可能|或许|也许|大概|左右';
 function uncertaintyNear(text: string, subject: string, extraUncertain = ''): boolean {
   // Commas delimit independent facts: “还没成交，已确认预算” is not an uncertain budget.
   const uncertainExpr = extraUncertain ? `${UNCERTAIN}|${extraUncertain}` : UNCERTAIN;
-  return text.split(/[，,；;。\n]/).some(clause =>
+  return normalizeGroupedNumbers(text).split(/[，,；;。\n]/).some(clause =>
     new RegExp(`(?:${subject})[^，,；;。]{0,14}(?:${uncertainExpr})|(?:${uncertainExpr})[^，,；;。]{0,8}(?:${subject})`).test(clause));
 }
 export function budgetIsUncertain(text: string): boolean {
-  return uncertaintyNear(text, '预算|金额|报价|合同额|总价|费用|单位', '还没说明白|没说明白|说不清|没说清|没说清楚|没写清')
-    || /(?:预算|金额|报价|合同额|总价)\s*(?:约|大概|不是|并非)/.test(text)
-    || /(?:不是|并非)\s*[¥￥]?\s*(?:\d+(?:\.\d+)?|[一二两三四五六七八九十百千万]+)\s*(?:万元|万块|万|千元|千|块钱|块|元|w|k)?\s*(?:的)?(?:预算|金额|报价|合同额|总价)/i.test(text)
-    || /(?:万|千|百|块|元|[wk])\s*还是\s*(?:万|千|百|块|元|[wk])|(?:还没|没有|未|没)(?:说明白|说清|说清楚|讲清|讲明白|明确|写清).{0,10}(?:万|千|百|块|元|单位|金额)|(?:单位|金额单位).{0,8}(?:未定|待定|不明|不清|没说|没写|不确定)/i.test(text)
-    || /不要当真|别当真|不作数|不算数/.test(text);
+  const norm = normalizeGroupedNumbers(text);
+  return uncertaintyNear(norm, '预算|金额|报价|合同额|总价|费用|单位', '还没说明白|没说明白|说不清|没说清|没说清楚|没写清')
+    || /(?:预算|金额|报价|合同额|总价)\s*(?:约|大概|不是|并非)/.test(norm)
+    || /(?:不是|并非)\s*[¥￥]?\s*(?:\d+(?:\.\d+)?|[一二两三四五六七八九十百千万]+)\s*(?:万元|万块|万|千元|千|块钱|块|元|w|k)?\s*(?:的)?(?:预算|金额|报价|合同额|总价)/i.test(norm)
+    || /(?:万|千|百|块|元|[wk])\s*还是\s*(?:万|千|百|块|元|[wk])|(?:还没|没有|未|没)(?:说明白|说清|说清楚|讲清|讲明白|明确|写清).{0,10}(?:万|千|百|块|元|单位|金额)|(?:单位|金额单位).{0,8}(?:未定|待定|不明|不清|没说|没写|不确定)/i.test(norm)
+    || /不要当真|别当真|不作数|不算数/.test(norm);
 }
 export function dateIsUncertain(text: string): boolean {
   return uncertaintyNear(
@@ -53,10 +73,127 @@ export function dateIsUncertain(text: string): boolean {
   ) || /(?:暂定|可能|或许|也许)\s*(?:明天|后天|大后天|今天|下?周|本周|下?星期|下?礼拜|月底|月初|\d{1,2}月|\d{4}年)/.test(text);
 }
 
+const BARE_BUDGET_QUALIFIER_RE = /^(?:但是|不过|只是|目前|现在|暂时|先)?(?:(?:这个|这笔|该|上述)?(?:预算|金额|报价|价格|总价|合同额|费用|单位|数(?:字|额)?)\s*(?:还)?(?:没|未|待|暂|不)|(?:我们|我方|客户|对方|双方)?\s*(?:目前|现在|暂时|先)?(?:还没|尚未|未|没有)(?:定|确定|确认|拍板|敲定|说清|说明白|讲清)|(?:具体)?单位(?:还)?(?:没|未|不清|没说)|(?:这个数|这数|这笔钱)?(?:先)?(?:不要当真|别当真|不作数|不算数)|(?:还)?(?:没|未)说明白|(?:是)?(?:万|千|百|块|元|[wk])\s*还是\s*(?:万|千|百|块|元|[wk]))/i;
+const BARE_DATE_QUALIFIER_RE = /^(?:但是|不过|只是|目前|现在|暂时|先)?(?:(?:(?:具体|准确)?(?:时间|日期|时刻|期限|截止时间|交付时间|具体几点|几点|哪天|哪一天|什么时候|何时)|(?:这事|这个|那个)?(?:时间|日期))(?:还)?(?:没|未|待|暂|再|不|可能)|(?:再定|再说|以后再定|以后再说|没定|待定|暂定|还没定|还没确定|还没想好|不确定|可能调整|不一定)$)/;
+
+function isClauseDateUncertain(clauses: string[], index: number): boolean {
+  const clause = clauses[index] || '';
+  if (dateIsUncertain(clause)) return true;
+  const next = (clauses[index + 1] || '').trim();
+  return Boolean(next && BARE_DATE_QUALIFIER_RE.test(next) && dateIsUncertain(next));
+}
+
+function splitActiveClauses(text: string): { activeClauses: string[]; hasStrongHypothetical: boolean; hasAnyHypothetical: boolean } {
+  const rawClauses = normalizeGroupedNumbers(text).split(/[，,；;。\n]/).map(s => s.trim()).filter(Boolean);
+  const activeClauses: string[] = [];
+  let hasStrongHypothetical = false;
+  let hasAnyHypothetical = false;
+  let conditionalConsequent = false;
+  for (const clause of rawClauses) {
+    if (STRONG_HYPOTHETICAL.test(clause)) {
+      hasStrongHypothetical = true;
+      hasAnyHypothetical = true;
+      conditionalConsequent = true;
+      continue;
+    }
+    if (conditionalConsequent && /^(?:就|那就|那么|便|则|我也|我就|客户就|对方就|我再|再)/.test(clause)) {
+      hasStrongHypothetical = true;
+      hasAnyHypothetical = true;
+      conditionalConsequent = false;
+      continue;
+    }
+    conditionalConsequent = false;
+    if (HYPOTHETICAL.test(clause)) hasAnyHypothetical = true;
+    activeClauses.push(clause);
+  }
+  return { activeClauses, hasStrongHypothetical, hasAnyHypothetical };
+}
+
+export function hasNonHypotheticalContent(text: string): boolean {
+  const { activeClauses } = splitActiveClauses(text);
+  return activeClauses.some(c => !/(?:可能会|或许会|也许会|有望)/.test(c));
+}
+
+export function hasHypotheticalFraming(text: string): boolean {
+  return STRONG_HYPOTHETICAL.test(text) || /(?:可能|或许|也许|预计|有望)/.test(text);
+}
+
+export function hasWonStageBlocker(text: string): boolean {
+  return WON_BLOCKER.test(text) || STRONG_HYPOTHETICAL.test(text);
+}
+
+const WON_CLAUSE_RE = /阶段\s*(?:为|是|改为|改到|更新为|更新到|调整为|调整到|进入|推进到|推进为|切换到|切到|变成|变为|定为)?\s*赢单成交|(?:已经|已|正式|确认|成功)\s*(?:完成)?\s*(?:成交|赢单|签约|打款|回款|签合同)|成交了|合同(?:已经|已)?签好了|签了合同|已回款|已打款|尾款(?:已经|已)?(?:收到|收到了|到账|打过来了|结清)/;
+
+export function hasConfirmedWonClause(text: string): boolean {
+  const { activeClauses } = splitActiveClauses(text);
+  return activeClauses.some(clause =>
+    !NEGATIVE.test(clause)
+    && !HYPOTHETICAL.test(clause)
+    && !/不要当真|别当真|不作数|不算数|不确定|未定|待定|谈不上|算不上|说不上/.test(clause)
+    && (!(/(?:明天|后天|下周|下个月|本周|下礼拜|计划|打算|准备|争取|预计|有望)/.test(clause)) || /(?:已经|已|正式|签好了|签了合同|到账|收到)/.test(clause))
+    && WON_CLAUSE_RE.test(clause),
+  );
+}
+
+export function hasExplicitBudgetUnit(text: string): boolean {
+  const norm = normalizeGroupedNumbers(text);
+  return /(?:\d+(?:\.\d+)?|[一二三四五六七八九十百千万两零]+)\s*(?:万元?|万块|w元?|千元?|千块|k|百元?|块钱?|元|rmb)|[¥￥]\s*\d+/i.test(norm)
+    || /\d+(?:\.\d+)?(?:万|千)(?:\d|[一二两三四五六七八九])/.test(norm)
+    || /[一二两三四五六七八九十百千万]+(?:万|千)[一二两三四五六七八九]/.test(norm);
+}
+
+export function isScopedBudgetUncertain(text: string, candidateAmount?: number): boolean {
+  const { activeClauses } = splitActiveClauses(text);
+  let sawUncertain = false;
+  let sawConfirmed = false;
+  for (let i = 0; i < activeClauses.length; i++) {
+    const clause = activeClauses[i];
+    const nextClause = activeClauses[i + 1] || '';
+    const nextBare = Boolean(nextClause && BARE_BUDGET_QUALIFIER_RE.test(nextClause) && budgetIsUncertain(nextClause));
+    const hasBudgetMention = /(?:预算|金额|报价|合同额|合同金额|合同总价|总金额|总预算|总价|总额|总计)|[¥￥]|\d+(?:\.\d+)?\s*(?:万|千|块|元|[wk])/i.test(clause);
+    if (!hasBudgetMention) continue;
+    if (budgetIsUncertain(clause) || HYPOTHETICAL.test(clause) || nextBare) {
+      sawUncertain = true;
+      continue;
+    }
+    const localWarnings: string[] = [];
+    const parsed = extractClauseBudget(clause, localWarnings);
+    if (parsed !== undefined && (candidateAmount === undefined || parsed === candidateAmount)) {
+      sawConfirmed = true;
+    }
+  }
+  return sawUncertain && !sawConfirmed;
+}
+
+export function isItemDateUncertain(text: string, title?: string, dateExpr?: string): boolean {
+  const { activeClauses } = splitActiveClauses(text);
+  if (!activeClauses.length) return dateIsUncertain(text);
+  const matchingIndexes: number[] = [];
+  for (let i = 0; i < activeClauses.length; i++) {
+    const clause = activeClauses[i];
+    const hitsDateExpr = Boolean(dateExpr && clause.includes(dateExpr));
+    const hitsTitle = Boolean(title && itemMatchesTitle(clause, title));
+    if (hitsDateExpr || hitsTitle) matchingIndexes.push(i);
+  }
+  if (matchingIndexes.length > 0) {
+    return matchingIndexes.some(idx => isClauseDateUncertain(activeClauses, idx));
+  }
+  const dateClauses = activeClauses
+    .map((c, idx) => ({ c, idx }))
+    .filter(({ c }) => new RegExp(DATE).test(c) || dateIsUncertain(c));
+  if (!dateClauses.length) return dateIsUncertain(text);
+  return dateClauses.every(({ idx }) => isClauseDateUncertain(activeClauses, idx));
+}
+
 const NON_CLIENT_PREFIX_RE = /^(?:那单|这单|那笔|这笔|那条|这条|那个|这个|那块|这块|那边|这边|那头|这头|哪单|哪个|哪位|每单|某单|项目|合同|订单|报价|预算|金额|价格|费用|尾款|预付款|首付款|定金|押金|税点|发票|总价|总额|总计|总共|总预算|总金额|汇总|合计|大概|大约|目前|现在|当前|原本|原来|本来|其实|实际|最终|最后|全部|整体|一共|共计|已经|还没|尚未|暂定|预计|可能|或许|也许|如果|假如|假设|今天|明天|后天|昨天|前天|本周|下周|这周|上周|本月|下月|月底|月初|上午|下午|晚上|早上|刚刚|刚才|一期|二期|三期|甲方|乙方|客户|对方|我们|我方|他们|她们)(?:总|工|姐|哥|叔|姨|董)$/;
 const FAKE_GONG_RE = /(?:人|美|施|加|返|完|开|停|俊|竣|代|员|包|用|招|出|收|赶|抢|手|做|精|细|木|电|焊|钳|泥|瓦|杂|小|大|零|短|长|临|义|特|重|化|军|矿|窝|误|罢|复)工$/;
 function findClients(text: string): { name: string; start: number }[] {
   const results: { name: string; start: number }[] = [];
+  const seen = new Set<string>();
+  const push = (name: string, start: number) => {
+    const key = `${start}:${name}`;
+    if (!seen.has(key)) { seen.add(key); results.push({ name, start }); }
+  };
   for (const match of text.matchAll(new RegExp(CLIENT.source, 'g'))) {
     const raw = match[0];
     const name = stripClientPrefix(raw);
@@ -78,15 +215,35 @@ function findClients(text: string): { name: string; start: number }[] {
       if (FAKE_GONG_RE.test(name)) continue;
       if (!/^[\u4e00-\u9fa5]工$/.test(name) && /^(?:期|作|单|程|资|时|费|具|位|艺|序|厂|地|会|业|种|钱|价|款|方|队|量)/.test(after)) continue;
     }
-    results.push({ name, start: match.index! });
+    push(name, match.index!);
   }
+  for (const match of text.matchAll(new RegExp(EXPLICIT_PREFIXED_CLIENT_RE.source, 'g'))) {
+    const candidate = match[1];
+    if (!candidate || NON_CHINESE_CLIENT_NOUN_RE.test(candidate) || /(?:总|工|姐|哥|叔|姨|董|生|士|师|理|监)$/.test(candidate)) continue;
+    if (/^[说要会能想把给发补打签来去的和跟与]/.test(candidate)) continue;
+    if (!results.some(r => r.name === candidate || r.name.includes(candidate))) {
+      push(candidate, match.index!);
+    }
+  }
+  const enPrefixRe = /(?:新?客户|拜访了?|约见了?|见了|联系|对接|跟|和|找|给)\s*([A-Z][A-Za-z0-9.-]{1,20}(?:\s+[A-Z][A-Za-z0-9.-]{1,15})?)/g;
+  const enSuffixRe = /(?:^|[，,；;。\s])([A-Z][A-Za-z0-9.-]{1,20}(?:\s+[A-Z][A-Za-z0-9.-]{1,15})?)\s*(?:那边|这边|那头|的(?:项目|官网|小程序|系统|预算|报价|合同|需求|方案)|(?:项目|预算|报价|合同额|总价|需求|方案)|(?:刚才|刚刚|刚)?(?:说|表示|答应|确认|反馈|下周|明天|后天))/g;
+  for (const re of [enPrefixRe, enSuffixRe]) {
+    for (const match of text.matchAll(re)) {
+      const cand = match[1].trim();
+      if (!cand || cand.length < 2 || ENGLISH_CLIENT_STOPWORDS.has(cand.toUpperCase())) continue;
+      if (results.some(r => r.name === cand || r.name.startsWith(cand))) continue;
+      push(cand, match.index! + match[0].indexOf(cand));
+    }
+  }
+  results.sort((a, b) => a.start - b.start);
   return results;
 }
 export const extractClientNames = (text: string): string[] => [...new Set(findClients(text).map(item => item.name))];
 const RESPONSIBILITY_UNCERTAIN = /(?:负责人|责任人|谁来|谁负责|归属|由谁).{0,10}(?:未定|待定|没确定|没确认|不明确)|(?:未定|待定|没确定|没确认).{0,8}(?:负责人|责任人)/;
 const BARE_RESP_UNCERTAIN = /^(?:具体)?(?:负责人|责任人|由谁来?负责|谁来负责|归属)(?:这边|那边)?(?:还)?(?:没定|没确定|没确认|未定|待定|不明确)$/;
 const ACTION = '完成|提交|交付|发送|补充|提供|回传|准备|确认|回复|跟进|联系|拜访|联调|汇报|演示|对齐|评审|修改|调整|优化|上线|部署|测试|验收|沟通|约见|对接|协调|梳理|核对|核实|汇总|落实|拟定|起草|打款|付款|回款|转账|结款|开票|寄出|寄过来|发过来|盖章|走流程|过会|拍板|定下来|批下来|答复|通知|整理|输出|补齐|补交|回电话|回电|打电话|来电|补|给|发|交|签|出|改|做|写|催|约';
-const HAS_CLOCK = /\d{1,2}(?:[:：]\d{2}|点(?:半|一刻|三刻|\d{1,2}分?)?)|[一二两三四五六七八九十]{1,3}点(?:半|一刻|三刻)?/;
+export const HAS_CLOCK = /\d{1,2}(?:[:：]\d{2}|点(?:半|一刻|三刻|\d{1,2}分?)?)|[一二两三四五六七八九十]{1,3}点(?:半|一刻|三刻)?/;
+export function hasClockExpression(value: string): boolean { return HAS_CLOCK.test(value); }
 const GENERIC_REF = /^(?:那条|这条|那个|这个|刚才那条|刚才那个|之前那条|之前那个|上面那条)?(?:跟进)?(?:行动|待办|事项|任务|安排|时间|期限|截止时间)?$/;
 
 function normalizeItemCore(text: string): { core: string; object: string } {
@@ -201,48 +358,80 @@ const AMOUNT_TAIL_GUARD = '(?!\\s*(?:号|日|天|月|年|周|点|个|期|次|份
 const AMOUNT_NUM = `(\\d+(?:\\.\\d+)?(?:万(?:(?:\\d{1,4}(?:千|百)?|[一二两三四五六七八九](?:千|百)?)${AMOUNT_TAIL_GUARD})?|千(?:(?:\\d{1,3}|[一二两三四五六七八九])${AMOUNT_TAIL_GUARD})?)?|[零一二两三四五六七八九十百千万]+)`;
 const AMOUNT_UNIT = '(万元|万块|万|w元|w|千元|千块|千|k|块钱|块|元|rmb)?';
 
-function budget(text: string, warnings: string[]): number | undefined {
-  if (budgetIsUncertain(text)) { warnings.push('预算金额尚未确认，未填写确定金额，请在预览中核对。'); return undefined; }
-  const main = text.match(new RegExp(`(?:预算|金额|报价|合同额|合同金额|合同总价|总金额|总预算|总价|总额|总计)\\s*(?:${BUDGET_VERB})?\\s*([¥￥])?\\s*${AMOUNT_NUM}\\s*${AMOUNT_UNIT}`, 'i'));
-  const corrections = Array.from(text.matchAll(new RegExp(`(?:${BUDGET_VERB})\\s*([¥￥])?\\s*${AMOUNT_NUM}\\s*${AMOUNT_UNIT}`, 'gi')))
+function extractClauseBudget(clause: string, warnings: string[]): number | undefined {
+  const main = clause.match(new RegExp(`(?:预算|金额|报价|合同额|合同金额|合同总价|总金额|总预算|总价|总额|总计)\\s*(?:${BUDGET_VERB})?\\s*([¥￥])?\\s*${AMOUNT_NUM}\\s*${AMOUNT_UNIT}`, 'i'));
+  const corrections = Array.from(clause.matchAll(new RegExp(`(?:${BUDGET_VERB})\\s*([¥￥])?\\s*${AMOUNT_NUM}\\s*${AMOUNT_UNIT}`, 'gi')))
     .filter(candidate => {
       // Scheduling changes and unit-comparison/negation clauses must not override a budget.
       if (!/[\d零一二两三四五六七八九十]/.test(candidate[2])) return false;
-      const beforeClause = text.slice(0, candidate.index!).split(/[，,；;。\n]/).pop() || '';
-      const afterClause = text.slice(candidate.index!).split(/[，,；;。\n]/)[0] || '';
-      const localClause = beforeClause + afterClause;
-      if (/还是|不确定|没说明白|没说清|不是|并非/.test(localClause)) return false;
+      if (/还是|不确定|没说明白|没说清|不是|并非/.test(clause)) return false;
       const hasCurrency = !!candidate[1] || !!candidate[3] || /[万千百]/.test(candidate[2]);
-      const suffix = text.slice(candidate.index! + candidate[0].length);
+      const suffix = clause.slice(candidate.index! + candidate[0].length);
       return hasCurrency && !/^\s*(?:点|号|日)/.test(suffix);
     });
   const match = corrections.at(-1) || main;
   if (!match) return undefined;
   const value = parseAmountToken(match[2], match[3] || '', !!match[1]);
-  if (value === undefined) { warnings.push('金额缺少单位，请补充元、万或 k 后重新整理，或在预览中手动核对。'); return undefined; }
-  if (/约|大概|左右|区间|到\s*(?:\d+|[一二两三四五六七八九十]+)\s*(?:万|元|k|w)/i.test(text) && !corrections.length) warnings.push('原文金额含近似表达，请确认该预算后再保存。');
+  if (value === undefined) return undefined;
+  if (/约|大概|左右|区间|到\s*(?:\d+|[一二两三四五六七八九十]+)\s*(?:万|元|k|w)/i.test(clause) && !corrections.length) warnings.push('原文金额含近似表达，请确认该预算后再保存。');
   return value;
+}
+
+function budget(text: string, warnings: string[]): number | undefined {
+  const { activeClauses } = splitActiveClauses(text);
+  let confirmed: number | undefined;
+  let sawUncertainBudget = false;
+  let sawMissingUnit = false;
+  for (let i = 0; i < activeClauses.length; i++) {
+    const clause = activeClauses[i];
+    const nextClause = activeClauses[i + 1] || '';
+    const nextIsBareQualifier = Boolean(nextClause && BARE_BUDGET_QUALIFIER_RE.test(nextClause) && budgetIsUncertain(nextClause));
+    const hasBudgetMention = /(?:预算|金额|报价|合同额|合同金额|合同总价|总金额|总预算|总价|总额|总计)|[¥￥]|\d+(?:\.\d+)?\s*(?:万|千|块|元|[wk])/i.test(clause);
+    if (budgetIsUncertain(clause) || HYPOTHETICAL.test(clause) || nextIsBareQualifier) {
+      if (hasBudgetMention) sawUncertainBudget = true;
+      continue;
+    }
+    const localWarnings: string[] = [];
+    const extracted = extractClauseBudget(clause, localWarnings);
+    if (extracted !== undefined) {
+      confirmed = extracted;
+      warnings.push(...localWarnings);
+    } else if (new RegExp(`(?:预算|金额|报价|合同额|合同金额|合同总价|总金额|总预算|总价|总额|总计)\\s*(?:${BUDGET_VERB})?\\s*${AMOUNT_NUM}\\s*$`, 'i').test(clause)) {
+      sawMissingUnit = true;
+    }
+  }
+  if (confirmed === undefined) {
+    if (sawUncertainBudget) warnings.push('预算金额尚未确认，未填写确定金额，请在预览中核对。');
+    else if (sawMissingUnit) warnings.push('金额缺少单位，请补充元、万或 k 后重新整理，或在预览中手动核对。');
+  } else if (sawUncertainBudget && activeClauses.some(c => /(?:预算|报价|合同额|总价).*(?:可能|大概|待定|未定|还没)/.test(c))) {
+    warnings.push('部分附加预算表达尚未确认，已仅保留明确预算，请在预览中核对。');
+  }
+  return confirmed;
 }
 
 const STAGE_VERB = '(?:为|是|改为|改到|更新为|更新到|调整为|调整到|进入|推进到|推进为|切换到|切到|变成|变为|定为)';
 function stageFrom(text: string, fallback: DealStage, warnings: string[]): DealStage {
-  if (HYPOTHETICAL.test(text)) {
-    if (/成交|赢单|签|打款|回款/.test(text)) warnings.push('检测到否定或假设表述，未推进成交阶段。');
-    return fallback;
-  }
-  const clauses = text.split(/[，,；;。\n]/).map(s => s.trim()).filter(Boolean);
-  const hasStageClause = (re: RegExp) => clauses.some(clause =>
+  const { activeClauses, hasAnyHypothetical } = splitActiveClauses(text);
+  const eligible = activeClauses.filter(clause =>
     !NEGATIVE.test(clause)
-    && !/不要当真|别当真|不作数|不算数|不确定|未定|待定|谈不上|算不上|说不上/.test(clause)
-    && re.test(clause),
+    && !HYPOTHETICAL.test(clause)
+    && !/不要当真|别当真|不作数|不算数|不确定|未定|待定|谈不上|算不上|说不上/.test(clause),
   );
-  if (hasStageClause(new RegExp(`阶段\\s*${STAGE_VERB}?\\s*赢单成交|(?:已经|已|正式|确认|成功)\\s*(?:完成)?\\s*(?:成交|赢单|签约|打款|回款|签合同)|成交了|合同(?:已经|已)?签好了|签了合同|已回款|已打款|尾款(?:已经|已)?(?:收到|收到了|到账|打过来了|结清)`))) return '赢单成交';
-  if (hasStageClause(new RegExp(`进入(?:了)?(?:商务谈判|砍价阶段)|阶段\\s*${STAGE_VERB}?\\s*商务谈判|正在谈判|在谈合同|谈合同|在聊商务|商务推进`))) return '商务谈判';
-  if (hasStageClause(new RegExp(`(?:进入(?:了)?|到了?|在)?(?:方案报价阶段)|阶段\\s*${STAGE_VERB}?\\s*方案报价|已经报价|已报价|(?:已经|已|刚)发送?(?:了|出|过去)?(?:方案|报价(?:单|表)?)|发了(?:方案|报价(?:单)?)|(?:方案|报价(?:单)?)(?:已经|已|刚)发(?:过去|给客户|出|了)?|(?:方案|报价(?:单)?)(?:已经|已|刚)?报(?:过去|给客户|了)`))) return '方案报价';
-  if (hasStageClause(new RegExp(`(?:进入(?:了)?|到了?|在)?(?:需求确认阶段)|阶段\\s*${STAGE_VERB}?\\s*需求确认|需求确认|已确认需求|需求对齐|确认了需求|需求(?:已经|已|刚)?(?:聊清楚|聊透|沟通清楚|对完了|对齐了|明确了|确认了)`))) return '需求确认';
-  if (hasStageClause(new RegExp(`阶段\\s*${STAGE_VERB}?\\s*初步接触|初步接触|刚认识|刚接触|初次沟通`))) return '初步接触';
-  if (/成交|赢单|签|打款|回款/.test(text) && NEGATIVE.test(text)) warnings.push('检测到否定或假设表述，未推进成交阶段。');
-  return fallback;
+  const hasStageClause = (re: RegExp) => eligible.some(clause => re.test(clause));
+  const wonMatched = eligible.some(clause =>
+    (!(/(?:明天|后天|下周|下个月|本周|下礼拜|计划|打算|准备|争取|预计|有望)/.test(clause)) || /(?:已经|已|正式|签好了|签了合同|到账|收到)/.test(clause))
+    && new RegExp(`阶段\\s*${STAGE_VERB}?\\s*赢单成交|(?:已经|已|正式|确认|成功)\\s*(?:完成)?\\s*(?:成交|赢单|签约|打款|回款|签合同)|成交了|合同(?:已经|已)?签好了|签了合同|已回款|已打款|尾款(?:已经|已)?(?:收到|收到了|到账|打过来了|结清)`).test(clause),
+  );
+  let nextStage: DealStage = fallback;
+  if (wonMatched) nextStage = '赢单成交';
+  else if (hasStageClause(new RegExp(`进入(?:了)?(?:商务谈判|砍价阶段)|阶段\\s*${STAGE_VERB}?\\s*商务谈判|正在谈判|在谈合同|谈合同|在聊商务|商务推进`))) nextStage = '商务谈判';
+  else if (hasStageClause(new RegExp(`(?:进入(?:了)?|到了?|在)?(?:方案报价阶段)|阶段\\s*${STAGE_VERB}?\\s*方案报价|已经报价|已报价|(?:已经|已|刚)发送?(?:了|出|过去)?(?:方案|报价(?:单|表)?)|发了(?:方案|报价(?:单)?)|(?:方案|报价(?:单)?)(?:已经|已|刚)发(?:过去|给客户|出|了)?|(?:方案|报价(?:单)?)(?:已经|已|刚)?报(?:过去|给客户|了)`))) nextStage = '方案报价';
+  else if (hasStageClause(new RegExp(`(?:进入(?:了)?|到了?|在)?(?:需求确认阶段)|阶段\\s*${STAGE_VERB}?\\s*需求确认|需求确认|已确认需求|需求对齐|确认了需求|需求(?:已经|已|刚)?(?:聊清楚|聊透|沟通清楚|对完了|对齐了|明确了|确认了)`))) nextStage = '需求确认';
+  else if (hasStageClause(new RegExp(`阶段\\s*${STAGE_VERB}?\\s*初步接触|初步接触|刚认识|刚接触|初次沟通`))) nextStage = '初步接触';
+
+  const blockedWonInAnyClause = !wonMatched && /成交|赢单|签|打款|回款/.test(text) && (hasAnyHypothetical || NEGATIVE.test(text));
+  if (blockedWonInAnyClause) warnings.push('检测到否定或假设表述，未推进成交阶段。');
+  return nextStage;
 }
 
 function classifyExpenseCategory(title: string): ExpenseEntry['category'] {
@@ -268,6 +457,212 @@ function inferInlineProjectTitle(text: string, clientName: string): string | und
   return cand;
 }
 
+function hasNonWorkLifeContent(text: string): boolean {
+  if (/体重|饮水|小金库|亲友|妈妈|老婆/.test(text)) return true;
+  if (!/午饭|早饭|晚饭/.test(text)) return false;
+  const hasHospitalityCue = /(?:请|陪|跟|和|与|同|约|招待|宴请).{0,10}(?:客户|对方|甲方|[\u4e00-\u9fa5]{1,3}(?:总|经理|总监|老板|主任|老师|工|姐|哥|董)|[A-Z][A-Za-z0-9]+)/.test(text);
+  const hasPersonalSpendCue = /(?:花了|实付|消费|AA|报销|外卖|自己吃)/.test(text);
+  return !(hasHospitalityCue && !hasPersonalSpendCue);
+}
+
+function appendDistinctInternalContext(existing: string, incoming: string): string {
+  const cleanNote = incoming.trim();
+  if (!cleanNote) return existing;
+  const current = existing.trim();
+  if (!current) return cleanNote;
+  const normalizeNote = (s: string) => s.replace(/[\s，,。；;：:]/g, '').toLowerCase();
+  const targetNorm = normalizeNote(cleanNote);
+  if (!targetNorm) return existing;
+  const parts = current.split(/[\n；;]+/).map(p => p.trim()).filter(Boolean);
+  if (parts.some(p => normalizeNote(p) === targetNorm || normalizeNote(p).includes(targetNorm))) return existing;
+  return `${current}\n${cleanNote}`;
+}
+
+function mergeConditionClauses(text: string): string[] {
+  const rawClauses = normalizeGroupedNumbers(text).split(/[，,]/).map(item => item.trim()).filter(Boolean);
+  const clauses: string[] = [];
+  for (let ci = 0; ci < rawClauses.length; ci++) {
+    const cur = rawClauses[ci];
+    const nxt = rawClauses[ci + 1];
+    if (
+      nxt &&
+      (/^(?:(?:我方|我们|咱们|我|乙方)?(?:这边)?\s*)?(?:.*条件(?:改成|改到|改为|调整为|换成)\s*)?(?:等|待|等到|收到|拿到|确认好).+(?:后|之后|以后)$/.test(cur) ||
+        (/^(?:(?:我方|我们|咱们|我|乙方)?(?:这边)?\s*)?(?:等|待|等到|收到|拿到).+/.test(cur) &&
+          /^(?:(?:我方|我们|咱们|我|乙方)(?:这边)?\s*)?(?:再|就|才|开始|继续)/.test(nxt)) ||
+        (/^(?:不用等|不必等|别等).+/.test(cur) && /^(?:取消|不用|算了|停止|暂停)/.test(nxt)))
+    ) {
+      clauses.push(`${cur}，${nxt}`);
+      ci++;
+    } else {
+      clauses.push(cur);
+    }
+  }
+  return clauses;
+}
+
+function findKnownClientsInParagraph(paragraph: string, engagements: Engagement[]): { name: string; start: number }[] {
+  const knownNames = [...new Set(engagements.map(e => e.clientName.trim()).filter(name => name.length >= 2))]
+    .sort((a, b) => b.length - a.length);
+  const found: { name: string; start: number }[] = [];
+  for (const name of knownNames) {
+    const idx = paragraph.indexOf(name);
+    if (idx < 0) continue;
+    if (/^[A-Za-z0-9._-]+$/.test(name)) {
+      const prev = idx > 0 ? paragraph[idx - 1] : '';
+      const next = paragraph[idx + name.length] || '';
+      if (/[A-Za-z0-9]/.test(prev) || /[A-Za-z0-9]/.test(next)) continue;
+    }
+    found.push({ name, start: idx });
+  }
+  return found.sort((a, b) => a.start - b.start);
+}
+
+export interface AmbiguousTargetItemCandidate {
+  target: 'task' | 'followup';
+  id: string;
+  title: string;
+  engagementId?: string;
+  kind?: FollowUpItem['kind'];
+  dueAt?: string;
+  expectedDate?: string;
+  expectedAt?: string;
+}
+
+export interface ItemClarificationResult {
+  kind: 'item';
+  message: string;
+  engagementId?: string;
+  action: 'postpone_waiting' | 'reschedule';
+  targetDateText?: string;
+  candidates: AmbiguousTargetItemCandidate[];
+}
+
+export function findAmbiguousTargetItems(
+  text: string,
+  partition: WorkPartition,
+  engagementId?: string,
+): ItemClarificationResult | null {
+  const engagements = partition.engagements || [];
+  const tasks = partition.tasks || [];
+  const followUps = partition.followUps || [];
+  for (const rawParagraph of text.split(/[；;\n。]/).filter(item => item.trim())) {
+    const paragraph = normalizeGroupedNumbers(rawParagraph);
+    const detected = findClients(paragraph);
+    const rawClients = detected.length ? detected : findKnownClientsInParagraph(paragraph, engagements);
+    const clients = rawClients.filter((client, index) => index === 0 || client.name !== rawClients[index - 1].name);
+    const segments = clients.length ? clients.map((client, index) => ({
+      name: client.name,
+      text: paragraph.slice(index === 0 ? 0 : client.start, clients[index + 1]?.start ?? paragraph.length),
+    })) : [{ name: '', text: paragraph }];
+    for (const segment of segments) {
+      const selected = engagements.find(item => item.id === engagementId);
+      const candidates = segment.name ? engagements.filter(item => item.clientName === segment.name || item.clientName.includes(segment.name)) : [];
+      const explicitTitle = segment.text.match(/(?:项目名称|项目名|项目叫|项目为)\s*(?:为|是|叫|[:：])?\s*[「《“]?([^，,；。》”」]{1,30})/)?.[1]?.trim();
+      const allTitleMatches = engagements.filter(item => item.title && item.title.trim().length >= 2 && !/的合作项目$/.test(item.title.trim()) && segment.text.includes(item.title.trim()));
+      const titleMatches = segment.name ? candidates.filter(item => item.title && item.title.trim().length >= 2 && segment.text.includes(item.title.trim())) : allTitleMatches;
+      let targetEng: Engagement | null = null;
+      if (explicitTitle && candidates.some(item => item.title === explicitTitle)) targetEng = candidates.find(item => item.title === explicitTitle)!;
+      else if (titleMatches.length === 1) targetEng = titleMatches[0];
+      else if (selected && (!segment.name || selected.clientName.includes(segment.name))) targetEng = selected;
+      else if (candidates.length === 1 && !explicitTitle) targetEng = candidates[0];
+      if (!targetEng) continue;
+
+      const clientName = targetEng.clientName;
+      const escapedClient = clientName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const stripPrefix = (raw: string) => {
+        let out = raw.trim();
+        if (clientName) out = out.replace(new RegExp(`^(?:跟|和|找|给)?${escapedClient}(?:的|那边|那头|这边|这头)?`), '').trim();
+        if (targetEng!.title) {
+          const escapedTitle = targetEng!.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          out = out.replace(new RegExp(`^(?:${escapedTitle})(?:项目)?(?:的|这块|那块|这边|那边)?`), '').trim();
+        }
+        return out.replace(/^(?:项目|这次|刚才|之前|目前|现在)(?:的|里|上)?/, '').trim();
+      };
+      const openTasks = tasks.filter(item => item.engagementId === targetEng!.id && !item.done);
+      const openWaitings = followUps.filter(item => item.engagementId === targetEng!.id && item.status === 'open' && item.kind === 'waiting');
+      const clauses = mergeConditionClauses(segment.text);
+      let pendingNegSubj = '';
+      let condConseq = false;
+      for (const [clauseIndex, clause] of clauses.entries()) {
+        if (STRONG_HYPOTHETICAL.test(clause)) { condConseq = true; continue; }
+        if (condConseq && /^(?:就|那就|那么|便|则|我也|我就|客户就|对方就|我再|再)/.test(clause)) { condConseq = false; continue; }
+        condConseq = false;
+        if (/(?:先)?(?:不用|不要|别|先别|暂缓)催/.test(clause)) {
+          const subj = stripPrefix(clause).replace(/(?:先)?(?:不用|不要|别|先别|暂缓)催(?:了|他|她|客户|对方)?/g, '').trim();
+          const waitingMatches = subj && !GENERIC_REF.test(subj) ? openWaitings.filter(w => itemMatchesTitle(w.title, subj)) : openWaitings;
+          if (waitingMatches.length > 1) {
+            return {
+              kind: 'item',
+              action: 'postpone_waiting',
+              engagementId: targetEng.id,
+              message: '该项目有多条等待客户事项，请说明要修改具体哪一条。',
+              candidates: waitingMatches.map(w => ({ target: 'followup', id: w.id, title: w.title, engagementId: w.engagementId, kind: w.kind, expectedDate: w.expectedDate, expectedAt: w.expectedAt })),
+            };
+          }
+          continue;
+        }
+        if (/^不是/.test(clause) && new RegExp(DATE).test(clause) && !/(?:改成|改到|改为|推迟到|延后到|提前到)/.test(clause)) {
+          pendingNegSubj = stripPrefix(clause.replace(new RegExp(`不是\\s*${DATE}${CLOCK}前?`), '')).trim();
+          continue;
+        }
+        const own = /^(?:我方|我们|咱们|我|乙方)/.test(clause) ||
+          /(?:^|[，,；;\s\d点号日天周礼拜期一二三四五六日早上下午晚前])我(?:方|们)?(?:过去|过来|去|来(?![电])|亲自|直接|把|要|需要|得|会|将|先|发|交|写|出|做|改|整|补|对|跟|联|汇|演)/.test(clause);
+        const customer = !own && (
+          /^(?:客户|对方|甲方|他|她|他们|她们)/.test(clause) ||
+          ((clauseIndex > 0 || /(?:^|[，,])我(?:方|们)?/.test(paragraph)) && clause.startsWith(clientName)) ||
+          new RegExp(`^${escapedClient}(?:刚才|刚刚|刚|微信上?|电话里?|口头|那头|那边|这边|那儿|这儿){0,2}(?:说|表示|答应|承诺|反馈|讲|提到|负责|会|将|需要|要)`).test(clause)
+        );
+        const reschedule = !/(?:预算|金额|报价|合同额|合同金额|总价|阶段)/.test(clause)
+          ? clause.match(new RegExp(`^(.*?)\\s*(?:改成|改到|改为|推迟到|延后到|顺延到|提前到|挪到|调到|调整到|调整为)\\s*(${DATE}${CLOCK})前?(?:\\s*((?:${ACTION})[^，,；。]*))?$`))
+          : null;
+        if (reschedule) {
+          const datePart = reschedule[2].trim();
+          const rawSubj = stripPrefix(reschedule[1] || pendingNegSubj || '')
+            .replace(new RegExp(`^不是\\s*${DATE}${CLOCK}前?\\s*`), '')
+            .replace(/^(?:我方|我们|咱们|我|乙方|客户|对方|甲方|他|她|他们|她们|说|表示|答应|把|将)+/, '')
+            .trim();
+          const tailAction = reschedule[3]?.trim() || '';
+          const candidateSubj = [rawSubj, tailAction].filter(Boolean).join('');
+          pendingNegSubj = '';
+          if (!candidateSubj || GENERIC_REF.test(candidateSubj)) {
+            const pool = customer ? openWaitings : openTasks;
+            if (pool.length > 1) {
+              return {
+                kind: 'item',
+                action: 'reschedule',
+                engagementId: targetEng.id,
+                targetDateText: datePart,
+                message: '该项目有多条进行中的事项，请说明要修改具体哪一条。',
+                candidates: pool.map(item => 'done' in item
+                  ? { target: 'task' as const, id: item.id, title: item.title, engagementId: item.engagementId, dueAt: item.dueAt }
+                  : { target: 'followup' as const, id: item.id, title: item.title, engagementId: item.engagementId, kind: item.kind, expectedDate: item.expectedDate, expectedAt: item.expectedAt }),
+              };
+            }
+            continue;
+          }
+          const taskMatches = !customer ? openTasks.filter(t => itemMatchesTitle(t.title, candidateSubj)) : [];
+          const waitMatches = openWaitings.filter(w => itemMatchesTitle(w.title, candidateSubj));
+          if (taskMatches.length > 1 || waitMatches.length > 1) {
+            const combined: AmbiguousTargetItemCandidate[] = [
+              ...taskMatches.map(t => ({ target: 'task' as const, id: t.id, title: t.title, engagementId: t.engagementId, dueAt: t.dueAt })),
+              ...waitMatches.map(w => ({ target: 'followup' as const, id: w.id, title: w.title, engagementId: w.engagementId, kind: w.kind, expectedDate: w.expectedDate, expectedAt: w.expectedAt })),
+            ];
+            return {
+              kind: 'item',
+              action: 'reschedule',
+              engagementId: targetEng.id,
+              targetDateText: datePart,
+              message: '该项目有多条相近事项，请说明要修改具体哪一条。',
+              candidates: combined,
+            };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export const StateEngine = {
   /** Produces a reviewable batch. It never reads or writes browser storage. */
   propose(text: string, context: ProposalContext): ProposedChangeSet {
@@ -279,8 +674,10 @@ export const StateEngine = {
     const working = JSON.parse(JSON.stringify(original)) as WorkPartition;
     working.followUps ||= [];
     working.conditions ||= [];
+    const normalizedInput = normalizeGroupedNumbers(text);
     const explicitNewName = context.newClientName?.trim();
-    const singleNamedClient = new Set(findClients(text).map(item => item.name)).size === 1;
+    const initialClients = findClients(normalizedInput);
+    const singleNamedClient = new Set(initialClients.map(item => item.name)).size === 1;
     let boundProjectId: string | undefined;
     const addOperation = (operation: WorkOperation) => {
       const existing = proposal.operations.find(item => item.target === operation.target && item.entityId === operation.entityId);
@@ -291,14 +688,14 @@ export const StateEngine = {
       if (index >= 0) list[index] = operation.after;
       else if (operation.after) list.push(operation.after);
     };
-    if (/午饭|早饭|晚饭|体重|饮水|小金库|亲友|妈妈|老婆/.test(text)) proposal.warnings.push('疑似生活内容仍保留在当前输入中，未跨区记账；可编辑或删除原文后再保存。');
-    for (const paragraph of text.split(/[；;\n。]/).filter(item => item.trim())) {
-      const rawClients = findClients(paragraph);
+    if (hasNonWorkLifeContent(text)) proposal.warnings.push('疑似生活内容仍保留在当前输入中，未跨区记账；可编辑或删除原文后再保存。');
+    for (const paragraph of normalizedInput.split(/[；;\n。]/).filter(item => item.trim())) {
+      const detectedClients = findClients(paragraph);
+      const rawClients = detectedClients.length ? detectedClients : findKnownClientsInParagraph(paragraph, working.engagements);
       const clients = rawClients.filter((client, index) => index === 0 || client.name !== rawClients[index - 1].name);
       const segments = clients.length ? clients.map((client, index) => ({ name: client.name,
         text: paragraph.slice(index === 0 ? 0 : client.start, clients[index + 1]?.start ?? paragraph.length) })) : [{ name: '', text: paragraph }];
       for (const segment of segments) {
-        if (/如果|假如|假设|倘若/.test(segment.text) || /(?:可能|或许|也许|预计|有望).{0,8}(?:成交|赢单|签约|打款)/.test(segment.text)) { proposal.warnings.push('假设内容未作为事实提取，请补充已确认的信息。'); continue; }
         const selected = working.engagements.find(item => item.id === context.selectedEngagementId);
         const candidates = segment.name ? working.engagements.filter(item => item.clientName === segment.name || item.clientName.includes(segment.name)) : [];
         const explicitTitle = segment.text.match(/(?:项目名称|项目名|项目叫|项目为)\s*(?:为|是|叫|[:：])?\s*[「《“]?([^，,；。》”」]{1,30})/)?.[1]?.trim();
@@ -322,6 +719,14 @@ export const StateEngine = {
           const inThisInput = proposal.operations.filter(op => op.target === 'engagement' && op.after);
           if (inThisInput.length === 1) before = working.engagements.find(e => e.id === inThisInput[0].entityId) || null;
         }
+        const { activeClauses: segmentNonHypClauses, hasStrongHypothetical: segHasStrongHyp } = splitActiveClauses(segment.text);
+        if (segHasStrongHyp) proposal.warnings.push('假设内容未作为事实提取，请补充已确认的信息。');
+        if (!segmentNonHypClauses.length) {
+          if (/(?:可能|或许|也许|预计|有望).{0,8}(?:成交|赢单|签约|打款)/.test(segment.text)) {
+            proposal.warnings.push('假设内容未作为事实提取，请补充已确认的信息。');
+          }
+          continue;
+        }
         if (!segment.name && !before && !explicitNewName) {
           proposal.warnings.push('未明确客户或项目，请补充姓名或先选择项目。');
           proposal.clarification = { kind: 'project', message: '这段沟通属于谁或哪个项目？也可以先只保存原文。' }; continue;
@@ -335,12 +740,15 @@ export const StateEngine = {
         if (explicitTitle) engagement.title = explicitTitle;
         if (amount !== undefined) engagement.budgetAmount = amount;
         engagement.stage = stageFrom(segment.text, engagement.stage, proposal.warnings);
-        const contextMatch = segment.text.match(/(?:痛点是|诉求是|需求是|想做|需要做|目标是)([^，,；。]+)/);
-        if (contextMatch) engagement.internalContext = contextMatch[1].trim();
+        for (const ctxClause of segmentNonHypClauses) {
+          for (const ctxMatch of ctxClause.matchAll(/(?:痛点是|诉求是|需求是|想做|需要做|目标是)([^，,；。]+)/g)) {
+            engagement.internalContext = appendDistinctInternalContext(engagement.internalContext, ctxMatch[1]);
+          }
+        }
         const openTasks = () => working.tasks.filter(item => item.engagementId === engagement.id && !item.done);
         const openFollowUps = (kind?: FollowUpItem['kind']) =>
           (working.followUps || []).filter(item => item.engagementId === engagement.id && item.status === 'open' && (!kind || item.kind === kind));
-        const addFollowUp = (kind: FollowUpItem['kind'], title: string, dateText?: string) => {
+        const addFollowUp = (kind: FollowUpItem['kind'], title: string, dateText?: string, dateUncertain?: boolean) => {
           const existingMatch = kind === 'waiting' ? openFollowUps('waiting').filter(item => itemMatchesTitle(item.title, title)) : [];
           if (existingMatch.length === 1) {
             const target = existingMatch[0];
@@ -348,7 +756,7 @@ export const StateEngine = {
             const updated: FollowUpItem = { ...target, status: 'open', updatedAt: now };
             if (dateText) {
               updated.sourceDateText = dateText;
-              const resolved = dateIsUncertain(segment.text) ? { warning: '日期或时间尚未确认，请在核对时补充。', dueAt: undefined } : resolveDeadline(dateText, now);
+              const resolved = dateUncertain ? { warning: '日期或时间尚未确认，请在核对时补充。', dueAt: undefined } : resolveDeadline(dateText, now);
               if (resolved.warning) proposal.warnings.push(resolved.warning);
               delete updated.expectedAt;
               delete updated.expectedDate;
@@ -365,7 +773,7 @@ export const StateEngine = {
           const followup: FollowUpItem = { id, kind, title, engagementId: engagement.id, status: 'open', sourceMessageId: context.sourceMessageId, createdAt: now, updatedAt: now };
           if (dateText) {
             followup.sourceDateText = dateText;
-            const resolved = dateIsUncertain(segment.text) ? { warning: '日期或时间尚未确认，请在核对时补充。', dueAt: undefined } : resolveDeadline(dateText, now);
+            const resolved = dateUncertain ? { warning: '日期或时间尚未确认，请在核对时补充。', dueAt: undefined } : resolveDeadline(dateText, now);
             if (resolved.warning) proposal.warnings.push(resolved.warning);
             if (resolved.dueAt) {
               if (HAS_CLOCK.test(dateText)) followup.expectedAt = resolved.dueAt;
@@ -374,14 +782,14 @@ export const StateEngine = {
           }
           addOperation({ target: 'followup', entityId: id, before: null, after: followup });
         };
-        const upsertTask = (title: string, dateText?: string, existingTarget?: ProjectTaskItem) => {
+        const upsertTask = (title: string, dateText?: string, existingTarget?: ProjectTaskItem, dateUncertain?: boolean) => {
           const matched = existingTarget ? [existingTarget] : openTasks().filter(item => itemMatchesTitle(item.title, title));
           if (matched.length === 1) {
             const target = matched[0];
             const orig = original.tasks.find(item => item.id === target.id) ?? null;
             const updated: ProjectTaskItem = { ...target };
             if (dateText !== undefined) {
-              const resolved = dateIsUncertain(segment.text) ? { warning: '日期或时间尚未确认，行动保留但未设置提醒时间。', dueAt: undefined } : resolveDeadline(dateText, now);
+              const resolved = dateUncertain ? { warning: '日期或时间尚未确认，行动保留但未设置提醒时间。', dueAt: undefined } : resolveDeadline(dateText, now);
               if (resolved.warning) proposal.warnings.push(resolved.warning);
               updated.deadline = dateText;
               updated.sourceDeadlineText = dateText;
@@ -394,7 +802,7 @@ export const StateEngine = {
             return;
           }
           if (dateText !== undefined) {
-            const resolved = dateIsUncertain(segment.text) ? { warning: '日期或时间尚未确认，行动保留但未设置提醒时间。', dueAt: undefined } : resolveDeadline(dateText, now);
+            const resolved = dateUncertain ? { warning: '日期或时间尚未确认，行动保留但未设置提醒时间。', dueAt: undefined } : resolveDeadline(dateText, now);
             if (resolved.warning) proposal.warnings.push(resolved.warning);
             const task: ProjectTaskItem = { id: newId('task'), title, assignee: '我', deadline: dateText, sourceDeadlineText: dateText,
               priority: 'medium', done: false, engagementId: engagement.id, ...(resolved.dueAt ? { dueAt: resolved.dueAt } : {}) };
@@ -406,24 +814,7 @@ export const StateEngine = {
             addOperation({ target: 'task', entityId: id, before: null, after: { id, title, assignee: '我', deadline: '', priority: 'medium', done: false, engagementId: engagement.id } });
           }
         };
-        const rawClauses = segment.text.split(/[，,]/).map(item => item.trim()).filter(Boolean);
-        const clauses: string[] = [];
-        for (let ci = 0; ci < rawClauses.length; ci++) {
-          const cur = rawClauses[ci];
-          const nxt = rawClauses[ci + 1];
-          if (
-            nxt &&
-            (/^(?:(?:我方|我们|咱们|我|乙方)?(?:这边)?\s*)?(?:.*条件(?:改成|改到|改为|调整为|换成)\s*)?(?:等|待|等到|收到|拿到|确认好).+(?:后|之后|以后)$/.test(cur) ||
-              (/^(?:(?:我方|我们|咱们|我|乙方)?(?:这边)?\s*)?(?:等|待|等到|收到|拿到).+/.test(cur) &&
-                /^(?:(?:我方|我们|咱们|我|乙方)(?:这边)?\s*)?(?:再|就|才|开始|继续)/.test(nxt)) ||
-              (/^(?:不用等|不必等|别等).+/.test(cur) && /^(?:取消|不用|算了|停止|暂停)/.test(nxt)))
-          ) {
-            clauses.push(`${cur}，${nxt}`);
-            ci++;
-          } else {
-            clauses.push(cur);
-          }
-        }
+        const clauses = mergeConditionClauses(segment.text);
         const activeConditions = () =>
           (working.conditions || []).filter(item => item.engagementId === engagement.id && !['completed', 'cancelled'].includes(item.status));
         const extractWaitingTitleFromCondition = (condText: string): string | null => {
@@ -472,8 +863,24 @@ export const StateEngine = {
         };
         let postponedWaiting = false;
         let pendingSubjectFromNegatedClause = '';
+        let conditionalConsequentPending = false;
+        let hasNonHypotheticalClause = false;
         const hasBareRespUncertain = clauses.some(c => BARE_RESP_UNCERTAIN.test(stripContextPrefix(c)));
         for (const [clauseIndex, clause] of clauses.entries()) {
+          if (STRONG_HYPOTHETICAL.test(clause)) {
+            conditionalConsequentPending = true;
+            continue;
+          }
+          if (conditionalConsequentPending && /^(?:就|那就|那么|便|则|我也|我就|客户就|对方就|我再|再)/.test(clause)) {
+            conditionalConsequentPending = false;
+            continue;
+          }
+          conditionalConsequentPending = false;
+          if (/(?:可能|或许|也许|预计|有望).{0,8}(?:成交|赢单|签约|打款)/.test(clause) && !extractClauseBudget(clause, [])) {
+            continue;
+          }
+          hasNonHypotheticalClause = true;
+          const clauseDateUncertain = isClauseDateUncertain(clauses, clauseIndex);
           // M2: ConditionIntent lifecycle (pause / resume / cancel / confirm ready)
           if (/(?:不用等|不必等|别等).*(?:取消|不用了|算了)|取消.*(?:条件|跟进)|(?:条件|跟进).*(?:取消|作废|不用了)/.test(clause)) {
             const subj = stripContextPrefix(clause)
@@ -606,7 +1013,8 @@ export const StateEngine = {
             if (waitingMatches.length === 1) {
               const target = waitingMatches[0];
               const orig = (original.followUps || []).find(f => f.id === target.id) ?? null;
-              const vagueMatch = segment.text.match(/下周|下星期|下礼拜|下个?月|过几天|晚点|稍后|改天/);
+              const vagueRe = /下周|下星期|下礼拜|下个?月|过几天|晚点|稍后|改天/;
+              const vagueMatch = clause.match(vagueRe) || (clauses[clauseIndex + 1] || '').match(vagueRe);
               const updated: FollowUpItem = { ...target, sourceDateText: vagueMatch ? vagueMatch[0] : '待定', updatedAt: now };
               delete updated.expectedDate;
               delete updated.expectedAt;
@@ -678,8 +1086,8 @@ export const StateEngine = {
             if (!candidateSubj || GENERIC_REF.test(candidateSubj)) {
               const pool = customer ? openFollowUps('waiting') : openTasks();
               if (pool.length === 1) {
-                if (customer) addFollowUp('waiting', pool[0].title, datePart);
-                else upsertTask(pool[0].title, datePart, pool[0] as ProjectTaskItem);
+                if (customer) addFollowUp('waiting', pool[0].title, datePart, clauseDateUncertain);
+                else upsertTask(pool[0].title, datePart, pool[0] as ProjectTaskItem, clauseDateUncertain);
               } else if (pool.length > 1) {
                 proposal.warnings.push('该项目有多条进行中的事项，请明确要修改哪一条。');
                 proposal.clarification = { kind: 'project', message: '该项目有多条进行中的事项，请说明要修改具体哪一条。' };
@@ -688,15 +1096,15 @@ export const StateEngine = {
             }
             const taskMatches = !customer ? openTasks().filter(t => itemMatchesTitle(t.title, candidateSubj)) : [];
             const waitMatches = openFollowUps('waiting').filter(w => itemMatchesTitle(w.title, candidateSubj));
-            if (taskMatches.length === 1) { upsertTask(taskMatches[0].title, datePart, taskMatches[0]); continue; }
-            if (waitMatches.length === 1) { addFollowUp('waiting', waitMatches[0].title, datePart); continue; }
+            if (taskMatches.length === 1) { upsertTask(taskMatches[0].title, datePart, taskMatches[0], clauseDateUncertain); continue; }
+            if (waitMatches.length === 1) { addFollowUp('waiting', waitMatches[0].title, datePart, clauseDateUncertain); continue; }
             if (taskMatches.length > 1 || waitMatches.length > 1) {
               proposal.warnings.push('该项目有多条相近事项，请明确要修改哪一条。');
               proposal.clarification = { kind: 'project', message: '该项目有多条相近事项，请说明要修改具体哪一条。' };
               continue;
             }
-            if (customer) addFollowUp('waiting', candidateSubj, datePart);
-            else upsertTask(candidateSubj, datePart);
+            if (customer) addFollowUp('waiting', candidateSubj, datePart, clauseDateUncertain);
+            else upsertTask(candidateSubj, datePart, undefined, clauseDateUncertain);
             continue;
           }
           const unclearOwner = !own && !customer && (RESPONSIBILITY_UNCERTAIN.test(clause) || hasBareRespUncertain);
@@ -705,8 +1113,8 @@ export const StateEngine = {
             const title = (match[4] || match[2]).trim();
             if (title.length < 2) continue;
             if (unclearOwner) { addFollowUp('question', `确认由谁${title}`); continue; }
-            if (customer) { addFollowUp('waiting', title, match[1]); continue; }
-            upsertTask(title, match[1]);
+            if (customer) { addFollowUp('waiting', title, match[1], clauseDateUncertain); continue; }
+            upsertTask(title, match[1], undefined, clauseDateUncertain);
           }
           if ((customer || own) && !new RegExp(DATE).test(clause) && !/(?:预算|金额|报价|合同额|合同金额|总价|阶段)/.test(clause)) {
             const clauseWithoutProject = engagement.title ? clause.replace(engagement.title, '') : clause;
@@ -799,9 +1207,11 @@ export const StateEngine = {
             });
           }
         }
-        engagement.updatedAt = now;
-        if (!before || JSON.stringify({ ...before, updatedAt: now }) !== JSON.stringify(engagement)) {
-          addOperation({ target: 'engagement', entityId: engagement.id, before: original.engagements.find(item => item.id === engagement.id) || null, after: engagement });
+        if (hasNonHypotheticalClause) {
+          engagement.updatedAt = now;
+          if (!before || JSON.stringify({ ...before, updatedAt: now }) !== JSON.stringify(engagement)) {
+            addOperation({ target: 'engagement', entityId: engagement.id, before: original.engagements.find(item => item.id === engagement.id) || null, after: engagement });
+          }
         }
       }
     }
@@ -821,9 +1231,7 @@ export const StateEngine = {
 
   /** Mutates only the caller's detached draft. The repository commits it atomically. */
   mutateLifeDraft(text: string, life: LifePartition): StateMutationReceipt[] {
-    const facts=routeLifeInput(text).filter(part=>part.route==='fact').map(part=>part.text.trim()
-      .replace(/\d{1,3}(?:[,，]\d{3})+(?:\.\d+)?/g,amount=>amount.replace(/[,，]/g,''))
-      .replace(/(\d+)块([0-9])(?:毛)?$/,'$1.$2元'));
+    const facts = routeLifeInput(text).filter(part => part.route === 'fact').map(part => normalizeLifeClause(part.text));
     if (!facts.length) return [];
     const receipts: StateMutationReceipt[] = [];
     const receipt = (targetCardType: StateMutationReceipt['targetCardType'], summaryText: string) => receipts.push({
@@ -904,10 +1312,7 @@ export const StateEngine = {
     };
 
     // 撤回/反悔句与第三方消费过滤防御
-    const normLifeSeg = (s: string) => s.trim()
-      .replace(/\d{1,3}(?:[,，]\d{3})+(?:\.\d+)?/g, amount => amount.replace(/[,，]/g, ''))
-      .replace(/(\d+)块([0-9])(?:毛)?$/, '$1.$2元');
-    const rawSegs = text.split(/[，,；;。\n！？!?]+/).map(normLifeSeg).filter(Boolean);
+    const rawSegs = text.split(/[，,；;。\n！？!?]+/).map(normalizeLifeClause).filter(Boolean);
     const RETRACT_STOP_RE = /(?:啊?不对|搞错了|说错了|算错了|记错了|别记账|不要记账|不用记账|别入账|不要入账|不用入账|别记了|不要记了|不用记了|不记账|最后没(?:存|买|花|付|转|交|收|到)|其实没(?:存|买|花|付|转|交|收|到)|最终没(?:存|买|花|付|转|交|收|到)|根本没(?:存|买|花|付|转|交|收|到)|没存成功|没买成|作废|撤回)/;
     const PENDING_INCOMING_RE = /^(?:还)?(?:没|未|没有)(?:到账|收|收到|退|打过来|打给我|转过来|发过来)$|^(?:退款|报销|补贴|工资|奖金|红包)?(?:还)?(?:没|未|没有)(?:到账|打给我|打过来)$/;
     const INCOMING_LIKE_RE = /(?:退款|退税|退回|报销|补贴|工资|奖金|年终奖|红包|入账|进账|到账|还给我|转给我|卖了|卖出)/;
@@ -1029,7 +1434,8 @@ export const StateEngine = {
 
       // 4. 消费记账（支持全部日常口语、AA分摊、品牌/地点修饰与中文数字）
       // 跳过已作为心愿存入、收入、自定义卡目标、体重、饮水、睡眠或商务预算的子句
-      if (/(?:存入|存了?|攒了?|存进|小金库|发工资|工资|报销|收到红包|入账|进账|赚了?|挣了?|收入|目标\s*\d+|体重|称重|上称|预算|报价|王总|李总)/.test(clause)) continue;
+      const hasWorkClientSubject = extractClientNames(clause).length > 0 && !/^(?:今天|刚刚|刚才|昨晚|昨天|早上|中午|下午|晚上|顺便|另外)?\s*(?:请|给|帮|替|带|陪)/.test(clause);
+      if (/(?:存入|存了?|攒了?|存进|小金库|发工资|工资|报销|收到红包|入账|进账|赚了?|挣了?|收入|目标\s*\d+|体重|称重|上称|预算|报价|合同额)/.test(clause) || hasWorkClientSubject) continue;
       if (/(?:红包|奖金|年终奖|退款|退税|退回|押金|利息|还给我|卖了|卖出|闲鱼|转转|二手|到账|转账|钱已收|钱已到卡)/.test(clause) && !/实付|花了|扣了|刷了|交了押金/.test(clause)) continue;
       if (/^\d+(?:\.\d+)?\s*(?:kg|公斤|千克|斤)$/i.test(clause)) continue;
       if (/(?:喝了?|炫了?|补)\s*(?:\d+|[一二两三四五六七八九十])?\s*(?:杯|瓶|毫升|ml)\s*水?/i.test(clause)) continue;
@@ -1100,7 +1506,7 @@ export const StateEngine = {
 
       if (!Number.isNaN(finalAmount) && finalAmount > 0) {
         const cleanTitle = title.replace(/^(?:今天|刚刚|刚才|顺便|另外|还有|又)+/, '').trim() || '日常开销';
-        if (/预算|金额|报价|存入|攒|客户|王总|李总/.test(cleanTitle)) continue;
+        if (/预算|金额|报价|合同额|存入|攒|客户/.test(cleanTitle) || (extractClientNames(cleanTitle).length > 0 && !/^(?:请|给|帮|替|带|陪)/.test(cleanTitle))) continue;
         const roundedAmount = +finalAmount.toFixed(2);
         const category = classifyExpenseCategory(cleanTitle);
         wallet.entries.push({ id: newId('expense'), title: cleanTitle, amount: roundedAmount, type: 'expense', category, timestamp: Date.now() });
@@ -1254,7 +1660,8 @@ export const StateEngine = {
     let lastPersonName: string | null = null;
     for (const rawCl of facts) {
       if (bookedClauses.has(rawCl)) continue;
-      if (/(?:预算|项目|张总|李总|王总|陈姐|合同额|报价|工作|存入|攒了|花了|买了|打车|发工资)/.test(rawCl)) continue;
+      if (/(?:预算|项目|合同额|报价|工作|存入|攒了|花了|买了|打车|发工资)/.test(rawCl)
+        || /(?:总监|经理|老板|主理人|院长|行长|厂长|处长|局长|科长|书记|律师|顾问|合伙人|董|(?<![我表堂大二小])[\u4e00-\u9fa5]总)/.test(rawCl)) continue;
       let cl = rawCl.replace(/^(?:记一下|记住|备忘|提醒我(?:记住)?|顺便说一下|还有|另外|而且|而|但|但是|然后|至于|其实|平时|今天|昨天|刚才|顺便)[，,：:\s]*/, '').trim();
       if (!cl) continue;
 

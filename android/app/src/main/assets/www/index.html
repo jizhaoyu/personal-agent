@@ -2,13 +2,13 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="color-scheme" content="light" />
     <meta name="supported-color-schemes" content="light" />
-    <meta name="theme-color" content="#f7f1e5" />
+    <meta name="theme-color" content="#F7F1E5" />
     <meta name="format-detection" content="telephone=no, email=no, address=no" />
-    <title>Looma · 可信客户跟进伴侣</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23314b39'/%3E%3Ctext x='8' y='25' font-family='Georgia' font-size='26' fill='%23d5e5b2'%3EL%3C/text%3E%3C/svg%3E" />
+    <title>Looma — 可信客户跟进伴侣</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2312624F'/%3E%3Ctext x='8' y='25' font-family='Georgia' font-size='26' fill='%23F6F4ED'%3EL%3C/text%3E%3C/svg%3E" />
     <style>
       /* 全局透明背景支持桌面悬浮与安卓沉浸状态栏及防系统字号畸变 */
       html, body, #root {
@@ -27,11 +27,87 @@
         -moz-text-size-adjust: 100%;
              text-size-adjust: 100%;
       }
+      .looma-boot {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: max(12px, env(safe-area-inset-top, 0px)) 16px 24px;
+        background: #F7F1E5;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .looma-boot-bar {
+        width: 100%;
+        max-width: 1200px;
+        height: 52px;
+        border-bottom: 1px solid #E4D7C3;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .looma-boot-pill,
+      .looma-boot-dot,
+      .looma-boot-line {
+        background: #EAE0CE;
+        animation: looma-boot-pulse 1.8s ease-in-out infinite;
+      }
+      .looma-boot-pill {
+        width: 84px;
+        height: 24px;
+        border-radius: 999px;
+      }
+      .looma-boot-dot {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+      }
+      .looma-boot-card {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 450px;
+        margin-top: 28px;
+        padding: 20px;
+        background: #FFFCF6;
+        border: 1px solid #E4D7C3;
+        border-radius: 14px;
+        display: grid;
+        gap: 12px;
+      }
+      .looma-boot-line {
+        height: 12px;
+        border-radius: 6px;
+      }
+      .looma-boot-line--short { width: 42%; }
+      .looma-boot-line--mid { width: 76%; }
+      @keyframes looma-boot-pulse {
+        0%, 100% { opacity: 0.55; }
+        50% { opacity: 0.95; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .looma-boot-pill,
+        .looma-boot-dot,
+        .looma-boot-line { animation: none; }
+      }
     </style>
-    <script type="module" crossorigin src="./assets/index-CFHY2QN0.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-C9DBWLlp.css">
+    <script type="module" crossorigin src="./assets/index-BnUq9W7Q.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/vendor-react-CAH2-Xdv.js">
+    <link rel="modulepreload" crossorigin href="./assets/vendor-icons-BwHIlTls.js">
+    <link rel="stylesheet" crossorigin href="./assets/index-d0Q7WNuq.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="looma-boot" aria-busy="true">
+        <div class="looma-boot-bar">
+          <div class="looma-boot-pill"></div>
+          <div class="looma-boot-dot"></div>
+        </div>
+        <div class="looma-boot-card">
+          <div class="looma-boot-line looma-boot-line--short"></div>
+          <div class="looma-boot-line"></div>
+          <div class="looma-boot-line looma-boot-line--mid"></div>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

@@ -1,20 +1,50 @@
 {
+  "_ClosureReceipt-Crrl0PpS.js": {
+    "file": "assets/ClosureReceipt-Crrl0PpS.js",
+    "name": "ClosureReceipt",
+    "imports": [
+      "_vendor-react-CAH2-Xdv.js",
+      "index.html",
+      "_vendor-icons-BwHIlTls.js"
+    ]
+  },
+  "_vendor-icons-BwHIlTls.js": {
+    "file": "assets/vendor-icons-BwHIlTls.js",
+    "name": "vendor-icons",
+    "imports": [
+      "_vendor-react-CAH2-Xdv.js"
+    ]
+  },
+  "_vendor-react-CAH2-Xdv.js": {
+    "file": "assets/vendor-react-CAH2-Xdv.js",
+    "name": "vendor-react"
+  },
   "index.html": {
-    "file": "assets/index-CFHY2QN0.js",
+    "file": "assets/index-BnUq9W7Q.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
     "isDynamicEntry": true,
+    "imports": [
+      "_vendor-react-CAH2-Xdv.js",
+      "_vendor-icons-BwHIlTls.js"
+    ],
     "dynamicImports": [
-      "node_modules/html2canvas/dist/html2canvas.esm.js",
+      "src/persistence/indexedDb.ts",
+      "src/components/WorkBench.tsx",
+      "src/components/SettingsModal.tsx",
+      "src/components/AlignmentModal.tsx",
+      "src/components/TrialInfoModal.tsx",
       "src/components/PracticeModal.tsx",
       "src/components/ChatPill.tsx",
       "src/components/LivingCardsBoard.tsx",
       "src/components/CheckinBoard.tsx",
-      "src/components/MemoryCenter.tsx"
+      "src/components/MemoryCenter.tsx",
+      "src/services/appUpdate.ts",
+      "src/services/appUpdate.ts"
     ],
     "css": [
-      "assets/index-C9DBWLlp.css"
+      "assets/index-d0Q7WNuq.css"
     ]
   },
   "node_modules/html2canvas/dist/html2canvas.esm.js": {
@@ -23,64 +53,146 @@
     "src": "node_modules/html2canvas/dist/html2canvas.esm.js",
     "isDynamicEntry": true
   },
-  "src/components/ChatPill.tsx": {
-    "file": "assets/ChatPill-D2BuIF39.js",
-    "name": "ChatPill",
-    "src": "src/components/ChatPill.tsx",
+  "src/components/AlignmentModal.tsx": {
+    "file": "assets/AlignmentModal-C7yDoUwI.js",
+    "name": "AlignmentModal",
+    "src": "src/components/AlignmentModal.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "index.html"
-    ]
-  },
-  "src/components/CheckinBoard.tsx": {
-    "file": "assets/CheckinBoard-CNWkSgDm.js",
-    "name": "CheckinBoard",
-    "src": "src/components/CheckinBoard.tsx",
-    "isDynamicEntry": true,
-    "imports": [
-      "index.html"
-    ],
-    "css": [
-      "assets/CheckinBoard-UnvNy3sb.css"
-    ]
-  },
-  "src/components/LivingCardsBoard.tsx": {
-    "file": "assets/LivingCardsBoard-BbkkFqT7.js",
-    "name": "LivingCardsBoard",
-    "src": "src/components/LivingCardsBoard.tsx",
-    "isDynamicEntry": true,
-    "imports": [
-      "index.html"
+      "index.html",
+      "_vendor-react-CAH2-Xdv.js",
+      "_vendor-icons-BwHIlTls.js"
     ],
     "dynamicImports": [
       "node_modules/html2canvas/dist/html2canvas.esm.js"
     ]
   },
+  "src/components/ChatPill.tsx": {
+    "file": "assets/ChatPill-Cyz2DUmc.js",
+    "name": "ChatPill",
+    "src": "src/components/ChatPill.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_vendor-react-CAH2-Xdv.js",
+      "index.html",
+      "_vendor-icons-BwHIlTls.js"
+    ]
+  },
+  "src/components/CheckinBoard.tsx": {
+    "file": "assets/CheckinBoard-CcPGKRLE.js",
+    "name": "CheckinBoard",
+    "src": "src/components/CheckinBoard.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_vendor-react-CAH2-Xdv.js",
+      "index.html",
+      "_vendor-icons-BwHIlTls.js"
+    ],
+    "css": [
+      "assets/CheckinBoard-RDF-kgjX.css"
+    ]
+  },
+  "src/components/LivingCardsBoard.tsx": {
+    "file": "assets/LivingCardsBoard-Da7kWmec.js",
+    "name": "LivingCardsBoard",
+    "src": "src/components/LivingCardsBoard.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_vendor-react-CAH2-Xdv.js",
+      "index.html",
+      "_vendor-icons-BwHIlTls.js"
+    ]
+  },
   "src/components/MemoryCenter.tsx": {
-    "file": "assets/MemoryCenter-86Y-7cJE.js",
+    "file": "assets/MemoryCenter-BQWXhvZw.js",
     "name": "MemoryCenter",
     "src": "src/components/MemoryCenter.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "index.html"
+      "_vendor-react-CAH2-Xdv.js",
+      "index.html",
+      "_vendor-icons-BwHIlTls.js"
     ],
     "dynamicImports": [
       "index.html"
     ],
     "css": [
-      "assets/MemoryCenter-DKp1uTAq.css"
+      "assets/MemoryCenter-BGlMTekP.css"
     ]
   },
   "src/components/PracticeModal.tsx": {
-    "file": "assets/PracticeModal-wTtUuXsw.js",
+    "file": "assets/PracticeModal-CO9cjjpd.js",
     "name": "PracticeModal",
     "src": "src/components/PracticeModal.tsx",
     "isDynamicEntry": true,
     "imports": [
+      "_vendor-react-CAH2-Xdv.js",
+      "index.html",
+      "_ClosureReceipt-Crrl0PpS.js",
+      "_vendor-icons-BwHIlTls.js"
+    ],
+    "css": [
+      "assets/PracticeModal-CyTkxeOw.css"
+    ]
+  },
+  "src/components/SettingsModal.tsx": {
+    "file": "assets/SettingsModal-B1HCNJrO.js",
+    "name": "SettingsModal",
+    "src": "src/components/SettingsModal.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_vendor-react-CAH2-Xdv.js",
+      "index.html",
+      "_vendor-icons-BwHIlTls.js"
+    ]
+  },
+  "src/components/TrialInfoModal.tsx": {
+    "file": "assets/TrialInfoModal-6us_GHbD.js",
+    "name": "TrialInfoModal",
+    "src": "src/components/TrialInfoModal.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_vendor-react-CAH2-Xdv.js",
+      "index.html",
+      "_vendor-icons-BwHIlTls.js"
+    ],
+    "css": [
+      "assets/TrialInfoModal-DC_Ga_Fr.css"
+    ]
+  },
+  "src/components/WorkBench.tsx": {
+    "file": "assets/WorkBench-CphwDDEP.js",
+    "name": "WorkBench",
+    "src": "src/components/WorkBench.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_vendor-react-CAH2-Xdv.js",
+      "_ClosureReceipt-Crrl0PpS.js",
+      "_vendor-icons-BwHIlTls.js"
+    ],
+    "dynamicImports": [
       "index.html"
     ],
     "css": [
-      "assets/PracticeModal-CyRHvv6s.css"
+      "assets/WorkBench-CX_goDrK.css"
     ]
+  },
+  "src/persistence/indexedDb.ts": {
+    "file": "assets/indexedDb-BhaxbFu-.js",
+    "name": "indexedDb",
+    "src": "src/persistence/indexedDb.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_vendor-react-CAH2-Xdv.js",
+      "_vendor-icons-BwHIlTls.js"
+    ]
+  },
+  "src/services/appUpdate.ts": {
+    "file": "assets/appUpdate-FFdlI2dB.js",
+    "name": "appUpdate",
+    "src": "src/services/appUpdate.ts",
+    "isDynamicEntry": true
   }
 }

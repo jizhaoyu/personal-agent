@@ -2,34 +2,31 @@ import React, { useState, useRef } from 'react';
 import {
   Wallet,
   Users,
-  Briefcase,
-  Target,
-  FileCheck,
-  Plus,
-  CheckCircle2,
-  Circle,
-  Download,
-  ShieldCheck,
   Sparkles,
   Trash2,
-  ArrowRight,
-  Lock,
   Pencil,
-  Star,
+  Plus,
+  Check,
+  X,
+  Calendar,
 } from 'lucide-react';
-import {
+import type {
   WorkspaceMode,
   WalletCardState,
   WishItem,
   PersonProfile,
-  CrmDealItem,
-  ProjectTaskItem,
   CustomLivingCard,
-  DealStage,
+  ExpenseEntry,
 } from '../types';
-import { StorageService } from '../services/storage';
 import { Repository } from '../persistence/repository';
-import { formatBudgetAmount, formatDealStage, formatExpenseCategory, useI18n } from '../i18n';
+import {
+  formatBudgetAmount,
+  formatExpenseCategory,
+  getLanguage,
+  translate,
+  useI18n,
+  type I18nKey,
+} from '../i18n';
 
 interface LivingCardsBoardProps {
   mode: WorkspaceMode;
@@ -37,31 +34,53 @@ interface LivingCardsBoardProps {
   onCompanionToast: (msg: string) => void;
 }
 
-const STAGES: DealStage[] = ['初步接触', '需求确认', '方案报价', '商务谈判', '赢单成交'];
+const EXPENSE_CATEGORIES: ExpenseEntry['category'][] = [
+  '餐饮☕',
+  '购物🛍️',
+  '出行🚕',
+  '娱乐🎮',
+  '生活🏠',
+  '金库✨',
+];
 
 const monthFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit',
 });
-const dayFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' });
 
-export function normalizeWallet(w: WalletCardState): WalletCardState {
-  const wishes: WishItem[] = (w.wishes && w.wishes.length > 0) ? w.wishes : [
-    {
-      id: 'wish-default',
-      title: w.wishTitle || '我的心愿',
-      targetAmount: w.wishTarget || 10000,
-      savedAmount: w.wishSaved || 0,
-      group: '品质生活',
-      isPrimary: true,
-      createdAt: Date.now(),
-    }
-  ];
-  const activeWishId = w.activeWishId || wishes.find(item => item.isPrimary)?.id || wishes[0].id;
+export function normalizeWallet(
+  w: WalletCardState,
+  defaults?: { title?: string; group?: string },
+): WalletCardState {
+  const lang = getLanguage();
+  const defaultTitle = defaults?.title ?? translate(lang, 'cards.defaultWishTitle');
+  const translatedGroup = translate(lang, 'cards.defaultWishGroup' as I18nKey);
+  const defaultGroup = defaults?.group ?? (
+    translatedGroup !== 'cards.defaultWishGroup'
+      ? translatedGroup
+      : (lang === 'en' ? 'Lifestyle' : '品质生活')
+  );
+  const wishes: WishItem[] = (w.wishes && w.wishes.length > 0)
+    ? w.wishes.map(item => ({ ...item }))
+    : [
+        {
+          id: 'wish-default',
+          title: w.wishTitle || defaultTitle,
+          targetAmount: w.wishTarget || 10000,
+          savedAmount: w.wishSaved || 0,
+          group: defaultGroup,
+          isPrimary: true,
+          createdAt: Date.now(),
+        },
+      ];
+  const activeWishId = w.activeWishId && wishes.some(item => item.id === w.activeWishId)
+    ? w.activeWishId
+    : wishes.find(item => item.isPrimary)?.id || wishes[0].id;
   const activeWish = wishes.find(item => item.id === activeWishId) || wishes[0];
   return {
     ...w,
     wishTitle: activeWish.title,
     wishTarget: activeWish.targetAmount,
+    wishSaved: Number.isFinite(activeWish.savedAmount) ? activeWish.savedAmount : (w.wishSaved || 0),
     wishes,
     activeWishId,
   };
@@ -78,32 +97,85 @@ export function boundedProgress(value: number, target: number): number {
   return Math.max(0, Math.min(100, Math.round(value / target * 100)));
 }
 
+function splitTagList(raw: string): string[] {
+  return [...new Set(raw.split(/[,，、;；]+/).map(s => s.trim()).filter(Boolean))];
+}
+
+function makeLocalId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   mode,
   highlightedCard,
   onCompanionToast,
 }) => {
   const { lang, t } = useI18n();
-  const cachedPartition = Repository.getCurrent().partitions[mode];
-  const cachedLife = mode === 'life' ? Repository.getCurrent().partitions.life : null;
+  const tr = (key: string, fallback: { zh: string; en: string }, params?: Record<string, string | number>): string => {
+    const resolved = t(key as I18nKey, params);
+    if (resolved !== key) return resolved;
+    const tpl = lang === 'en' ? fallback.en : fallback.zh;
+    if (!params) return tpl;
+    return tpl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, token) =>
+      Object.prototype.hasOwnProperty.call(params, token) ? String(params[token]) : `{${token}}`,
+    );
+  };
+
+  const isLife = mode === 'life';
+  const cachedLife = isLife ? Repository.getCurrent().partitions.life : null;
   // Only the current space is read. The repository cache contains a bounded, already migrated window.
-  const [wallet, setWallet] = useState<WalletCardState>(() => normalizeWallet(cachedLife?.wallet || { monthlyBudget: 5000, wishTitle: '我的心愿', wishTarget: 10000, wishSaved: 0, entries: [] }));
+  const [wallet, setWallet] = useState<WalletCardState>(() =>
+    normalizeWallet(cachedLife?.wallet || {
+      monthlyBudget: 5000,
+      wishTitle: translate(getLanguage(), 'cards.defaultWishTitle'),
+      wishTarget: 10000,
+      wishSaved: 0,
+      entries: [],
+    }),
+  );
   const [persons, setPersons] = useState<PersonProfile[]>(() => cachedLife?.persons || []);
-
-  // ToB 状态
-  const [deals, setDeals] = useState<CrmDealItem[]>(() => mode === 'work' ? StorageService.getCrmDeals() : []);
-  const [tasks, setTasks] = useState<ProjectTaskItem[]>(() => mode === 'work' ? StorageService.getProjectTasks() : []);
-  const [selectedDealForPoster, setSelectedDealForPoster] = useState<CrmDealItem | null>(null);
-
-  // 自定义卡（极简每日打卡卡归属独立「打卡」面板展示）
   const [customCards, setCustomCards] = useState<CustomLivingCard[]>(() =>
-    cachedPartition.customCards.filter(c => c.cardKind !== 'checkin')
+    cachedLife ? cachedLife.customCards.filter(c => c.cardKind !== 'checkin') : [],
   );
-  const [activeSubTab, setActiveSubTab] = useState<string>(
-    mode === 'work' ? 'crm' : 'wallet'
+  const [activeSubTab, setActiveSubTab] = useState<string>(() =>
+    highlightedCard && ['wallet', 'relationships', 'custom'].includes(highlightedCard) ? highlightedCard : 'wallet',
   );
 
-  const posterRef = useRef<HTMLDivElement>(null);
+  // Wallet inline editing & entry composer state
+  const [editingBudget, setEditingBudget] = useState(false);
+  const [budgetInput, setBudgetInput] = useState('');
+  const [editingWish, setEditingWish] = useState(false);
+  const [wishTitleInput, setWishTitleInput] = useState('');
+  const [wishTargetInput, setWishTargetInput] = useState('');
+  const [addingWish, setAddingWish] = useState(false);
+  const [newWishTitle, setNewWishTitle] = useState('');
+  const [newWishTarget, setNewWishTarget] = useState('');
+  const [customSaveInput, setCustomSaveInput] = useState('');
+  const [addingEntry, setAddingEntry] = useState(false);
+  const [entryTitle, setEntryTitle] = useState('');
+  const [entryAmount, setEntryAmount] = useState('');
+  const [entryType, setEntryType] = useState<ExpenseEntry['type']>('expense');
+  const [entryCategory, setEntryCategory] = useState<ExpenseEntry['category']>('餐饮☕');
+  const [showAllEntries, setShowAllEntries] = useState(false);
+  const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
+  const [walletError, setWalletError] = useState('');
+
+  // Relationships inline composer / editor state
+  const [addingPerson, setAddingPerson] = useState(false);
+  const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
+  const [personName, setPersonName] = useState('');
+  const [personRelation, setPersonRelation] = useState('');
+  const [personTaboos, setPersonTaboos] = useState('');
+  const [personPrefs, setPersonPrefs] = useState('');
+  const [personDate, setPersonDate] = useState('');
+  const [confirmDeletePersonId, setConfirmDeletePersonId] = useState<string | null>(null);
+  const [personError, setPersonError] = useState('');
+
+  // Custom cards increment step / direct edit state
+  const [customStepInputs, setCustomStepInputs] = useState<Record<string, string>>({});
+  const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
+  const [editingCustomValue, setEditingCustomValue] = useState('');
+
   const mountedRef = useRef(true);
   const activeModeRef = useRef(mode);
   const savingRef = useRef(false);
@@ -115,24 +187,30 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
   }, []);
 
   React.useEffect(() => {
+    if (!isLife) return;
     const syncCurrentSpace = () => {
-      if (!mountedRef.current || activeModeRef.current !== mode) return;
-      const partition = Repository.getCurrent().partitions[mode];
-      setCustomCards(partition.customCards.filter(c => c.cardKind !== 'checkin'));
-      if (mode === 'life') {
-        const life = Repository.getCurrent().partitions.life;
-        setWallet(normalizeWallet(life.wallet));
-        setPersons(life.persons);
-      }
+      if (!mountedRef.current || activeModeRef.current !== 'life') return;
+      const life = Repository.getCurrent().partitions.life;
+      setCustomCards(life.customCards.filter(c => c.cardKind !== 'checkin'));
+      setWallet(normalizeWallet(life.wallet));
+      setPersons(life.persons);
     };
     syncCurrentSpace();
-    if (highlightedCard) {
+    if (highlightedCard && ['wallet', 'relationships', 'custom'].includes(highlightedCard)) {
       setActiveSubTab(highlightedCard);
     } else {
-      setActiveSubTab(mode === 'work' ? 'crm' : 'wallet');
+      setActiveSubTab('wallet');
     }
     return Repository.subscribe(syncCurrentSpace);
-  }, [mode, highlightedCard]);
+  }, [isLife, highlightedCard]);
+
+  if (!isLife) {
+    return (
+      <div className="p-4 rounded-2xl border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-muted)]">
+        {tr('cards.lifeOnlyNotice', { zh: '生活卡片仅在生活空间使用。', en: 'Life Cards are available in Life space.' })}
+      </div>
+    );
+  }
 
   const persistUpdate = async (save: () => void | Promise<void>, update: () => void, success: string) => {
     if (savingRef.current) return;
@@ -152,567 +230,1201 @@ export const LivingCardsBoard: React.FC<LivingCardsBoardProps> = ({
     }
   };
 
-  const handleQuickSaveWish = () => {
-    const next: WalletCardState = {
-      ...wallet,
-      wishSaved: wallet.wishSaved + 200,
-      entries: [
-        {
-          id: 'exp-' + Date.now(),
-          title: t('cards.quickSaveEntryTitle'),
-          amount: 200,
-          type: 'saving',
-          category: '金库✨',
-          timestamp: Date.now(),
-        },
-        ...wallet.entries,
-      ],
+  const applyDepositToWallet = (amount: number, entryTitleText: string): WalletCardState => {
+    const base = normalizeWallet(wallet);
+    const wishes = (base.wishes || []).map(item =>
+      item.id === base.activeWishId
+        ? { ...item, savedAmount: Math.max(0, (item.savedAmount || 0) + amount) }
+        : item,
+    );
+    const activeWish = wishes.find(item => item.id === base.activeWishId) || wishes[0];
+    const nextEntry: ExpenseEntry = {
+      id: makeLocalId('exp'),
+      title: entryTitleText,
+      amount,
+      type: 'saving',
+      category: '金库✨',
+      timestamp: Date.now(),
     };
-    return persistUpdate(() => Repository.saveWalletCard(next), () => setWallet(next),
-      t('cards.quickSaveToast', { saved: next.wishSaved }));
-  };
-
-  // ==================== ToB 双向交互动作（手动嘴知） ====================
-  const handleAdvanceDealStage = (dealId: string) => {
-    const nextDeals = deals.map((d) => {
-      if (d.id !== dealId) return d;
-      const idx = STAGES.indexOf(d.stage);
-      const nextStage = STAGES[Math.min(STAGES.length - 1, idx + 1)];
-      const probs = [30, 50, 65, 85, 100];
-      return {
-        ...d,
-        stage: nextStage,
-        winProbability: probs[Math.min(STAGES.length - 1, idx + 1)],
-        updatedAt: Date.now(),
-      };
+    return normalizeWallet({
+      ...base,
+      wishSaved: activeWish ? activeWish.savedAmount : base.wishSaved + amount,
+      wishes,
+      entries: [nextEntry, ...base.entries],
     });
-    const updated = nextDeals.find((d) => d.id === dealId);
-    if (updated) {
-      persistUpdate(() => StorageService.saveCrmDeals(nextDeals), () => setDeals(nextDeals),
-        t('cards.advanceDealToast', { client: updated.clientName, stage: formatDealStage(updated.stage, lang) }));
-    }
   };
 
-  const handleToggleTask = (taskId: string) => {
-    const nextTasks = tasks.map((t) => (t.id === taskId ? { ...t, done: !t.done } : t));
-    const target = nextTasks.find((t) => t.id === taskId);
-    persistUpdate(() => StorageService.saveProjectTasks(nextTasks), () => setTasks(nextTasks),
-      t('cards.toggleTaskToast', { title: target?.title || t('cards.defaultTaskTitle') }));
+  const handleQuickSaveWish = () => {
+    const next = applyDepositToWallet(200, t('cards.quickSaveEntryTitle'));
+    return persistUpdate(
+      () => Repository.saveWalletCard(next),
+      () => setWallet(next),
+      tr('cards.quickSaveToastFormatted', {
+        zh: '已记录心愿储蓄 {delta}，当前累计 {saved}。',
+        en: 'Saved {delta} to wish jar; total {saved}.',
+      }, {
+        delta: formatBudgetAmount(200, lang),
+        saved: formatBudgetAmount(next.wishSaved, lang),
+      }),
+    );
   };
 
-  const handleExportClientPoster = async () => {
-    if (!posterRef.current) return;
-    try {
-      const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(posterRef.current, {
-        scale: 2,
-        backgroundColor: '#0f172a',
-        useCORS: true,
-      });
-      const url = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = t('cards.posterDownloadName', { client: selectedDealForPoster?.clientName || t('cards.defaultClientLabel') });
-      a.click();
-      onCompanionToast(t('cards.posterExportedToast'));
-    } catch {
-      onCompanionToast(t('cards.posterExportErrorToast'));
+  const handleCustomDeposit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = Number(customSaveInput);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setWalletError(tr('cards.errPositiveAmount', { zh: '请输入大于 0 的金额。', en: 'Enter an amount greater than 0.' }));
+      return;
     }
+    setWalletError('');
+    const rounded = +amount.toFixed(2);
+    const next = applyDepositToWallet(rounded, t('cards.quickSaveEntryTitle'));
+    return persistUpdate(
+      () => Repository.saveWalletCard(next),
+      () => {
+        setWallet(next);
+        setCustomSaveInput('');
+      },
+      tr('cards.depositToast', {
+        zh: '已存入 {amount}，当前累计 {saved}。',
+        en: 'Deposited {amount}; total saved {saved}.',
+      }, {
+        amount: formatBudgetAmount(rounded, lang),
+        saved: formatBudgetAmount(next.wishSaved, lang),
+      }),
+    );
+  };
+
+  const handleSaveBudget = (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = Number(budgetInput);
+    if (!Number.isFinite(val) || val < 0) {
+      setWalletError(tr('cards.errBudgetNonNeg', { zh: '月度预算不能为负数。', en: 'Monthly budget cannot be negative.' }));
+      return;
+    }
+    setWalletError('');
+    const next = normalizeWallet({ ...wallet, monthlyBudget: +val.toFixed(2) });
+    return persistUpdate(
+      () => Repository.saveWalletCard(next),
+      () => {
+        setWallet(next);
+        setEditingBudget(false);
+      },
+      tr('cards.budgetUpdatedToast', {
+        zh: '已更新月度预算为 {budget}。',
+        en: 'Updated monthly budget to {budget}.',
+      }, { budget: formatBudgetAmount(next.monthlyBudget, lang) }),
+    );
+  };
+
+  const handleSaveActiveWish = (e: React.FormEvent) => {
+    e.preventDefault();
+    const title = wishTitleInput.trim();
+    const target = Number(wishTargetInput);
+    if (!title) {
+      setWalletError(tr('cards.errWishTitleRequired', { zh: '请填写心愿名称。', en: 'Enter a wish title.' }));
+      return;
+    }
+    if (!Number.isFinite(target) || target <= 0) {
+      setWalletError(tr('cards.errWishTargetPositive', { zh: '目标金额需大于 0。', en: 'Target amount must be greater than 0.' }));
+      return;
+    }
+    setWalletError('');
+    const base = normalizeWallet(wallet);
+    const roundedTarget = +target.toFixed(2);
+    const wishes = (base.wishes || []).map(item =>
+      item.id === base.activeWishId ? { ...item, title, targetAmount: roundedTarget } : item,
+    );
+    const next = normalizeWallet({
+      ...base,
+      wishTitle: title,
+      wishTarget: roundedTarget,
+      wishes,
+    });
+    return persistUpdate(
+      () => Repository.saveWalletCard(next),
+      () => {
+        setWallet(next);
+        setEditingWish(false);
+      },
+      tr('cards.wishUpdatedToast', { zh: '已更新心愿「{title}」。', en: 'Updated wish "{title}".' }, { title }),
+    );
+  };
+
+  const handleAddWish = (e: React.FormEvent) => {
+    e.preventDefault();
+    const title = newWishTitle.trim();
+    const target = Number(newWishTarget);
+    if (!title) {
+      setWalletError(tr('cards.errWishTitleRequired', { zh: '请填写心愿名称。', en: 'Enter a wish title.' }));
+      return;
+    }
+    if (!Number.isFinite(target) || target <= 0) {
+      setWalletError(tr('cards.errWishTargetPositive', { zh: '目标金额需大于 0。', en: 'Target amount must be greater than 0.' }));
+      return;
+    }
+    setWalletError('');
+    const base = normalizeWallet(wallet);
+    const defaultGroupResolved = translate(lang, 'cards.defaultWishGroup' as I18nKey);
+    const created: WishItem = {
+      id: makeLocalId('wish'),
+      title,
+      targetAmount: +target.toFixed(2),
+      savedAmount: 0,
+      group: defaultGroupResolved !== 'cards.defaultWishGroup'
+        ? defaultGroupResolved
+        : (lang === 'en' ? 'Lifestyle' : '品质生活'),
+      isPrimary: true,
+      createdAt: Date.now(),
+    };
+    const wishes: WishItem[] = (base.wishes || []).map(item => ({ ...item, isPrimary: false }));
+    wishes.push(created);
+    const next = normalizeWallet({
+      ...base,
+      activeWishId: created.id,
+      wishTitle: created.title,
+      wishTarget: created.targetAmount,
+      wishSaved: 0,
+      wishes,
+    });
+    return persistUpdate(
+      () => Repository.saveWalletCard(next),
+      () => {
+        setWallet(next);
+        setAddingWish(false);
+        setNewWishTitle('');
+        setNewWishTarget('');
+      },
+      tr('cards.wishAddedToast', { zh: '已新增并切换至「{title}」。', en: 'Added and switched to "{title}".' }, { title }),
+    );
+  };
+
+  const handleSwitchWish = (wishId: string) => {
+    if (wishId === wallet.activeWishId) return;
+    const base = normalizeWallet(wallet);
+    const target = (base.wishes || []).find(w => w.id === wishId);
+    if (!target) return;
+    const wishes = (base.wishes || []).map(w => ({ ...w, isPrimary: w.id === wishId }));
+    const next = normalizeWallet({
+      ...base,
+      activeWishId: wishId,
+      wishTitle: target.title,
+      wishTarget: target.targetAmount,
+      wishSaved: target.savedAmount,
+      wishes,
+    });
+    return persistUpdate(
+      () => Repository.saveWalletCard(next),
+      () => {
+        setWallet(next);
+        setEditingWish(false);
+      },
+      tr('cards.wishSwitchedToast', { zh: '已切换当前心愿为「{title}」。', en: 'Switched active wish to "{title}".' }, { title: target.title }),
+    );
+  };
+
+  const handleAddEntry = (e: React.FormEvent) => {
+    e.preventDefault();
+    const title = entryTitle.trim();
+    const amount = Number(entryAmount);
+    if (!title) {
+      setWalletError(tr('cards.errEntryTitleRequired', { zh: '请填写账单名称。', en: 'Enter a description.' }));
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setWalletError(tr('cards.errPositiveAmount', { zh: '请输入大于 0 的金额。', en: 'Enter an amount greater than 0.' }));
+      return;
+    }
+    setWalletError('');
+    const rounded = +amount.toFixed(2);
+    const base = normalizeWallet(wallet);
+    const created: ExpenseEntry = {
+      id: makeLocalId('exp'),
+      title,
+      amount: rounded,
+      type: entryType,
+      category: entryType === 'expense' ? entryCategory : '金库✨',
+      timestamp: Date.now(),
+    };
+    const delta = entryType === 'saving' || entryType === 'income' ? rounded : 0;
+    const wishes = (base.wishes || []).map(item =>
+      delta > 0 && item.id === base.activeWishId
+        ? { ...item, savedAmount: Math.max(0, (item.savedAmount || 0) + delta) }
+        : item,
+    );
+    const activeWish = wishes.find(item => item.id === base.activeWishId) || wishes[0];
+    const next = normalizeWallet({
+      ...base,
+      wishSaved: delta > 0 ? (activeWish ? activeWish.savedAmount : base.wishSaved + delta) : base.wishSaved,
+      wishes,
+      entries: [created, ...base.entries],
+    });
+    return persistUpdate(
+      () => Repository.saveWalletCard(next),
+      () => {
+        setWallet(next);
+        setAddingEntry(false);
+        setEntryTitle('');
+        setEntryAmount('');
+      },
+      tr('cards.entryAddedToast', {
+        zh: '已记录「{title}」{amount}。',
+        en: 'Recorded "{title}" ({amount}).',
+      }, { title, amount: formatBudgetAmount(rounded, lang) }),
+    );
+  };
+
+  const handleDeleteEntry = (entry: ExpenseEntry) => {
+    setConfirmDeleteEntryId(null);
+    return persistUpdate(
+      async () => {
+        if (typeof Repository.transaction === 'function') {
+          const before = typeof Repository.get === 'function'
+            ? await Repository.get<ExpenseEntry>('life', 'expense', entry.id)
+            : entry;
+          if (before) {
+            const res = await Repository.transaction(
+              'life',
+              [{ kind: 'expense', id: entry.id, before, after: null }],
+              { event: true, sourceText: '删除生活账单记录' },
+            );
+            if (!res.ok) throw new Error(res.error);
+          }
+        }
+      },
+      () => {
+        setWallet(prev => normalizeWallet({
+          ...prev,
+          entries: prev.entries.filter(item => item.id !== entry.id),
+        }));
+      },
+      tr('cards.entryDeletedToast', { zh: '已删除账单「{title}」。', en: 'Deleted entry "{title}".' }, { title: entry.title }),
+    );
+  };
+
+  const resetPersonForm = () => {
+    setAddingPerson(false);
+    setEditingPersonId(null);
+    setPersonName('');
+    setPersonRelation('');
+    setPersonTaboos('');
+    setPersonPrefs('');
+    setPersonDate('');
+    setPersonError('');
+  };
+
+  const openPersonEdit = (p: PersonProfile) => {
+    setAddingPerson(false);
+    setEditingPersonId(p.id);
+    setPersonName(p.name);
+    setPersonRelation(p.relation);
+    setPersonTaboos(p.taboos.join('、'));
+    setPersonPrefs(p.preferences.join('、'));
+    setPersonDate(p.nextImportantDate || '');
+    setConfirmDeletePersonId(null);
+    setPersonError('');
+  };
+
+  const handleSavePerson = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = personName.trim();
+    if (!name) {
+      setPersonError(tr('cards.errPersonNameRequired', { zh: '请填写姓名或称呼。', en: 'Enter a name.' }));
+      return;
+    }
+    setPersonError('');
+    const relation = personRelation.trim() || tr('cards.defaultRelation', { zh: '亲友', en: 'Contact' });
+    const taboos = splitTagList(personTaboos);
+    const preferences = splitTagList(personPrefs);
+    const cleanDate = personDate.trim();
+    const record: PersonProfile = {
+      id: editingPersonId || makeLocalId('person'),
+      name,
+      relation,
+      taboos,
+      preferences,
+      ...(cleanDate ? { nextImportantDate: cleanDate } : {}),
+      updatedAt: Date.now(),
+    };
+    const isEdit = Boolean(editingPersonId);
+    return persistUpdate(
+      () => Repository.upsert('life', 'person', [record], true),
+      () => {
+        setPersons(prev => {
+          if (isEdit) return prev.map(item => item.id === record.id ? record : item);
+          return [record, ...prev];
+        });
+        resetPersonForm();
+      },
+      isEdit
+        ? tr('cards.personUpdatedToast', { zh: '已更新「{name}」档案。', en: 'Updated profile for "{name}".' }, { name })
+        : tr('cards.personAddedToast', { zh: '已添加「{name}」档案。', en: 'Added profile for "{name}".' }, { name }),
+    );
+  };
+
+  const handleDeletePerson = (person: PersonProfile) => {
+    setConfirmDeletePersonId(null);
+    return persistUpdate(
+      async () => {
+        if (typeof Repository.transaction === 'function') {
+          const before = typeof Repository.get === 'function'
+            ? await Repository.get<PersonProfile>('life', 'person', person.id)
+            : person;
+          if (before) {
+            const res = await Repository.transaction(
+              'life',
+              [{ kind: 'person', id: person.id, before, after: null }],
+              { event: true, sourceText: '删除亲友档案' },
+            );
+            if (!res.ok) throw new Error(res.error);
+          }
+        }
+      },
+      () => {
+        setPersons(prev => prev.filter(item => item.id !== person.id));
+        if (editingPersonId === person.id) resetPersonForm();
+      },
+      tr('cards.personDeletedToast', { zh: '已删除「{name}」档案。', en: 'Deleted profile for "{name}".' }, { name: person.name }),
+    );
+  };
+
+  const getCustomStep = (cardId: string): number => {
+    const raw = customStepInputs[cardId];
+    if (raw === undefined || raw.trim() === '') return 10;
+    const parsed = Math.round(Number(raw));
+    return Number.isFinite(parsed) && parsed >= 1 ? parsed : 10;
+  };
+
+  const handleAdvanceCustomCard = (card: CustomLivingCard, delta: number) => {
+    const step = Number.isFinite(delta) && delta >= 1 ? Math.round(delta) : 10;
+    const updated: CustomLivingCard = {
+      ...card,
+      metricValue: Math.min(card.metricTarget, card.metricValue + step),
+    };
+    return persistUpdate(
+      () => Repository.upsert(mode, 'custom', [updated], true),
+      () => setCustomCards(previous => previous.map(item => item.id === card.id ? updated : item)),
+      t('cards.customUpdatedToast', { title: card.title }),
+    );
+  };
+
+  const handleSetCustomCardValue = (card: CustomLivingCard, rawValue: string) => {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed < 0) return;
+    const nextValue = Math.min(card.metricTarget, Math.max(0, Math.round(parsed)));
+    const updated: CustomLivingCard = { ...card, metricValue: nextValue };
+    return persistUpdate(
+      () => Repository.upsert(mode, 'custom', [updated], true),
+      () => {
+        setCustomCards(previous => previous.map(item => item.id === card.id ? updated : item));
+        setEditingCustomId(null);
+      },
+      t('cards.customUpdatedToast', { title: card.title }),
+    );
   };
 
   // The cache is a bounded page, so this is an explicitly partial budget reference.
   const totalSpent = monthlyExpenseTotal(wallet.entries);
   const budgetUsedPct = boundedProgress(totalSpent, wallet.monthlyBudget);
   const wishPct = boundedProgress(wallet.wishSaved, wallet.wishTarget);
+  const wishes = wallet.wishes || [];
+  const visibleEntries = showAllEntries ? wallet.entries : wallet.entries.slice(0, 6);
 
-  const isWork = mode === 'work';
+  const renderDeleteConfirm = (prompt: string, onConfirm: () => void, onCancel: () => void) => (
+    <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--line-hairline)]">
+      <span className="text-xs text-[var(--danger-ink)]">{prompt}</span>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onConfirm}
+          className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg bg-[var(--danger-ink)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
+        >
+          {t('common.confirm')}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg text-xs text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] cursor-pointer"
+        >
+          {t('common.cancel')}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <div
-      className={`flex flex-col h-full min-h-[420px] md:h-[460px] rounded-2xl shadow-float overflow-hidden border transition-all duration-300 ${
-        isWork
-          ? 'bg-[#0f172a]/95 text-slate-100 border-slate-700'
-          : 'bg-[#fcfaf5]/95 text-[#23293a] border-[#e5dec9]'
-      }`}
-    >
+    <div className="flex flex-col h-full min-h-[420px] md:h-[460px] rounded-2xl shadow-sm overflow-hidden border border-[var(--line-hairline)] bg-[var(--surface-card)] text-[var(--ink-primary)] transition-colors duration-200">
       {/* 顶部子导航栏 */}
-      <div
-        className={`px-3 py-2 border-b flex items-center justify-between gap-1 overflow-x-auto no-drag ${
-          isWork ? 'bg-slate-900/90 border-slate-800' : 'bg-[#f9f6ed] border-[#ece6d5]'
-        }`}
-      >
-        {!isWork ? (
-          <div className="flex items-center gap-1">
+      <div className="px-3 py-2 border-b border-[var(--line-hairline)] bg-[var(--surface-subtle)] flex items-center justify-between gap-1 overflow-x-auto no-drag shrink-0">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('wallet')}
+            className={`min-h-[var(--touch-target-min,34px)] flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+              activeSubTab === 'wallet'
+                ? 'bg-[var(--accent-primary)] text-[#FFFCF6]'
+                : 'text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink-primary)]'
+            }`}
+          >
+            <Wallet size={13} />
+            <span>{t('cards.tabWallet')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('relationships')}
+            className={`min-h-[var(--touch-target-min,34px)] flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+              activeSubTab === 'relationships'
+                ? 'bg-[var(--accent-primary)] text-[#FFFCF6]'
+                : 'text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink-primary)]'
+            }`}
+          >
+            <Users size={13} />
+            <span>{t('cards.tabRelationships')}</span>
+          </button>
+          {customCards.length > 0 && (
             <button
-              onClick={() => setActiveSubTab('wallet')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                activeSubTab === 'wallet'
-                  ? 'bg-[#a8681a] text-white shadow-xs'
-                  : 'text-[#6b7183] hover:bg-[#efeadd]'
+              type="button"
+              onClick={() => setActiveSubTab('custom')}
+              className={`min-h-[var(--touch-target-min,34px)] flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                activeSubTab === 'custom'
+                  ? 'bg-[var(--accent-primary)] text-[#FFFCF6]'
+                  : 'text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink-primary)]'
               }`}
             >
-              <Wallet size={13} />
-              <span>{t('cards.tabWallet')}</span>
+              <Sparkles size={13} />
+              <span>{t('cards.tabCustom', { count: customCards.length })}</span>
             </button>
-            <button
-              onClick={() => setActiveSubTab('relationships')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                activeSubTab === 'relationships'
-                  ? 'bg-[#a8681a] text-white shadow-xs'
-                  : 'text-[#6b7183] hover:bg-[#efeadd]'
-              }`}
-            >
-              <Users size={13} />
-              <span>{t('cards.tabRelationships')}</span>
-            </button>
-            {customCards.length > 0 && (
-              <button
-                onClick={() => setActiveSubTab('custom')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                  activeSubTab === 'custom'
-                    ? 'bg-[#a8681a] text-white shadow-xs'
-                    : 'text-[#6b7183] hover:bg-[#efeadd]'
-                }`}
-              >
-                <Sparkles size={13} />
-                <span>{t('cards.tabCustom', { count: customCards.length })}</span>
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setActiveSubTab('crm')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                activeSubTab === 'crm'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              <Briefcase size={13} />
-              <span>{t('cards.tabCrm', { count: deals.length })}</span>
-            </button>
-            <button
-              onClick={() => setActiveSubTab('projects')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                activeSubTab === 'projects'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              <Target size={13} />
-              <span>{t('cards.tabProjects')}</span>
-            </button>
-            <button
-              onClick={() => {
-                if (!selectedDealForPoster && deals[0]) setSelectedDealForPoster(deals[0]);
-                setActiveSubTab('poster');
-              }}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                activeSubTab === 'poster'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              <FileCheck size={13} />
-              <span>{t('cards.tabPoster')}</span>
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* 主体内容区 */}
       <div className="flex-1 overflow-y-auto p-3.5 space-y-3">
-        {/* ==================== ToC 1: 随口记账与心愿小金库 ==================== */}
-        {!isWork && activeSubTab === 'wallet' && (
+        {/* ==================== 1: 随口记账与心愿小金库 ==================== */}
+        {activeSubTab === 'wallet' && (
           <div className="space-y-3">
-            {/* 月度预算血条 */}
-            <div className="p-3 rounded-xl bg-white border border-[#e6decd] shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-[#23293a]">{t('cards.monthlyBudgetHeading')}</span>
-                <span className="font-mono text-[#a8681a] font-bold">
-                  {t('cards.monthlyBudgetSummary', { spent: totalSpent.toFixed(0), budget: wallet.monthlyBudget })}
-                </span>
+            {walletError && (
+              <div
+                className="px-3 py-2 rounded-lg border border-[var(--danger-line)] bg-[var(--danger-soft)] text-xs text-[var(--danger-ink)] flex items-center justify-between gap-2"
+                role="alert"
+              >
+                <span>{walletError}</span>
+                <button
+                  type="button"
+                  onClick={() => setWalletError('')}
+                  className="text-xs font-semibold underline cursor-pointer shrink-0"
+                >
+                  {t('common.collapse')}
+                </button>
               </div>
-              <div className="w-full h-2.5 bg-[#efeadd] rounded-full overflow-hidden">
+            )}
+
+            {/* 月度预算 */}
+            <div className="p-3 rounded-xl bg-[var(--bg-paper)] border border-[var(--line-hairline)] space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-[var(--ink-primary)]">{t('cards.monthlyBudgetHeading')}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[var(--accent-primary)] font-bold tabular-nums">
+                    {tr('cards.budgetSummaryFormatted', {
+                      zh: '已支出 {spent} / 预算 {budget}',
+                      en: 'Spent {spent} / Budget {budget}',
+                    }, {
+                      spent: formatBudgetAmount(Math.round(totalSpent), lang),
+                      budget: formatBudgetAmount(wallet.monthlyBudget, lang),
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={tr('cards.editBudgetAria', { zh: '编辑月度预算', en: 'Edit monthly budget' })}
+                    onClick={() => {
+                      setEditingBudget(!editingBudget);
+                      setBudgetInput(String(wallet.monthlyBudget));
+                      setWalletError('');
+                    }}
+                    className="min-h-[var(--touch-target-min,34px)] min-w-[var(--touch-target-min,34px)] p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink-primary)] flex items-center justify-center cursor-pointer"
+                  >
+                    <Pencil size={13} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="w-full h-2.5 bg-[var(--surface-subtle)] border border-[var(--line-hairline)] rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-[#a8681a] to-amber-500 transition-all duration-500"
+                  className="h-full bg-[var(--accent-primary)] transition-all duration-500"
                   style={{ width: `${budgetUsedPct}%` }}
                 />
               </div>
+
+              <p className="text-xs text-[var(--ink-muted)] tabular-nums">
+                {tr('cards.recentWindowHint', {
+                  zh: '按最近 {count} 条已加载流水统计',
+                  en: 'Based on the latest {count} loaded entries',
+                }, { count: wallet.entries.length })}
+              </p>
+
+              {editingBudget && (
+                <form onSubmit={handleSaveBudget} className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-[var(--line-hairline)]">
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    aria-label={tr('cards.budgetInputAria', { zh: '月度预算金额', en: 'Monthly budget amount' })}
+                    value={budgetInput}
+                    onChange={e => setBudgetInput(e.target.value)}
+                    style={{ width: '120px' }}
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
+                  />
+                  <button
+                    type="submit"
+                    className="min-h-[var(--touch-target-min,34px)] px-3 py-1 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
+                  >
+                    {t('common.save')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingBudget(false)}
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg text-xs text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] cursor-pointer"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                </form>
+              )}
             </div>
 
             {/* 心愿攒钱罐 */}
-            <div className="p-3 rounded-xl bg-gradient-to-r from-[#fbf7ec] to-[#f4ecda] border border-[#e2d6bc] flex items-center justify-between">
-              <div className="space-y-1 flex-1 pr-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-[#8a5410]">{wallet.wishTitle}</span>
-                  <span className="font-mono text-[11px] text-[#8a5410]">{wishPct}%</span>
+            <div className="p-3 rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] space-y-2.5">
+              {wishes.length > 1 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {wishes.map(w => (
+                    <button
+                      type="button"
+                      key={w.id}
+                      onClick={() => handleSwitchWish(w.id)}
+                      className={`min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-colors ${
+                        w.id === wallet.activeWishId
+                          ? 'bg-[var(--accent-primary)] text-[#FFFCF6] border-[var(--accent-primary)]'
+                          : 'bg-[var(--surface-card)] text-[var(--ink-primary)] border-[var(--line-hairline)] hover:bg-[var(--surface-hover)]'
+                      }`}
+                    >
+                      {w.title}
+                    </button>
+                  ))}
                 </div>
-                <div className="w-full h-2 bg-white/80 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-emerald-600 transition-all duration-500"
-                    style={{ width: `${wishPct}%` }}
-                  />
-                </div>
-                <span className="text-[10px] text-[#6b7183] block">
-                  {t('cards.wishSavedSummary', { saved: wallet.wishSaved, target: wallet.wishTarget })}
-                </span>
-              </div>
-              <button
-                onClick={handleQuickSaveWish}
-                className="px-2.5 py-1.5 rounded-lg bg-[#a8681a] hover:bg-[#8a5410] text-white text-xs font-medium shrink-0 cursor-pointer shadow-xs"
-              >
-                {t('cards.quickSaveBtn')}
-              </button>
-            </div>
+              )}
 
-            {/* 近期流水 */}
-            <div className="space-y-1.5">
-              <span className="text-[11px] font-semibold text-[#6b7183] px-1">{t('cards.recentEntriesTitle')}</span>
-              {wallet.entries.slice(0, 6).map((item) => (
-                <div
-                  key={item.id}
-                  className="px-3 py-2 rounded-xl bg-white/90 border border-[#ece6d5] flex items-center justify-between text-xs"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded bg-[#f5f1e6] text-[10px] text-[#8a5410]">
-                      {formatExpenseCategory(item.category, lang)}
-                    </span>
-                    <span className="font-medium text-[#23293a]">{item.title}</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="space-y-1 flex-1 min-w-0 pr-2">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-semibold text-[var(--ink-primary)] truncate">{wallet.wishTitle}</span>
+                    <span className="font-mono text-xs font-semibold text-[var(--accent-primary)] tabular-nums shrink-0">{wishPct}%</span>
                   </div>
-                  <span
-                    className={`font-mono font-semibold ${
-                      (item.type === 'saving' || item.type === 'income') ? 'text-emerald-600' : 'text-[#23293a]'
-                    }`}
-                  >
-                    {(item.type === 'saving' || item.type === 'income') ? `+¥${item.amount}` : `-¥${item.amount}`}
+                  <div className="w-full h-2 bg-[var(--surface-card)] border border-[var(--line-hairline)] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[#2B6B43] transition-all duration-500"
+                      style={{ width: `${wishPct}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-[var(--ink-muted)] block tabular-nums">
+                    {tr('cards.wishSavedFormatted', {
+                      zh: '已攒 {saved} / 目标 {target}',
+                      en: 'Saved {saved} / Target {target}',
+                    }, {
+                      saved: formatBudgetAmount(wallet.wishSaved, lang),
+                      target: formatBudgetAmount(wallet.wishTarget, lang),
+                    })}
                   </span>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-
-        {/* ==================== ToC 3: 人脉与亲友档案簿 ==================== */}
-        {!isWork && activeSubTab === 'relationships' && (
-          <div className="space-y-2.5">
-            {persons.map((p) => (
-              <div
-                key={p.id}
-                className="p-3 rounded-xl bg-white border border-[#e6decd] space-y-2 shadow-xs"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-[#23293a]">{p.name}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#efeadd] text-[#8a5410]">
-                      {p.relation}
-                    </span>
-                  </div>
-                  {p.nextImportantDate && (
-                    <span className="text-[10px] font-mono text-rose-600 bg-rose-50 px-2 py-0.5 rounded">
-                      📅 {p.nextImportantDate}
-                    </span>
-                  )}
-                </div>
-
-                {p.taboos.length > 0 && (
-                  <div className="flex flex-wrap gap-1 items-center text-[11px]">
-                    <span className="text-rose-600 font-semibold">{t('cards.taboosLabel')}</span>
-                    {p.taboos.map((taboo, i) => (
-                      <span key={i} className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
-                        {taboo}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {p.preferences.length > 0 && (
-                  <div className="flex flex-wrap gap-1 items-center text-[11px]">
-                    <span className="text-emerald-700 font-semibold">{t('cards.preferencesLabel')}</span>
-                    {p.preferences.map((pref, i) => (
-                      <span
-                        key={i}
-                        className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      >
-                        {pref}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ==================== ToB 1: 零填表客户商机 CRM 卡 ==================== */}
-        {isWork && activeSubTab === 'crm' && (
-          <div className="space-y-3">
-            {/* 商机总盘摘要 */}
-            <div className="p-3 rounded-xl bg-slate-800/90 border border-slate-700 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] text-slate-400 block">{t('cards.crmTotalLabel')}</span>
-                <span className="text-lg font-mono font-bold text-emerald-400">
-                  {t('cards.crmTotalValue', {
-                    wan: (deals.reduce((s, d) => s + d.budgetAmount, 0) / 10000).toFixed(1),
-                    formatted: formatBudgetAmount(deals.reduce((s, d) => s + d.budgetAmount, 0), lang),
-                  })}
-                </span>
-              </div>
-              <div className="text-right">
-                <span className="text-[10px] text-slate-400 block">{t('cards.crmSubtitle')}</span>
-                <span className="text-xs text-blue-400 font-medium">{t('cards.crmClientCount', { count: deals.length })}</span>
-              </div>
-            </div>
-
-            {/* 客户商机卡片流 */}
-            {deals.map((deal) => (
-              <div
-                key={deal.id}
-                className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/80 space-y-2.5 hover:border-blue-500/60 transition-all"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-bold text-white">{deal.clientName}</h4>
-                    <span className="text-[11px] font-mono text-emerald-400 font-semibold">
-                      {t('cards.crmDealBudget', {
-                        wan: (deal.budgetAmount / 10000).toFixed(1),
-                        formatted: formatBudgetAmount(deal.budgetAmount, lang),
-                        prob: deal.winProbability,
-                      })}
-                    </span>
-                  </div>
+                <div className="flex items-center gap-1 shrink-0">
                   <button
-                    onClick={() => handleAdvanceDealStage(deal.id)}
-                    className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer"
-                    title={t('cards.crmAdvanceTitle')}
+                    type="button"
+                    onClick={handleQuickSaveWish}
+                    className="min-h-[var(--touch-target-min,34px)] px-3 py-1.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
                   >
-                    <span>{formatDealStage(deal.stage, lang)}</span>
-                    <ArrowRight size={11} />
+                    {t('cards.quickSaveBtn')}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={tr('cards.editWishAria', { zh: '编辑当前心愿', en: 'Edit active wish' })}
+                    onClick={() => {
+                      setEditingWish(!editingWish);
+                      setAddingWish(false);
+                      setWishTitleInput(wallet.wishTitle);
+                      setWishTargetInput(String(wallet.wishTarget));
+                      setWalletError('');
+                    }}
+                    className="min-h-[var(--touch-target-min,34px)] min-w-[var(--touch-target-min,34px)] p-1.5 rounded-lg bg-[var(--surface-card)] border border-[var(--line-hairline)] text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink-primary)] flex items-center justify-center cursor-pointer"
+                  >
+                    <Pencil size={13} aria-hidden="true" />
                   </button>
                 </div>
+              </div>
 
-                {/* 5阶段漏斗进度条 */}
-                <div className="grid grid-cols-5 gap-1 pt-0.5">
-                  {STAGES.map((st, idx) => {
-                    const currentIdx = STAGES.indexOf(deal.stage);
-                    const active = idx <= currentIdx;
-                    return (
-                      <div key={st} className="space-y-1 text-center">
-                        <div
-                          className={`h-1.5 rounded-full ${
-                            active ? 'bg-blue-500' : 'bg-slate-700'
-                          }`}
-                        />
-                        <span
-                          className={`text-[9px] block ${
-                            idx === currentIdx ? 'text-blue-400 font-bold' : 'text-slate-500'
-                          }`}
+              {/* 自定义存入金额与新增心愿触发 */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[var(--accent-border)]">
+                <form onSubmit={handleCustomDeposit} className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={0.01}
+                    step="any"
+                    aria-label={tr('cards.customDepositAria', { zh: '自定义存入金额', en: 'Custom deposit amount' })}
+                    placeholder={tr('cards.customDepositPlaceholder', { zh: '自定义金额', en: 'Amount' })}
+                    value={customSaveInput}
+                    onChange={e => setCustomSaveInput(e.target.value)}
+                    style={{ width: '110px' }}
+                    className="min-h-[var(--touch-target-min,34px)] px-2 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
+                  />
+                  <button
+                    type="submit"
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg bg-[var(--surface-card)] border border-[var(--line-hairline)] text-xs font-medium text-[var(--accent-primary)] hover:bg-[var(--surface-hover)] cursor-pointer"
+                  >
+                    {tr('cards.depositBtn', { zh: '+ 存入', en: '+ Deposit' })}
+                  </button>
+                </form>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingWish(!addingWish);
+                    setEditingWish(false);
+                    setWalletError('');
+                  }}
+                  className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg text-xs font-medium text-[var(--accent-primary)] hover:bg-[var(--surface-hover)] cursor-pointer flex items-center gap-1"
+                >
+                  <Plus size={12} aria-hidden="true" />
+                  <span>{tr('cards.newWishBtn', { zh: '新心愿', en: 'New Wish' })}</span>
+                </button>
+              </div>
+
+              {editingWish && (
+                <form onSubmit={handleSaveActiveWish} className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--accent-border)]">
+                  <input
+                    type="text"
+                    maxLength={40}
+                    aria-label={tr('cards.wishTitleInputAria', { zh: '心愿名称', en: 'Wish title' })}
+                    placeholder={tr('cards.wishTitlePlaceholder', { zh: '心愿名称', en: 'Wish title' })}
+                    value={wishTitleInput}
+                    onChange={e => setWishTitleInput(e.target.value)}
+                    className="flex-1 min-w-[120px] min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step="any"
+                    aria-label={tr('cards.wishTargetInputAria', { zh: '心愿目标金额', en: 'Wish target amount' })}
+                    placeholder={tr('cards.wishTargetPlaceholder', { zh: '目标金额', en: 'Target' })}
+                    value={wishTargetInput}
+                    onChange={e => setWishTargetInput(e.target.value)}
+                    style={{ width: '110px' }}
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
+                  />
+                  <button
+                    type="submit"
+                    className="min-h-[var(--touch-target-min,34px)] px-3 py-1 rounded-lg bg-[var(--accent-primary)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
+                  >
+                    {t('common.save')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingWish(false)}
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg text-xs text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] cursor-pointer"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                </form>
+              )}
+
+              {addingWish && (
+                <form onSubmit={handleAddWish} className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--accent-border)]">
+                  <input
+                    type="text"
+                    maxLength={40}
+                    aria-label={tr('cards.newWishTitleAria', { zh: '新心愿名称', en: 'New wish title' })}
+                    placeholder={tr('cards.newWishTitlePlaceholder', { zh: '想攒什么？（如：旅行基金）', en: 'Wish name (e.g. Trip fund)' })}
+                    value={newWishTitle}
+                    onChange={e => setNewWishTitle(e.target.value)}
+                    className="flex-1 min-w-[130px] min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step="any"
+                    aria-label={tr('cards.newWishTargetAria', { zh: '新心愿目标金额', en: 'New wish target amount' })}
+                    placeholder={tr('cards.wishTargetPlaceholder', { zh: '目标金额', en: 'Target' })}
+                    value={newWishTarget}
+                    onChange={e => setNewWishTarget(e.target.value)}
+                    style={{ width: '110px' }}
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
+                  />
+                  <button
+                    type="submit"
+                    className="min-h-[var(--touch-target-min,34px)] px-3 py-1 rounded-lg bg-[var(--accent-primary)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
+                  >
+                    {tr('cards.createWishBtn', { zh: '创建并切换', en: 'Create & Switch' })}
+                  </button>
+                </form>
+              )}
+            </div>
+
+            {/* 近期流水与手动记一笔 */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 px-1">
+                <span className="text-xs font-semibold text-[var(--ink-muted)]">{t('cards.recentEntriesTitle')}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingEntry(!addingEntry);
+                    setWalletError('');
+                  }}
+                  className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--bg-paper)] text-xs font-medium text-[var(--accent-primary)] hover:bg-[var(--surface-hover)] cursor-pointer flex items-center gap-1"
+                >
+                  <Plus size={12} aria-hidden="true" />
+                  <span>{tr('cards.addEntryToggleBtn', { zh: '记一笔', en: 'Add Entry' })}</span>
+                </button>
+              </div>
+
+              {addingEntry && (
+                <form onSubmit={handleAddEntry} className="p-3 rounded-xl bg-[var(--bg-paper)] border border-[var(--line-hairline)] space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      maxLength={40}
+                      aria-label={tr('cards.entryTitleAria', { zh: '账单名称', en: 'Entry title' })}
+                      placeholder={tr('cards.entryTitlePlaceholder', { zh: '例如：午饭 / 咖啡 / 工资', en: 'e.g. Lunch / Coffee / Salary' })}
+                      value={entryTitle}
+                      onChange={e => setEntryTitle(e.target.value)}
+                      className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                    />
+                    <input
+                      type="number"
+                      min={0.01}
+                      step="any"
+                      aria-label={tr('cards.entryAmountAria', { zh: '账单金额', en: 'Entry amount' })}
+                      placeholder={tr('cards.entryAmountPlaceholder', { zh: '金额', en: 'Amount' })}
+                      value={entryAmount}
+                      onChange={e => setEntryAmount(e.target.value)}
+                      className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        aria-label={tr('cards.entryTypeAria', { zh: '账单类型', en: 'Entry type' })}
+                        value={entryType}
+                        onChange={e => setEntryType(e.target.value as ExpenseEntry['type'])}
+                        style={{ width: 'auto' }}
+                        className="min-h-[var(--touch-target-min,34px)] px-2 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                      >
+                        <option value="expense">{tr('cards.entryTypeExpense', { zh: '支出', en: 'Expense' })}</option>
+                        <option value="saving">{tr('cards.entryTypeSaving', { zh: '储蓄', en: 'Saving' })}</option>
+                        <option value="income">{tr('cards.entryTypeIncome', { zh: '收入', en: 'Income' })}</option>
+                      </select>
+                      {entryType === 'expense' && (
+                        <select
+                          aria-label={tr('cards.entryCategoryAria', { zh: '账单分类', en: 'Category' })}
+                          value={entryCategory}
+                          onChange={e => setEntryCategory(e.target.value as ExpenseEntry['category'])}
+                          style={{ width: 'auto' }}
+                          className="min-h-[var(--touch-target-min,34px)] px-2 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
                         >
-                          {formatDealStage(st, lang)}
-                        </span>
+                          {EXPENSE_CATEGORIES.map(cat => (
+                            <option key={cat} value={cat}>{formatExpenseCategory(cat, lang)}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="submit"
+                        className="min-h-[var(--touch-target-min,34px)] px-3 py-1 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
+                      >
+                        {t('common.save')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAddingEntry(false)}
+                        className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg text-xs text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] cursor-pointer"
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
+
+              {wallet.entries.length === 0 ? (
+                <div className="p-4 rounded-xl border border-dashed border-[var(--line-hairline)] bg-[var(--bg-paper)] text-center space-y-2">
+                  <p className="text-xs font-semibold text-[var(--ink-primary)]">
+                    {tr('cards.emptyEntriesTitle', { zh: '还没有生活账单记录', en: 'No ledger entries yet' })}
+                  </p>
+                  <p className="text-xs text-[var(--ink-muted)] leading-relaxed">
+                    {tr('cards.emptyEntriesHint', {
+                      zh: '在「随口说」里说“今天花了35吃午饭”，或点上方「记一笔」手动添加。',
+                      en: 'Mention spending/savings in Quick Note, or click "Add Entry" above.',
+                    })}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {visibleEntries.map((item) => {
+                    const isPositive = item.type === 'saving' || item.type === 'income';
+                    const isConfirming = confirmDeleteEntryId === item.id;
+                    return (
+                      <div
+                        key={item.id}
+                        className="px-3 py-2 rounded-xl bg-[var(--bg-paper)] border border-[var(--line-hairline)] space-y-1.5 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="px-2 py-0.5 rounded bg-[var(--surface-subtle)] border border-[var(--line-hairline)] text-xs text-[var(--accent-primary)] shrink-0">
+                              {formatExpenseCategory(item.category, lang)}
+                            </span>
+                            <span className="font-medium text-[var(--ink-primary)] truncate">{item.title}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span
+                              className={`font-mono font-semibold tabular-nums ${
+                                isPositive ? 'text-[#215936]' : 'text-[var(--ink-primary)]'
+                              }`}
+                            >
+                              {isPositive ? `+${formatBudgetAmount(item.amount, lang)}` : `-${formatBudgetAmount(item.amount, lang)}`}
+                            </span>
+                            <button
+                              type="button"
+                              aria-label={tr('cards.deleteEntryAria', { zh: '删除记录 {title}', en: 'Delete entry {title}' }, { title: item.title })}
+                              onClick={() => setConfirmDeleteEntryId(isConfirming ? null : item.id)}
+                              className="min-h-[var(--touch-target-min,34px)] min-w-[var(--touch-target-min,34px)] p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--danger-ink)] hover:bg-[var(--danger-soft)] flex items-center justify-center cursor-pointer"
+                            >
+                              <Trash2 size={13} aria-hidden="true" />
+                            </button>
+                          </div>
+                        </div>
+                        {isConfirming && renderDeleteConfirm(
+                          tr('cards.confirmDeleteEntryPrompt', { zh: '确认删除这条流水？', en: 'Delete this entry?' }),
+                          () => handleDeleteEntry(item),
+                          () => setConfirmDeleteEntryId(null),
+                        )}
                       </div>
                     );
                   })}
-                </div>
-
-                <div className="text-xs space-y-1 bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
-                  <p className="text-slate-300">
-                    <span className="text-blue-400 font-medium">{t('cards.crmPainPoints')}</span>
-                    {deal.painPoints}
-                  </p>
-                  <p className="text-amber-300/90 flex items-center gap-1">
-                    <Lock size={11} className="shrink-0" />
-                    <span className="font-medium">{t('cards.crmInternalBottomLine')}</span>
-                    {deal.internalBottomLine}
-                  </p>
-                  <p className="text-emerald-400">
-                    <span className="font-medium">{t('cards.crmNextAction')}</span>
-                    {deal.nextAction}
-                  </p>
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => {
-                      setSelectedDealForPoster(deal);
-                      setActiveSubTab('poster');
-                    }}
-                    className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
-                  >
-                    <FileCheck size={12} />
-                    <span>{t('cards.crmViewPosterBtn')}</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ==================== ToB 2: 项目死线推进看板 ==================== */}
-        {isWork && activeSubTab === 'projects' && (
-          <div className="space-y-2.5">
-            {tasks.map((task) => (
-              <div
-                key={task.id}
-                onClick={() => handleToggleTask(task.id)}
-                className={`p-3 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-all ${
-                  task.done
-                    ? 'bg-slate-900/40 border-slate-800 text-slate-500 line-through'
-                    : 'bg-slate-800/80 border-slate-700 text-slate-100 hover:border-blue-500/50'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  {task.done ? (
-                    <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />
-                  ) : (
-                    <Circle size={16} className="text-blue-400 shrink-0" />
+                  {wallet.entries.length > 6 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllEntries(!showAllEntries)}
+                      className="w-full min-h-[var(--touch-target-min,34px)] py-1.5 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs font-medium text-[var(--accent-primary)] hover:bg-[var(--surface-hover)] cursor-pointer"
+                    >
+                      {showAllEntries
+                        ? tr('cards.collapseEntriesBtn', { zh: '收起部分流水', en: 'Show fewer' })
+                        : tr('cards.showAllEntriesBtn', {
+                            zh: '查看全部 ({count})',
+                            en: 'View all ({count})',
+                          }, { count: wallet.entries.length })}
+                    </button>
                   )}
-                  <div>
-                    <p className="text-xs font-medium">{task.title}</p>
-                    <span className="text-[10px] text-amber-400 font-mono">{t('cards.deadlinePrefix')}{task.deadline}</span>
-                  </div>
-                </div>
-                <span
-                  className={`text-[10px] px-2 py-0.5 rounded font-medium ${
-                    task.priority === 'high'
-                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                      : 'bg-blue-500/20 text-blue-300'
-                  }`}
-                >
-                  {task.priority === 'high' ? t('cards.priorityHigh') : t('cards.priorityNormal')}
-                </span>
-              </div>
-            ))}
+                </>
+              )}
+            </div>
           </div>
         )}
 
-        {/* ==================== ToB 3: 一键外发·客户交付对齐回执单 ==================== */}
-        {isWork && activeSubTab === 'poster' && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <select
-                value={selectedDealForPoster?.id || deals[0]?.id}
-                onChange={(e) => {
-                  const found = deals.find((d) => d.id === e.target.value);
-                  if (found) setSelectedDealForPoster(found);
-                }}
-                className="bg-slate-800 border border-slate-700 text-xs text-white rounded-lg px-2.5 py-1.5"
-              >
-                {deals.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {t('cards.posterClientOption', { client: d.clientName })}
-                  </option>
-                ))}
-              </select>
-
+        {/* ==================== 2: 人脉与亲友档案簿 ==================== */}
+        {activeSubTab === 'relationships' && (
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-[var(--ink-muted)]">
+                {tr('cards.personsCountLabel', { zh: '亲友档案 ({count})', en: 'Contacts ({count})' }, { count: persons.length })}
+              </span>
               <button
-                onClick={handleExportClientPoster}
-                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow-sm"
+                type="button"
+                onClick={() => {
+                  if (addingPerson) {
+                    resetPersonForm();
+                  } else {
+                    resetPersonForm();
+                    setAddingPerson(true);
+                  }
+                }}
+                className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--bg-paper)] text-xs font-medium text-[var(--accent-primary)] hover:bg-[var(--surface-hover)] cursor-pointer flex items-center gap-1"
               >
-                <Download size={13} />
-                <span>{t('cards.posterExportBtn')}</span>
+                <Plus size={12} aria-hidden="true" />
+                <span>{tr('cards.addPersonBtn', { zh: '添加亲友', en: 'Add Contact' })}</span>
               </button>
             </div>
 
-            {/* 旧版内部纪要预览；正式工作态由 WorkBench 提供审核外发流程 */}
-            {(() => {
-              const target = selectedDealForPoster || deals[0];
-              if (!target) return null;
-              return (
-                <div
-                  ref={posterRef}
-                  className="p-5 rounded-xl bg-gradient-to-br from-[#0f172a] via-[#1e293b] to-[#0f172a] border-2 border-amber-500/40 text-slate-100 space-y-4 shadow-lg"
-                >
-                  <div className="flex items-center justify-between border-b border-slate-700 pb-3">
-                    <div>
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-amber-400 block">
-                        {t('cards.posterDraftEyebrow')}
-                      </span>
-                      <h3 className="text-base font-bold text-white mt-0.5">
-                        {t('cards.posterMemoHeading', { client: target.clientName })}
-                      </h3>
-                    </div>
-                    <ShieldCheck size={22} className="text-amber-400" />
-                  </div>
+            {personError && (
+              <p className="px-3 py-2 rounded-lg border border-[var(--danger-line)] bg-[var(--danger-soft)] text-xs text-[var(--danger-ink)]" role="alert">
+                {personError}
+              </p>
+            )}
 
-                  <div className="grid grid-cols-2 gap-2.5 text-xs">
-                    <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-700/80">
-                      <span className="text-[10px] text-slate-400 block">{t('cards.posterStageLabel')}</span>
-                      <span className="font-bold text-emerald-400">{formatDealStage(target.stage, lang)}</span>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-700/80">
-                      <span className="text-[10px] text-slate-400 block">{t('cards.posterBudgetLabel')}</span>
-                      <span className="font-mono font-bold text-amber-300">
-                        {t('cards.posterBudgetValue', {
-                          wan: (target.budgetAmount / 10000).toFixed(1),
-                          formatted: formatBudgetAmount(target.budgetAmount, lang),
-                        })}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 text-xs">
-                    <div className="p-3 rounded-lg bg-slate-900/60 border-l-3 border-blue-500">
-                      <span className="text-[10px] text-blue-400 font-semibold block mb-1">
-                        {t('cards.posterSection1Title')}
-                      </span>
-                      <p className="text-slate-200 leading-relaxed">{target.painPoints}</p>
-                    </div>
-
-                    <div className="p-3 rounded-lg bg-slate-900/60 border-l-3 border-emerald-500">
-                      <span className="text-[10px] text-emerald-400 font-semibold block mb-1">
-                        {t('cards.posterSection2Title')}
-                      </span>
-                      <p className="text-slate-200 leading-relaxed">{target.nextAction}</p>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-                    <span>{t('cards.posterFooterNote')}</span>
-                    <span className="font-mono text-amber-400/80">Generated by Looma OS</span>
+            {(addingPerson || editingPersonId) && (
+              <form onSubmit={handleSavePerson} className="p-3 rounded-xl bg-[var(--bg-paper)] border border-[var(--line-hairline)] space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    maxLength={40}
+                    aria-label={tr('cards.personNameAria', { zh: '亲友姓名或称呼', en: 'Contact name' })}
+                    placeholder={tr('cards.personNamePlaceholder', { zh: '姓名 / 称呼（如：妈妈）', en: 'Name (e.g. Mom)' })}
+                    value={personName}
+                    onChange={e => setPersonName(e.target.value)}
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                  />
+                  <input
+                    type="text"
+                    maxLength={24}
+                    aria-label={tr('cards.personRelationAria', { zh: '关系标签', en: 'Relation' })}
+                    placeholder={tr('cards.personRelationPlaceholder', { zh: '关系（如：家人 / 朋友）', en: 'Relation (e.g. Family)' })}
+                    value={personRelation}
+                    onChange={e => setPersonRelation(e.target.value)}
+                    className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                  />
+                </div>
+                <input
+                  type="text"
+                  aria-label={tr('cards.personTaboosAria', { zh: '忌口或雷区', en: 'Avoid / taboos' })}
+                  placeholder={tr('cards.personTaboosPlaceholder', { zh: '忌口 / 雷区（顿号或逗号分隔）', en: 'Avoid / taboos (comma-separated)' })}
+                  value={personTaboos}
+                  onChange={e => setPersonTaboos(e.target.value)}
+                  className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                />
+                <input
+                  type="text"
+                  aria-label={tr('cards.personPrefsAria', { zh: '喜好或心愿', en: 'Likes / preferences' })}
+                  placeholder={tr('cards.personPrefsPlaceholder', { zh: '喜好 / 心愿（顿号或逗号分隔）', en: 'Likes / gifts (comma-separated)' })}
+                  value={personPrefs}
+                  onChange={e => setPersonPrefs(e.target.value)}
+                  className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <input
+                    type="text"
+                    maxLength={40}
+                    aria-label={tr('cards.personDateAria', { zh: '重要日期或生日', en: 'Birthday or key date' })}
+                    placeholder={tr('cards.personDatePlaceholder', { zh: '重要日期（如：6月12日 生日）', en: 'Key date (e.g. Jun 12 Birthday)' })}
+                    value={personDate}
+                    onChange={e => setPersonDate(e.target.value)}
+                    className="flex-1 min-w-[140px] min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)]"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="submit"
+                      className="min-h-[var(--touch-target-min,34px)] px-3 py-1 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
+                    >
+                      {t('common.save')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetPersonForm}
+                      className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg text-xs text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] cursor-pointer"
+                    >
+                      {t('common.cancel')}
+                    </button>
                   </div>
                 </div>
-              );
-            })()}
+              </form>
+            )}
+
+            {persons.length === 0 ? (
+              <div className="p-4 rounded-xl border border-dashed border-[var(--line-hairline)] bg-[var(--bg-paper)] text-center space-y-2">
+                <p className="text-xs font-semibold text-[var(--ink-primary)]">
+                  {tr('cards.emptyPersonsTitle', { zh: '还没有记录亲友档案', en: 'No contact notes yet' })}
+                </p>
+                <p className="text-xs text-[var(--ink-muted)] leading-relaxed">
+                  {tr('cards.emptyPersonsHint', {
+                    zh: '在「随口说」里说“妈妈不吃香菜，喜欢白茶”，或点击右上角「添加亲友」。',
+                    en: 'Mention preferences in Quick Note (e.g. "Mom dislikes cilantro"), or click "Add Contact".',
+                  })}
+                </p>
+              </div>
+            ) : (
+              persons.map((p) => {
+                const isConfirming = confirmDeletePersonId === p.id;
+                return (
+                  <div
+                    key={p.id}
+                    className="p-3 rounded-xl bg-[var(--bg-paper)] border border-[var(--line-hairline)] space-y-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <span className="text-sm font-bold text-[var(--ink-primary)]">{p.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--surface-subtle)] border border-[var(--line-hairline)] text-[var(--accent-primary)]">
+                          {p.relation}
+                        </span>
+                        {p.nextImportantDate && (
+                          <span className="inline-flex items-center gap-1 text-xs font-mono text-[var(--danger-ink)] bg-[var(--danger-soft)] border border-[var(--danger-line)] px-2 py-0.5 rounded tabular-nums">
+                            <Calendar size={12} aria-hidden="true" />
+                            <span>{p.nextImportantDate}</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          aria-label={tr('cards.editPersonAria', { zh: '编辑 {name}', en: 'Edit {name}' }, { name: p.name })}
+                          onClick={() => openPersonEdit(p)}
+                          className="min-h-[var(--touch-target-min,34px)] min-w-[var(--touch-target-min,34px)] p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink-primary)] flex items-center justify-center cursor-pointer"
+                        >
+                          <Pencil size={13} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={tr('cards.deletePersonAria', { zh: '删除 {name}', en: 'Delete {name}' }, { name: p.name })}
+                          onClick={() => setConfirmDeletePersonId(isConfirming ? null : p.id)}
+                          className="min-h-[var(--touch-target-min,34px)] min-w-[var(--touch-target-min,34px)] p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--danger-ink)] hover:bg-[var(--danger-soft)] flex items-center justify-center cursor-pointer"
+                        >
+                          <Trash2 size={13} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {p.taboos.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 items-center text-xs">
+                        <span className="text-[var(--danger-ink)] font-semibold">{t('cards.taboosLabel')}</span>
+                        {p.taboos.map((taboo, i) => (
+                          <span key={i} className="px-2 py-0.5 rounded bg-[var(--danger-soft)] text-[var(--danger-ink)] border border-[var(--danger-line)]">
+                            {taboo}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {p.preferences.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 items-center text-xs">
+                        <span className="text-[#215936] font-semibold">{t('cards.preferencesLabel')}</span>
+                        {p.preferences.map((pref, i) => (
+                          <span
+                            key={i}
+                            className="px-2 py-0.5 rounded bg-[#EDF5EE] text-[#215936] border border-[#B7D3BF]"
+                          >
+                            {pref}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {isConfirming && renderDeleteConfirm(
+                      tr('cards.confirmDeletePersonPrompt', { zh: '确认删除「{name}」档案？', en: 'Delete "{name}"?' }, { name: p.name }),
+                      () => handleDeletePerson(p),
+                      () => setConfirmDeletePersonId(null),
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
 
-        {/* ==================== 自定义活体卡 ==================== */}
+        {/* ==================== 3: 自定义活体卡 ==================== */}
         {activeSubTab === 'custom' && (
           <div className="space-y-3">
             {customCards.map((c) => {
               const pct = boundedProgress(c.metricValue, c.metricTarget);
+              const stepText = customStepInputs[c.id] ?? '10';
+              const stepValue = getCustomStep(c.id);
+              const isEditingVal = editingCustomId === c.id;
               return (
                 <div
                   key={c.id}
-                  className={`p-3.5 rounded-xl border space-y-2.5 ${
-                    isWork ? 'bg-slate-800 border-slate-700' : 'bg-white border-[#e6decd]'
-                  }`}
+                  className="p-3.5 rounded-xl border border-[var(--line-hairline)] bg-[var(--bg-paper)] space-y-2.5"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-[var(--ink-primary)]">
                       {c.icon} {c.title}
                     </span>
-                    <span className="text-xs font-mono font-bold text-[#a8681a]">
-                      {c.metricValue} / {c.metricTarget} {c.unit} ({pct}%)
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-mono font-bold text-[var(--accent-primary)] tabular-nums">
+                        {c.metricValue} / {c.metricTarget} {c.unit} ({pct}%)
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={tr('cards.editCustomValueAria', { zh: '直接设置 {title} 数值', en: 'Set value for {title}' }, { title: c.title })}
+                        onClick={() => {
+                          if (isEditingVal) {
+                            setEditingCustomId(null);
+                          } else {
+                            setEditingCustomId(c.id);
+                            setEditingCustomValue(String(c.metricValue));
+                          }
+                        }}
+                        className="min-h-[var(--touch-target-min,34px)] min-w-[var(--touch-target-min,34px)] p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink-primary)] flex items-center justify-center cursor-pointer"
+                      >
+                        <Pencil size={13} aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-black/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#a8681a]" style={{ width: `${pct}%` }} />
+
+                  <div className="w-full h-2 bg-[var(--surface-subtle)] border border-[var(--line-hairline)] rounded-full overflow-hidden">
+                    <div className="h-full bg-[var(--accent-primary)] transition-all duration-300" style={{ width: `${pct}%` }} />
                   </div>
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => {
-                        const updated = { ...c, metricValue: Math.min(c.metricTarget, c.metricValue + 10) };
-                        return persistUpdate(() => Repository.upsert(mode, 'custom', [updated], true),
-                          () => setCustomCards(previous => previous.map(item => item.id === c.id ? updated : item)), t('cards.customUpdatedToast', { title: c.title }));
-                      }}
-                      className="px-2.5 py-1 rounded bg-[#a8681a] text-white text-xs cursor-pointer"
-                    >
-                      {t('cards.customAdvanceBtn')}
-                    </button>
+
+                  {isEditingVal && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <input
+                        type="number"
+                        min={0}
+                        max={c.metricTarget}
+                        aria-label={tr('cards.customDirectInputAria', { zh: '当前进度值', en: 'Current progress value' })}
+                        value={editingCustomValue}
+                        onChange={e => setEditingCustomValue(e.target.value)}
+                        style={{ width: '110px' }}
+                        className="min-h-[var(--touch-target-min,34px)] px-2 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-[var(--ink-primary)] tabular-nums"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSetCustomCardValue(c, editingCustomValue)}
+                        className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg bg-[var(--accent-primary)] text-[#FFFCF6] text-xs font-semibold cursor-pointer inline-flex items-center gap-1"
+                      >
+                        <Check size={12} aria-hidden="true" />
+                        <span>{t('common.save')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingCustomId(null)}
+                        className="min-h-[var(--touch-target-min,34px)] px-2 py-1 rounded-lg text-xs text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] cursor-pointer inline-flex items-center gap-1"
+                      >
+                        <X size={12} aria-hidden="true" />
+                        <span>{t('common.cancel')}</span>
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      {[1, 5, 10].map((quickStep) => (
+                        <button
+                          type="button"
+                          key={quickStep}
+                          onClick={() => handleAdvanceCustomCard(c, quickStep)}
+                          className="min-h-[var(--touch-target-min,34px)] px-2.5 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs font-medium text-[var(--ink-primary)] hover:bg-[var(--surface-hover)] cursor-pointer tabular-nums"
+                        >
+                          +{quickStep}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={1}
+                        aria-label={tr('cards.customStepAria', { zh: '自定义步长', en: 'Custom step' })}
+                        value={stepText}
+                        onChange={(e) => setCustomStepInputs(prev => ({ ...prev, [c.id]: e.target.value }))}
+                        onBlur={() => {
+                          const normalized = getCustomStep(c.id);
+                          setCustomStepInputs(prev => ({ ...prev, [c.id]: String(normalized) }));
+                        }}
+                        style={{ width: '72px' }}
+                        className="min-h-[var(--touch-target-min,34px)] px-2 py-1 rounded-lg border border-[var(--line-hairline)] bg-[var(--surface-card)] text-xs text-center text-[var(--ink-primary)] tabular-nums"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAdvanceCustomCard(c, stepValue)}
+                        className="min-h-[var(--touch-target-min,34px)] px-3 py-1 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[#FFFCF6] text-xs font-semibold cursor-pointer"
+                      >
+                        {t('cards.customAdvanceBtn')}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

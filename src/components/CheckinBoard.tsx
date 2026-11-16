@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, Check, Pencil } from 'lucide-react';
+import { Bell, Check, Pencil, X } from 'lucide-react';
 import type { CustomLivingCard } from '../types';
 import { Repository } from '../persistence/repository';
 import { TodoService } from '../services/todos';
 import { shanghaiDateKey } from '../services/dates';
-import { useI18n } from '../i18n';
+import { useI18n, type I18nKey } from '../i18n';
 import {
   DEFAULT_CHECKIN_REMINDER_TIME,
   MAX_ACTIVE_CHECKINS,
@@ -13,6 +13,7 @@ import {
   createCheckinCard,
   deleteCheckinCard,
   getCheckedDates,
+  getCheckinErrorCode,
   hasCheckedToday,
   partitionCheckinCards,
   renameCheckinCard,
@@ -20,6 +21,7 @@ import {
   toggleArchiveCheckinCard,
   toggleTodayCheckin,
   updateCheckinReminder,
+  type CheckinErrorCode,
 } from '../services/checkins';
 import './checkins.css';
 
@@ -34,13 +36,24 @@ const PRESET_DAYS = [7, 14, 21, 30] as const;
 let sessionCreatorPreference: boolean | null = null;
 
 export function CheckinBoard({ onCompanionToast }: Props) {
-  const { t } = useI18n();
+  const { lang, t } = useI18n();
+  const tr = (key: string, fallback: { zh: string; en: string }, params?: Record<string, string | number>): string => {
+    const resolved = t(key as I18nKey, params);
+    if (resolved !== key) return resolved;
+    const tpl = lang === 'en' ? fallback.en : fallback.zh;
+    if (!params) return tpl;
+    return tpl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, token) =>
+      Object.prototype.hasOwnProperty.call(params, token) ? String(params[token]) : `{${token}}`,
+    );
+  };
+
   const [cards, setCards] = useState<CustomLivingCard[]>(() => Repository.getCurrent().partitions.life.customCards);
   const [creatorOpen, setCreatorOpen] = useState(
     () => sessionCreatorPreference ?? partitionCheckinCards(Repository.getCurrent().partitions.life.customCards).active.length === 0,
   );
   const [title, setTitle] = useState('');
   const [daysTarget, setDaysTarget] = useState<number>(7);
+  const [daysInput, setDaysInput] = useState<string>('7');
   const [reminderEnabled, setReminderEnabled] = useState(true);
   const [reminderTime, setReminderTime] = useState(DEFAULT_CHECKIN_REMINDER_TIME);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -48,13 +61,27 @@ export function CheckinBoard({ onCompanionToast }: Props) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
   const [now, setNow] = useState(Date.now);
 
   const mountedRef = useRef(true);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const toastRef = useRef(onCompanionToast);
   toastRef.current = onCompanionToast;
+  const noticeSeqRef = useRef(0);
+
+  const showNotice = (text: string) => {
+    noticeSeqRef.current += 1;
+    setNotice({ id: noticeSeqRef.current, text });
+  };
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => {
+      if (mountedRef.current) setNotice(null);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [notice?.id]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -74,15 +101,32 @@ export function CheckinBoard({ onCompanionToast }: Props) {
     };
   }, []);
 
-  function formatCheckinError(message: string): string {
-    if (message === '未找到对应的打卡项目。') return t('checkin.errNotFound');
-    if (message === '该打卡已归档，请先恢复后再操作。') return t('checkin.errArchived');
-    if (message === '这条打卡已经全部完成了，可先归档或新建一轮。') return t('checkin.errAlreadyCompleted');
-    if (message.includes('请先归档或完成其他进行中的打卡')) return t('checkin.errMaxActiveRestore', { max: MAX_ACTIVE_CHECKINS });
-    if (message.includes('最多同时进行')) return t('checkin.errMaxActiveCreate', { max: MAX_ACTIVE_CHECKINS });
-    if (message.includes('无法撤销已完成打卡')) return t('checkin.errCannotUndoAtCap', { max: MAX_ACTIVE_CHECKINS });
-    if (message.includes('每日提醒时间格式无效')) return t('checkin.errBadReminderFormat');
-    return message;
+  function formatCheckinFailure(failure: unknown): string {
+    const rawCode = getCheckinErrorCode(failure)
+      ?? (failure && typeof failure === 'object' && typeof (failure as { errorCode?: unknown }).errorCode === 'string'
+        ? (failure as { errorCode: CheckinErrorCode }).errorCode
+        : undefined);
+    const codeMap: Record<CheckinErrorCode, () => string> = {
+      NOT_FOUND: () => t('checkin.errNotFound'),
+      ARCHIVED: () => t('checkin.errArchived'),
+      TARGET_REACHED: () => t('checkin.errAlreadyCompleted'),
+      MAX_ACTIVE_RESTORE: () => t('checkin.errMaxActiveRestore', { max: MAX_ACTIVE_CHECKINS }),
+      MAX_ACTIVE_LIMIT: () => t('checkin.errMaxActiveCreate', { max: MAX_ACTIVE_CHECKINS }),
+      CANNOT_UNDO_AT_CAP: () => t('checkin.errCannotUndoAtCap', { max: MAX_ACTIVE_CHECKINS }),
+      INVALID_TIME: () => t('checkin.errBadReminderFormat'),
+      EMPTY_TITLE: () => t('checkin.emptyTitleError'),
+      INVALID_DAYS: () => t('checkin.daysRangeError', { max: MAX_CHECKIN_DAYS }),
+      ALREADY_DONE_TODAY: () => t('checkin.alreadyCheckedNotice'),
+    };
+    if (rawCode && Object.prototype.hasOwnProperty.call(codeMap, rawCode)) {
+      return codeMap[rawCode]();
+    }
+    if (failure instanceof Error && failure.message) return failure.message;
+    if (failure && typeof failure === 'object' && typeof (failure as { message?: unknown }).message === 'string') {
+      const msg = (failure as { message: string }).message;
+      if (msg) return msg;
+    }
+    return t('checkin.saveErrorFallback');
   }
 
   function runMutation(
@@ -102,13 +146,13 @@ export function CheckinBoard({ onCompanionToast }: Props) {
         await syncCheckinReminders(nextAll, TodoService);
         if (!mountedRef.current) return;
         setCards(nextAll);
-        setNotice('');
+        setNotice(null);
         if (feedback) {
           toastRef.current?.(feedback);
         }
       } catch (failure) {
         if (mountedRef.current) {
-          setError(failure instanceof Error ? formatCheckinError(failure.message) : t('checkin.saveErrorFallback'));
+          setError(formatCheckinFailure(failure));
         }
       } finally {
         if (mountedRef.current) setBusy(false);
@@ -123,6 +167,22 @@ export function CheckinBoard({ onCompanionToast }: Props) {
   const isEmptyBoard = activeCount === 0 && completed.length === 0;
   const showCreator = isEmptyBoard || creatorOpen;
 
+  function handleCustomDaysBlur() {
+    const trimmed = daysInput.trim();
+    if (!trimmed) {
+      const fallback = daysTarget >= 1 && daysTarget <= MAX_CHECKIN_DAYS ? daysTarget : 7;
+      setDaysTarget(fallback);
+      setDaysInput(String(fallback));
+      return;
+    }
+    const parsed = Math.round(Number(trimmed));
+    const clamped = Number.isFinite(parsed)
+      ? Math.max(1, Math.min(MAX_CHECKIN_DAYS, parsed))
+      : daysTarget || 7;
+    setDaysTarget(clamped);
+    setDaysInput(String(clamped));
+  }
+
   function handleCreate(event: React.FormEvent) {
     event.preventDefault();
     if (busy) return;
@@ -131,16 +191,24 @@ export function CheckinBoard({ onCompanionToast }: Props) {
       setError(t('checkin.titleRequiredError'));
       return;
     }
-    const cleanDays = Math.round(Number(daysTarget));
-    if (!Number.isFinite(cleanDays) || cleanDays < 1 || cleanDays > MAX_CHECKIN_DAYS) {
+    const rawDays = daysInput.trim();
+    const parsedDays = rawDays === '' ? NaN : Math.round(Number(rawDays));
+    if (!Number.isFinite(parsedDays) || parsedDays < 1 || parsedDays > MAX_CHECKIN_DAYS) {
+      const clamped = Number.isFinite(parsedDays)
+        ? Math.max(1, Math.min(MAX_CHECKIN_DAYS, parsedDays))
+        : daysTarget || 7;
+      setDaysTarget(clamped);
+      setDaysInput(String(clamped));
       setError(t('checkin.daysRangeError', { max: MAX_CHECKIN_DAYS }));
       return;
     }
+    setDaysTarget(parsedDays);
+    setDaysInput(String(parsedDays));
     const desiredReminder = reminderEnabled ? reminderTime : undefined;
     runMutation(latest => {
       const { cards: nextAll, card } = createCheckinCard(latest, {
         title: nextTitle,
-        daysTarget: cleanDays,
+        daysTarget: parsedDays,
         dailyReminderTime: desiredReminder,
       });
       if (mountedRef.current) {
@@ -161,17 +229,19 @@ export function CheckinBoard({ onCompanionToast }: Props) {
   function startRename(card: CustomLivingCard) {
     setEditingId(card.id);
     setEditingTitle(card.title);
+    setConfirmDeleteId(null);
     setError('');
   }
 
   function commitRename(card: CustomLivingCard) {
     if (editingId !== card.id) return;
     const next = editingTitle.trim();
-    setEditingId(null);
-    if (!next || next === card.title) {
-      if (!next) setError(t('checkin.emptyTitleError'));
+    if (!next) {
+      setError(t('checkin.emptyTitleError'));
       return;
     }
+    setEditingId(null);
+    if (next === card.title) return;
     runMutation(latest => ({
       nextAll: renameCheckinCard(latest, card.id, next),
       feedback: t('checkin.renamedFeedback', { title: next }),
@@ -214,6 +284,7 @@ export function CheckinBoard({ onCompanionToast }: Props) {
 
   function handleArchiveToggle(card: CustomLivingCard) {
     if (busy) return;
+    setConfirmDeleteId(null);
     runMutation(latest => ({
       nextAll: toggleArchiveCheckinCard(latest, card.id),
       feedback: card.archived ? t('checkin.restoredFeedback', { title: card.title }) : t('checkin.archivedFeedback', { title: card.title }),
@@ -245,6 +316,38 @@ export function CheckinBoard({ onCompanionToast }: Props) {
       : t('checkin.hintMissedNext', { time: card.dailyReminderTime });
   }
 
+  function renderDeleteConfirmBar(card: CustomLivingCard) {
+    return (
+      <div
+        className="checkin-delete-confirm"
+        role="group"
+        aria-label={tr('checkin.deleteConfirmAria', { zh: '确认删除打卡', en: 'Confirm deleting check-in' })}
+      >
+        <span className="checkin-delete-confirm-text">
+          {tr('checkin.deleteConfirmPrompt', { zh: '确认删除「{title}」？', en: 'Delete "{title}"?' }, { title: card.title })}
+        </span>
+        <div className="checkin-delete-confirm-btns">
+          <button
+            type="button"
+            className="checkin-danger-confirm-btn"
+            disabled={busy}
+            onClick={() => handleDelete(card)}
+          >
+            {t('checkin.confirmDeleteBtn')}
+          </button>
+          <button
+            type="button"
+            className="text-btn"
+            disabled={busy}
+            onClick={() => setConfirmDeleteId(null)}
+          >
+            {t('checkin.cancelBtn')}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   function renderCard(card: CustomLivingCard) {
     const checkedDates = getCheckedDates(card);
     const checkedCount = checkedDates.length;
@@ -252,6 +355,7 @@ export function CheckinBoard({ onCompanionToast }: Props) {
     const doneAll = checkedCount >= card.metricTarget;
     const pct = card.metricTarget > 0 ? Math.min(100, Math.round((checkedCount / card.metricTarget) * 100)) : 0;
     const isEditing = editingId === card.id;
+    const isConfirmingDelete = confirmDeleteId === card.id;
 
     return (
       <article
@@ -280,23 +384,26 @@ export function CheckinBoard({ onCompanionToast }: Props) {
                       setEditingId(null);
                     }
                   }}
-                  onBlur={() => commitRename(card)}
                 />
                 <button
                   type="button"
-                  className="soft-btn"
-                  onMouseDown={e => e.preventDefault()}
+                  className="soft-btn checkin-rename-action"
+                  aria-label={t('checkin.saveBtn')}
+                  title={t('checkin.saveBtn')}
                   onClick={() => commitRename(card)}
                 >
-                  {t('checkin.saveBtn')}
+                  <Check size={14} aria-hidden="true" />
+                  <span>{t('checkin.saveBtn')}</span>
                 </button>
                 <button
                   type="button"
-                  className="text-btn"
-                  onMouseDown={e => e.preventDefault()}
+                  className="text-btn checkin-rename-action"
+                  aria-label={t('checkin.cancelBtn')}
+                  title={t('checkin.cancelBtn')}
                   onClick={() => setEditingId(null)}
                 >
-                  {t('checkin.cancelBtn')}
+                  <X size={14} aria-hidden="true" />
+                  <span>{t('checkin.cancelBtn')}</span>
                 </button>
               </div>
             ) : (
@@ -381,9 +488,9 @@ export function CheckinBoard({ onCompanionToast }: Props) {
                   if (isTodayCheckedBox || isTodayNextBox) {
                     handleToggleToday(card);
                   } else if (isChecked) {
-                    setNotice(t('checkin.pastBoxNotice', { day: idx + 1, date: checkedDates[idx] }));
+                    showNotice(t('checkin.pastBoxNotice', { day: idx + 1, date: checkedDates[idx] }));
                   } else {
-                    setNotice(
+                    showNotice(
                       checkedToday
                         ? t('checkin.alreadyCheckedNotice')
                         : t('checkin.clickNextNotice', { day: checkedCount + 1 }),
@@ -425,24 +532,147 @@ export function CheckinBoard({ onCompanionToast }: Props) {
             <span className="checkin-reminder-note">{t('checkin.completedAllNote', { target: card.metricTarget })}</span>
           )}
 
-          <div className="checkin-card-actions">
-            <button type="button" className="text-btn" disabled={busy} onClick={() => handleArchiveToggle(card)}>
-              {t('checkin.archiveBtn')}
-            </button>
-            <button
-              type="button"
-              className={`text-btn${confirmDeleteId === card.id ? ' checkin-danger-btn' : ''}`}
-              disabled={busy}
-              onBlur={() => { if (confirmDeleteId === card.id) setConfirmDeleteId(null); }}
-              onClick={() => handleDelete(card)}
-            >
-              {confirmDeleteId === card.id ? t('checkin.confirmDeleteBtn') : t('checkin.deleteBtn')}
-            </button>
-          </div>
+          {isConfirmingDelete ? (
+            renderDeleteConfirmBar(card)
+          ) : (
+            <div className="checkin-card-actions">
+              <button type="button" className="text-btn" disabled={busy} onClick={() => handleArchiveToggle(card)}>
+                {t('checkin.archiveBtn')}
+              </button>
+              <button
+                type="button"
+                className="text-btn checkin-danger-trigger"
+                disabled={busy}
+                onClick={() => handleDelete(card)}
+              >
+                {t('checkin.deleteBtn')}
+              </button>
+            </div>
+          )}
         </div>
       </article>
     );
   }
+
+  const creatorBarEl = !isEmptyBoard && (
+    <div className="checkin-creator-bar">
+      <button
+        type="button"
+        className={`checkin-toggle-btn${showCreator ? ' is-open' : ''}`}
+        aria-expanded={showCreator}
+        onClick={() => {
+          const next = !showCreator;
+          sessionCreatorPreference = next;
+          setCreatorOpen(next);
+        }}
+      >
+        {showCreator ? t('checkin.collapseTrackToggle') : t('checkin.newTrackToggle')}
+      </button>
+    </div>
+  );
+
+  const creatorFormEl = showCreator && (
+    <form className="checkin-creator" onSubmit={handleCreate}>
+      <div className="checkin-creator-row">
+        <input
+          type="text"
+          className="checkin-title-input"
+          aria-label={t('checkin.newNameAria')}
+          placeholder={slotsFull ? t('checkin.newNamePlaceholderFull') : t('checkin.newNamePlaceholder')}
+          maxLength={40}
+          value={title}
+          disabled={slotsFull}
+          onChange={e => setTitle(e.target.value)}
+        />
+      </div>
+
+      <div className="checkin-days-bar">
+        <span className="checkin-days-label">{t('checkin.targetDaysLabel')}</span>
+        {PRESET_DAYS.map(preset => (
+          <button
+            key={preset}
+            type="button"
+            className={`checkin-preset-btn${daysTarget === preset && daysInput.trim() !== '' ? ' is-selected' : ''}`}
+            disabled={slotsFull}
+            onClick={() => {
+              setDaysTarget(preset);
+              setDaysInput(String(preset));
+            }}
+          >
+            {t('checkin.presetDaysLabel', { days: preset })}
+          </button>
+        ))}
+        <input
+          type="number"
+          className="checkin-custom-days"
+          aria-label={t('checkin.customDaysAria')}
+          min={1}
+          max={MAX_CHECKIN_DAYS}
+          value={daysInput}
+          disabled={slotsFull}
+          onChange={e => {
+            const raw = e.target.value;
+            setDaysInput(raw);
+            if (raw.trim() !== '') {
+              const parsed = Math.round(Number(raw));
+              if (Number.isFinite(parsed) && parsed >= 1 && parsed <= MAX_CHECKIN_DAYS) {
+                setDaysTarget(parsed);
+              }
+            }
+          }}
+          onBlur={handleCustomDaysBlur}
+        />
+      </div>
+
+      <div className="checkin-creator-footer">
+        <div className="checkin-reminder-inline">
+          <label className="checkin-check-label">
+            <input
+              type="checkbox"
+              checked={reminderEnabled}
+              disabled={slotsFull}
+              onChange={e => setReminderEnabled(e.target.checked)}
+            />
+            <span>{t('checkin.newReminderCheck')}</span>
+          </label>
+          <input
+            type="time"
+            className="checkin-time-input"
+            aria-label={t('checkin.newReminderTimeAria')}
+            value={reminderTime}
+            disabled={slotsFull || !reminderEnabled}
+            onChange={e => setReminderTime(e.target.value)}
+          />
+        </div>
+        <button
+          type="submit"
+          className="checkin-create-btn"
+          disabled={busy || slotsFull || !title.trim()}
+        >
+          {slotsFull ? t('checkin.createBtnFull') : t('checkin.createBtn')}
+        </button>
+      </div>
+    </form>
+  );
+
+  const listEl = (
+    <div className="checkin-list">
+      {active.length === 0 && completed.length === 0 && (
+        <p className="checkin-empty">
+          {t('checkin.emptyLine1')}
+          <br />
+          {t('checkin.emptyLine2')}
+        </p>
+      )}
+      {active.map(renderCard)}
+      {completed.length > 0 && (
+        <>
+          <p className="checkin-section-label">{t('checkin.completedSectionLabel')}</p>
+          {completed.map(renderCard)}
+        </>
+      )}
+    </div>
+  );
 
   return (
     <section className="checkin-panel" aria-label={t('checkin.panelAria')}>
@@ -470,115 +700,24 @@ export function CheckinBoard({ onCompanionToast }: Props) {
       )}
       {!error && notice && (
         <p className="checkin-alert checkin-alert--notice" role="status">
-          <span>{notice}</span>
-          <button type="button" className="text-btn" onClick={() => setNotice('')}>{t('checkin.dismissNoticeBtn')}</button>
+          <span>{notice.text}</span>
+          <button type="button" className="text-btn" onClick={() => setNotice(null)}>{t('checkin.dismissNoticeBtn')}</button>
         </p>
       )}
 
-      {!isEmptyBoard && (
-        <div className="checkin-creator-bar">
-          <button
-            type="button"
-            className={`checkin-toggle-btn${showCreator ? ' is-open' : ''}`}
-            aria-expanded={showCreator}
-            onClick={() => {
-              const next = !showCreator;
-              sessionCreatorPreference = next;
-              setCreatorOpen(next);
-            }}
-          >
-            {showCreator ? t('checkin.collapseTrackToggle') : t('checkin.newTrackToggle')}
-          </button>
-        </div>
+      {active.length > 0 ? (
+        <>
+          {listEl}
+          {creatorBarEl}
+          {creatorFormEl}
+        </>
+      ) : (
+        <>
+          {creatorBarEl}
+          {creatorFormEl}
+          {listEl}
+        </>
       )}
-
-      {showCreator && (
-      <form className="checkin-creator" onSubmit={handleCreate}>
-        <div className="checkin-creator-row">
-          <input
-            type="text"
-            className="checkin-title-input"
-            aria-label={t('checkin.newNameAria')}
-            placeholder={slotsFull ? t('checkin.newNamePlaceholderFull') : t('checkin.newNamePlaceholder')}
-            maxLength={40}
-            value={title}
-            disabled={slotsFull}
-            onChange={e => setTitle(e.target.value)}
-          />
-        </div>
-
-        <div className="checkin-days-bar">
-          <span className="checkin-days-label">{t('checkin.targetDaysLabel')}</span>
-          {PRESET_DAYS.map(preset => (
-            <button
-              key={preset}
-              type="button"
-              className={`checkin-preset-btn${daysTarget === preset ? ' is-selected' : ''}`}
-              disabled={slotsFull}
-              onClick={() => setDaysTarget(preset)}
-            >
-              {t('checkin.presetDaysLabel', { days: preset })}
-            </button>
-          ))}
-          <input
-            type="number"
-            className="checkin-custom-days"
-            aria-label={t('checkin.customDaysAria')}
-            min={1}
-            max={MAX_CHECKIN_DAYS}
-            value={daysTarget}
-            disabled={slotsFull}
-            onChange={e => setDaysTarget(Math.max(1, Math.min(MAX_CHECKIN_DAYS, Number(e.target.value) || 1)))}
-          />
-        </div>
-
-        <div className="checkin-creator-footer">
-          <div className="checkin-reminder-inline">
-            <label className="checkin-check-label">
-              <input
-                type="checkbox"
-                checked={reminderEnabled}
-                disabled={slotsFull}
-                onChange={e => setReminderEnabled(e.target.checked)}
-              />
-              <span>{t('checkin.newReminderCheck')}</span>
-            </label>
-            <input
-              type="time"
-              className="checkin-time-input"
-              aria-label={t('checkin.newReminderTimeAria')}
-              value={reminderTime}
-              disabled={slotsFull || !reminderEnabled}
-              onChange={e => setReminderTime(e.target.value)}
-            />
-          </div>
-          <button
-            type="submit"
-            className="checkin-create-btn"
-            disabled={busy || slotsFull || !title.trim()}
-          >
-            {slotsFull ? t('checkin.createBtnFull') : t('checkin.createBtn')}
-          </button>
-        </div>
-      </form>
-      )}
-
-      <div className="checkin-list">
-        {active.length === 0 && completed.length === 0 && (
-          <p className="checkin-empty">
-            {t('checkin.emptyLine1')}
-            <br />
-            {t('checkin.emptyLine2')}
-          </p>
-        )}
-        {active.map(renderCard)}
-        {completed.length > 0 && (
-          <>
-            <p className="checkin-section-label">{t('checkin.completedSectionLabel')}</p>
-            {completed.map(renderCard)}
-          </>
-        )}
-      </div>
 
       {archived.length > 0 && (
         <details className="checkin-archived">
@@ -590,20 +729,23 @@ export function CheckinBoard({ onCompanionToast }: Props) {
                   <strong>{card.title}</strong>
                   <span>{t('checkin.archivedProgress', { done: getCheckedDates(card).length, target: card.metricTarget })}</span>
                 </div>
-                <div className="checkin-card-actions">
-                  <button type="button" className="text-btn" disabled={busy} onClick={() => handleArchiveToggle(card)}>
-                    {t('checkin.restoreBtn')}
-                  </button>
-                  <button
-                    type="button"
-                    className={`text-btn${confirmDeleteId === card.id ? ' checkin-danger-btn' : ''}`}
-                    disabled={busy}
-                    onBlur={() => { if (confirmDeleteId === card.id) setConfirmDeleteId(null); }}
-                    onClick={() => handleDelete(card)}
-                  >
-                    {confirmDeleteId === card.id ? t('checkin.confirmDeleteBtn') : t('checkin.deleteBtn')}
-                  </button>
-                </div>
+                {confirmDeleteId === card.id ? (
+                  renderDeleteConfirmBar(card)
+                ) : (
+                  <div className="checkin-card-actions">
+                    <button type="button" className="text-btn" disabled={busy} onClick={() => handleArchiveToggle(card)}>
+                      {t('checkin.restoreBtn')}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-btn checkin-danger-trigger"
+                      disabled={busy}
+                      onClick={() => handleDelete(card)}
+                    >
+                      {t('checkin.deleteBtn')}
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

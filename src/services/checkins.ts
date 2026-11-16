@@ -7,6 +7,39 @@ export const MAX_CHECKIN_DAYS = 365;
 export const DEFAULT_CHECKIN_REMINDER_TIME = '21:30';
 export const CHECKIN_REMINDER_PREFIX = 'checkin-rem-';
 
+export type CheckinErrorCode =
+  | 'NOT_FOUND'
+  | 'MAX_ACTIVE_LIMIT'
+  | 'MAX_ACTIVE_RESTORE'
+  | 'CANNOT_UNDO_AT_CAP'
+  | 'EMPTY_TITLE'
+  | 'INVALID_DAYS'
+  | 'ALREADY_DONE_TODAY'
+  | 'INVALID_TIME'
+  | 'ARCHIVED'
+  | 'TARGET_REACHED';
+
+export class CheckinError extends Error {
+  readonly errorCode: CheckinErrorCode;
+
+  constructor(errorCode: CheckinErrorCode, message: string) {
+    super(message);
+    this.name = 'CheckinError';
+    this.errorCode = errorCode;
+    Object.setPrototypeOf(this, CheckinError.prototype);
+  }
+}
+
+export function isCheckinError(error: unknown): error is CheckinError {
+  return error instanceof CheckinError || (
+    error instanceof Error && typeof (error as { errorCode?: unknown }).errorCode === 'string'
+  );
+}
+
+export function getCheckinErrorCode(error: unknown): CheckinErrorCode | undefined {
+  return isCheckinError(error) ? error.errorCode : undefined;
+}
+
 export type CheckinReminderTodoPort = {
   list(space: WorkspaceMode, includeInactive?: boolean): Promise<TodoRecord[]>;
   create(input: Pick<TodoRecord, 'space' | 'title'> & Partial<TodoRecord>): Promise<TodoRecord>;
@@ -95,18 +128,18 @@ export function createCheckinCard(
   now: number = Date.now(),
 ): { cards: CustomLivingCard[]; card: CustomLivingCard } {
   const title = (input.title || '').trim().slice(0, 40);
-  if (!title) throw new Error('请填写打卡名称。');
+  if (!title) throw new CheckinError('EMPTY_TITLE', '请填写打卡名称。');
   const days = Math.round(Number(input.daysTarget ?? 7));
   if (!Number.isFinite(days) || days < 1 || days > MAX_CHECKIN_DAYS) {
-    throw new Error(`打卡天数需在 1 到 ${MAX_CHECKIN_DAYS} 天之间。`);
+    throw new CheckinError('INVALID_DAYS', `打卡天数需在 1 到 ${MAX_CHECKIN_DAYS} 天之间。`);
   }
   if (activeCheckinCount(allCards) >= MAX_ACTIVE_CHECKINS) {
-    throw new Error(`最多同时进行 ${MAX_ACTIVE_CHECKINS} 条打卡线，可先完成或归档其中一条。`);
+    throw new CheckinError('MAX_ACTIVE_LIMIT', `最多同时进行 ${MAX_ACTIVE_CHECKINS} 条打卡线，可先完成或归档其中一条。`);
   }
   const rawReminder = input.dailyReminderTime?.trim();
   const dailyReminderTime = rawReminder ? normalizeReminderTime(rawReminder) : undefined;
   if (rawReminder && !dailyReminderTime) {
-    throw new Error('每日提醒时间格式无效，请使用 HH:mm（例如 21:30）。');
+    throw new CheckinError('INVALID_TIME', '每日提醒时间格式无效，请使用 HH:mm（例如 21:30）。');
   }
   const card: CustomLivingCard = {
     id: newId('custom'),
@@ -133,7 +166,7 @@ function replaceCheckinCard(
   updater: (card: CustomLivingCard) => CustomLivingCard,
 ): CustomLivingCard[] {
   const index = allCards.findIndex(c => c.id === cardId && isCheckinCard(c));
-  if (index === -1) throw new Error('未找到对应的打卡项目。');
+  if (index === -1) throw new CheckinError('NOT_FOUND', '未找到对应的打卡项目。');
   const next = [...allCards];
   next[index] = updater(allCards[index]);
   return next;
@@ -141,7 +174,7 @@ function replaceCheckinCard(
 
 export function renameCheckinCard(allCards: CustomLivingCard[], cardId: string, nextTitle: string): CustomLivingCard[] {
   const title = nextTitle.trim().slice(0, 40);
-  if (!title) throw new Error('打卡名称不能为空。');
+  if (!title) throw new CheckinError('EMPTY_TITLE', '打卡名称不能为空。');
   return replaceCheckinCard(allCards, cardId, card => ({ ...card, title }));
 }
 
@@ -153,7 +186,7 @@ export function updateCheckinReminder(
   const raw = dailyReminderTime?.trim();
   const normalized = raw ? normalizeReminderTime(raw) : undefined;
   if (raw && !normalized) {
-    throw new Error('每日提醒时间格式无效，请使用 HH:mm（例如 21:30）。');
+    throw new CheckinError('INVALID_TIME', '每日提醒时间格式无效，请使用 HH:mm（例如 21:30）。');
   }
   return replaceCheckinCard(allCards, cardId, card => {
     const next: CustomLivingCard = { ...card };
@@ -169,21 +202,21 @@ export function toggleTodayCheckin(
   now: number = Date.now(),
 ): { cards: CustomLivingCard[]; card: CustomLivingCard; action: 'checked' | 'unchecked' } {
   const current = allCards.find(c => c.id === cardId && isCheckinCard(c));
-  if (!current) throw new Error('未找到对应的打卡项目。');
-  if (current.archived) throw new Error('该打卡已归档，请先恢复后再操作。');
+  if (!current) throw new CheckinError('NOT_FOUND', '未找到对应的打卡项目。');
+  if (current.archived) throw new CheckinError('ARCHIVED', '该打卡已归档，请先恢复后再操作。');
   const today = shanghaiDateKey(now);
   const dates = getCheckedDates(current);
   let nextDates: string[];
   let action: 'checked' | 'unchecked';
   if (dates.includes(today)) {
     if (dates.length >= current.metricTarget && activeCheckinCount(allCards) >= MAX_ACTIVE_CHECKINS) {
-      throw new Error(`当前已有 ${MAX_ACTIVE_CHECKINS} 条进行中的打卡线，无法撤销已完成打卡的今日记录。`);
+      throw new CheckinError('CANNOT_UNDO_AT_CAP', `当前已有 ${MAX_ACTIVE_CHECKINS} 条进行中的打卡线，无法撤销已完成打卡的今日记录。`);
     }
     nextDates = dates.filter(d => d !== today);
     action = 'unchecked';
   } else {
     if (dates.length >= current.metricTarget) {
-      throw new Error('这条打卡已经全部完成了，可先归档或新建一轮。');
+      throw new CheckinError('TARGET_REACHED', '这条打卡已经全部完成了，可先归档或新建一轮。');
     }
     nextDates = [...dates, today].sort();
     action = 'checked';
@@ -202,10 +235,10 @@ export function toggleTodayCheckin(
 
 export function toggleArchiveCheckinCard(allCards: CustomLivingCard[], cardId: string): CustomLivingCard[] {
   const current = allCards.find(c => c.id === cardId && isCheckinCard(c));
-  if (!current) throw new Error('未找到对应的打卡项目。');
+  if (!current) throw new CheckinError('NOT_FOUND', '未找到对应的打卡项目。');
   const nextArchived = !current.archived;
   if (!nextArchived && !isCheckinCompleted(current) && activeCheckinCount(allCards) >= MAX_ACTIVE_CHECKINS) {
-    throw new Error(`最多同时进行 ${MAX_ACTIVE_CHECKINS} 条打卡线，请先归档或完成其他进行中的打卡。`);
+    throw new CheckinError('MAX_ACTIVE_RESTORE', `最多同时进行 ${MAX_ACTIVE_CHECKINS} 条打卡线，请先归档或完成其他进行中的打卡。`);
   }
   return replaceCheckinCard(allCards, cardId, card => ({ ...card, archived: nextArchived }));
 }
@@ -267,6 +300,7 @@ export interface SpokenCheckinResult {
   kind?: 'created' | 'checked' | 'already-checked' | 'limit-reached';
   card?: CustomLivingCard;
   message?: string;
+  errorCode?: CheckinErrorCode;
 }
 
 export function tryApplySpokenCheckin(
@@ -304,6 +338,7 @@ export function tryApplySpokenCheckin(
           handled: true,
           kind: 'limit-reached',
           message: error instanceof Error ? error.message : '当前无法开启新打卡。',
+          ...(getCheckinErrorCode(error) ? { errorCode: getCheckinErrorCode(error) } : {}),
         };
       }
     }
@@ -318,7 +353,7 @@ export function tryApplySpokenCheckin(
     ).test(clean);
     if (!hit || /[+＋]\s*\d|完成了?\s*\d/.test(clean)) continue;
     if (hasCheckedToday(card, now)) {
-      return { handled: true, kind: 'already-checked', card, message: `「${card.title}」今天已经打过卡了（每日限 1 格）` };
+      return { handled: true, kind: 'already-checked', card, errorCode: 'ALREADY_DONE_TODAY', message: `「${card.title}」今天已经打过卡了（每日限 1 格）` };
     }
     if (isCheckinCompleted(card)) return { handled: false };
     const result = toggleTodayCheckin(allCards, card.id, now);

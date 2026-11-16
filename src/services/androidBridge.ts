@@ -14,6 +14,8 @@ export interface LoomaAndroidNative {
   todoRequest?(payloadJson: string): string;
   setSystemBarStyle?(isLightBackground: boolean): void;
   exportBackupDocument?(requestId: string, suggestedName: string, content: string): boolean;
+  saveDocument?(requestId: string, suggestedName: string, mimeType: string, content: string, isBase64: boolean): boolean;
+  shareImage?(base64Png: string, fileName: string, title: string): boolean;
   getAppVersionInfo?(): string;
   checkForUpdates?(requestId: string): boolean;
   openExternalUrl?(url: string): boolean;
@@ -45,6 +47,24 @@ export function createAndroidElectronAdapter(native: LoomaAndroidNative) {
   let backupSeq = 0;
   let updateSeq = 0;
   let pendingFocus: {space: 'life'|'work'; id: string} | undefined;
+
+  const queueDocumentSave = (
+    invoke: (requestId: string) => boolean,
+    unavailableMessage = '无法调起系统文件保存器。',
+  ): Promise<{ canceled: boolean }> => new Promise((resolve, reject) => {
+    const requestId = `exp-${Date.now()}-${++backupSeq}`;
+    backupExports.set(requestId, { resolve, reject });
+    try {
+      const started = invoke(requestId);
+      if (!started) {
+        backupExports.delete(requestId);
+        reject(new Error(unavailableMessage));
+      }
+    } catch (error) {
+      backupExports.delete(requestId);
+      reject(error instanceof Error ? error : new Error('文件保存调起失败。'));
+    }
+  });
 
   return {
     todoRequest: async (command: any) => {
@@ -127,20 +147,33 @@ export function createAndroidElectronAdapter(native: LoomaAndroidNative) {
       return () => { quickCaptureListeners.delete(handler); };
     },
     ...(typeof native.exportBackupDocument === 'function' ? {
-      saveBackupFile: (suggestedName: string, content: string): Promise<{ canceled: boolean }> => new Promise((resolve, reject) => {
-        const requestId = `exp-${Date.now()}-${++backupSeq}`;
-        backupExports.set(requestId, { resolve, reject });
+      saveBackupFile: (suggestedName: string, content: string): Promise<{ canceled: boolean }> =>
+        queueDocumentSave(
+          requestId => native.exportBackupDocument!(requestId, suggestedName, content),
+          '无法调起系统备份文件保存器。',
+        ),
+    } : {}),
+    ...(typeof native.saveDocument === 'function' ? {
+      saveBinaryFile: (suggestedName: string, mimeType: string, dataOrBase64: string, isBase64 = true): Promise<{ canceled: boolean }> =>
+        queueDocumentSave(
+          requestId => native.saveDocument!(requestId, suggestedName, mimeType, dataOrBase64, isBase64 !== false),
+        ),
+      saveTextFile: (suggestedName: string, content: string): Promise<{ canceled: boolean }> => {
+        const lower = (suggestedName || '').toLowerCase();
+        const mimeType = lower.endsWith('.json') || lower.endsWith('.jsonl') ? 'application/json' : 'text/plain';
+        return queueDocumentSave(
+          requestId => native.saveDocument!(requestId, suggestedName, mimeType, content, false),
+        );
+      },
+    } : {}),
+    ...(typeof native.shareImage === 'function' ? {
+      shareImage: async (base64Png: string, fileName: string, title?: string): Promise<{ shared: boolean }> => {
         try {
-          const started = native.exportBackupDocument!(requestId, suggestedName, content);
-          if (!started) {
-            backupExports.delete(requestId);
-            reject(new Error('无法调起系统备份文件保存器。'));
-          }
-        } catch (error) {
-          backupExports.delete(requestId);
-          reject(error instanceof Error ? error : new Error('备份保存调起失败。'));
+          return { shared: !!native.shareImage!(base64Png, fileName, title || '') };
+        } catch {
+          return { shared: false };
         }
-      }),
+      },
     } : {}),
     resolveBackupExport: (payload: { requestId?: string; ok?: boolean; canceled?: boolean; error?: string }) => {
       const requestId = typeof payload?.requestId === 'string' ? payload.requestId : '';

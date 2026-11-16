@@ -1,5 +1,15 @@
 import type { AppLanguage, AppSettings, Message, MemoryItem, WorkspaceMode, StateMutationReceipt, Engagement, ProjectTaskItem, ProposedChangeSet, WorkPartition, AlignmentDraft, FollowUpItem } from '../types';
-import { StateEngine, budgetIsUncertain, dateIsUncertain } from './stateEngine';
+import {
+  StateEngine,
+  hasClockExpression,
+  hasConfirmedWonClause,
+  hasExplicitBudgetUnit,
+  hasHypotheticalFraming,
+  hasNonHypotheticalContent,
+  hasWonStageBlocker,
+  isItemDateUncertain,
+  isScopedBudgetUncertain,
+} from './stateEngine';
 import { resolveDeadline, shanghaiDateKey } from './dates';
 import { formatBudgetAmount, formatShanghaiTime } from '../i18n/domain';
 
@@ -133,11 +143,20 @@ export function getDueTasks(tasks: ProjectTaskItem[], now = Date.now()): Project
 }
 
 const stages = ['初步接触', '需求确认', '方案报价', '商务谈判', '赢单成交'];
+const PRIVATE_OR_FORBIDDEN_FIELDS = new Set([
+  'internalContext', 'internalBottomLine', 'painPoints', 'apiKey', 'secret', 'password', 'token', 'reviewAt', 'lifeVault', 'tool_calls',
+]);
 function object(value: unknown): asserts value is Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('模型结构无效，请使用本地预览或重试。');
 }
-function fields(value: Record<string, any>, allowed: string[]) {
-  if (Object.keys(value).some(key => !allowed.includes(key))) throw new Error('模型包含不支持的字段，已拒绝该结果。');
+function sanitizeFields(value: Record<string, any>, allowed: string[], warnings: string[]): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const key of Object.keys(value)) {
+    if (PRIVATE_OR_FORBIDDEN_FIELDS.has(key)) throw new Error('模型包含不支持的字段，已拒绝该结果。');
+    if (allowed.includes(key)) sanitized[key] = value[key];
+    else warnings.push('模型返回了额外参考字段，已忽略未采纳。');
+  }
+  return sanitized;
 }
 function textField(value: unknown, name: string, required = false): string | undefined {
   if (value === undefined && !required) return undefined;
@@ -148,23 +167,30 @@ const titleKey = (value: string) => value.replace(/发送/g, '发').replace(/补
 const validDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
   Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 const validTimestamp = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value) && validDate(value.slice(0, 10)) && Number.isFinite(Date.parse(value));
-const hasClock = (value: string) => /\d{1,2}(?:[:：]\d{2}|点(?:\d{1,2}分?)?)/.test(value);
 
 export function parseModelProposal(content: string, base: ProposedChangeSet, partition: WorkPartition, selectedEngagementId?: string): ProposedChangeSet {
   if (base.mode !== 'work' || content.length > 50000) throw new Error('模型结果范围无效。');
   const clean = content.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-  let data: Record<string, any>;
-  try { data = JSON.parse(clean); } catch { throw new Error('模型没有返回有效 JSON，业务数据未修改。'); }
-  object(data); fields(data, ['engagements', 'tasks', 'followups', 'warnings']);
+  let rawData: Record<string, any>;
+  try { rawData = JSON.parse(clean); } catch { throw new Error('模型没有返回有效 JSON，业务数据未修改。'); }
+  object(rawData);
+  const salvageWarnings: string[] = [];
+  const deferredRejections: string[] = [];
+  const data = sanitizeFields(rawData, ['engagements', 'tasks', 'followups', 'warnings'], salvageWarnings);
   if (!Array.isArray(data.engagements) || !Array.isArray(data.tasks) || data.engagements.length > 20 || data.tasks.length > 40 ||
       (data.followups !== undefined && (!Array.isArray(data.followups) || data.followups.length > 40)) ||
       !Array.isArray(data.warnings) || data.warnings.some(w => typeof w !== 'string' || w.length > 1000)) throw new Error('模型候选列表无效。');
   if (base.clarification && (data.engagements.length || data.tasks.length || data.followups?.length)) throw new Error('请先明确沟通归属，模型不能替你猜测客户或项目。');
-  if (/如果|假如|假设|倘若|可能会|或许会|也许会/.test(base.sourceText) && (data.engagements.length || data.tasks.length)) throw new Error('原文含假设，已保留本地候选，请只确认明确事实。');
+  if (!hasNonHypotheticalContent(base.sourceText) && (data.engagements.length || data.tasks.length)) throw new Error('原文含假设，已保留本地候选，请只确认明确事实。');
+  if (hasHypotheticalFraming(base.sourceText) && (data.engagements.length || data.tasks.length)) {
+    salvageWarnings.push('原文含假设片段，已仅核对明确事实并忽略未确认推断。');
+  }
   const operations: ProposedChangeSet['operations'] = [];
   const proposedEngagements: Engagement[] = [];
-  for (const [i, item] of data.engagements.entries()) {
-    object(item); fields(item, ['id', 'clientName', 'title', 'budgetAmount', 'stage', 'shareableSummary', 'nextAction']);
+  let cleanModelItemCount = 0;
+  for (const [i, rawItem] of data.engagements.entries()) {
+    object(rawItem);
+    const item = sanitizeFields(rawItem, ['id', 'clientName', 'title', 'budgetAmount', 'stage', 'shareableSummary', 'nextAction'], salvageWarnings);
     const clientName = textField(item.clientName, '客户名称', true)!;
     const title = textField(item.title, '项目名称', true)!;
     const local = base.operations.find(operation => operation.target === 'engagement' && operation.after?.clientName === clientName);
@@ -178,24 +204,42 @@ export function parseModelProposal(content: string, base: ProposedChangeSet, par
     if (item.id && ((!before && localProject?.id !== item.id) || (before && before.clientName !== clientName))) throw new Error('模型引用了未知或不匹配的客户项目。');
     if (selectedEngagementId && (before?.id || localProject?.id) !== selectedEngagementId) throw new Error('模型试图更新选定目标之外的项目。');
     if (item.budgetAmount !== undefined && (typeof item.budgetAmount !== 'number' || !Number.isFinite(item.budgetAmount) || item.budgetAmount < 0 || item.budgetAmount > 1e12)) throw new Error('模型预算金额无效。');
-    if (item.budgetAmount !== undefined && budgetIsUncertain(base.sourceText)) throw new Error('原文预算尚未确认，已拒绝模型的确定金额。');
-    if (item.budgetAmount !== undefined && item.budgetAmount !== before?.budgetAmount) {
-      const hasUnit = /(?:\d+(?:\.\d+)?|[一二三四五六七八九十百千万两零]+)\s*(?:万元?|元|块钱?|[wk])|[¥￥]\s*\d+/i.test(base.sourceText);
-      if (!hasUnit || base.warnings.some(w => /金额缺少单位/.test(w))) throw new Error('原文金额缺少明确单位，模型不能补全为人民币金额。');
-      const local = base.operations.find(op => op.target === 'engagement' && op.after && op.after.clientName === clientName);
-      if (local?.target === 'engagement' && local.after?.budgetAmount !== undefined && local.after.budgetAmount !== before?.budgetAmount && local.after.budgetAmount !== item.budgetAmount) throw new Error('模型金额与本地明确金额不一致，请使用本地预览核对。');
+    let budgetRejected = false;
+    if (item.budgetAmount !== undefined && isScopedBudgetUncertain(base.sourceText, item.budgetAmount)) {
+      budgetRejected = true;
+      deferredRejections.push('原文预算尚未确认，已拒绝模型的确定金额。');
+      salvageWarnings.push('原文预算尚未确认，已忽略模型的确定金额，请核对。');
     }
-    if (item.stage !== undefined && !stages.includes(item.stage)) throw new Error('模型项目阶段无效。');
-    if (item.stage === '赢单成交' && /还没|尚未|未能|没有|不是|并非|没成交|未成交|未签|没签|未打款|可能|或许|也许|有望|预计|打算|计划|准备|下周|明天|后天/.test(base.sourceText)) throw new Error('原文尚未确认成交，已拒绝模型的成交推断。');
+    if (!budgetRejected && item.budgetAmount !== undefined && item.budgetAmount !== before?.budgetAmount) {
+      if (!hasExplicitBudgetUnit(base.sourceText) || base.warnings.some(w => /金额缺少单位/.test(w))) throw new Error('原文金额缺少明确单位，模型不能补全为人民币金额。');
+      const localMatch = base.operations.find(op => op.target === 'engagement' && op.after && op.after.clientName === clientName);
+      if (localMatch?.target === 'engagement' && localMatch.after?.budgetAmount !== undefined && localMatch.after.budgetAmount !== before?.budgetAmount && localMatch.after.budgetAmount !== item.budgetAmount) throw new Error('模型金额与本地明确金额不一致，请使用本地预览核对。');
+    }
+    let stageRejected = false;
+    if (item.stage !== undefined && !stages.includes(item.stage)) {
+      stageRejected = true;
+      deferredRejections.push('模型项目阶段无效。');
+      salvageWarnings.push('模型返回了未识别的项目阶段，已保留原阶段。');
+    } else if (item.stage === '赢单成交' && !hasConfirmedWonClause(base.sourceText) && hasWonStageBlocker(base.sourceText)) {
+      stageRejected = true;
+      deferredRejections.push('原文尚未确认成交，已拒绝模型的成交推断。');
+      salvageWarnings.push('原文尚未确认成交，已拦截成交阶段推进，请核对。');
+    }
     const after: Engagement = { ...(before || localProject || { id: `${base.sourceMessageId}-model-e${i}`, clientName, title, stage: '初步接触', internalContext: '', shareableSummary: '', nextAction: '', updatedAt: base.createdAt }), clientName, title, updatedAt: base.createdAt };
-    if (item.budgetAmount !== undefined) after.budgetAmount = item.budgetAmount;
-    if (item.stage !== undefined) after.stage = item.stage;
-    for (const key of ['shareableSummary', 'nextAction'] as const) { const value = textField(item[key], key); if (value !== undefined) after[key] = value; }
+    let appliedFieldCount = !before ? 1 : 0;
+    if (!budgetRejected && item.budgetAmount !== undefined) { after.budgetAmount = item.budgetAmount; appliedFieldCount++; }
+    if (!stageRejected && item.stage !== undefined) { after.stage = item.stage; appliedFieldCount++; }
+    for (const key of ['shareableSummary', 'nextAction'] as const) { const value = textField(item[key], key); if (value !== undefined) { after[key] = value; appliedFieldCount++; } }
     if (operations.some(op => op.entityId === after.id)) throw new Error('模型重复修改同一项目，请重新核对。');
-    operations.push({ target: 'engagement', entityId: after.id, before: before || null, after }); proposedEngagements.push(after);
+    if (appliedFieldCount > 0) {
+      operations.push({ target: 'engagement', entityId: after.id, before: before || null, after });
+      proposedEngagements.push(after);
+      if (!budgetRejected && !stageRejected) cleanModelItemCount++;
+    }
   }
-  for (const [i, item] of data.tasks.entries()) {
-    object(item); fields(item, ['id', 'engagementId', 'title', 'dueAt', 'sourceDeadlineText']);
+  for (const [i, rawItem] of data.tasks.entries()) {
+    object(rawItem);
+    const item = sanitizeFields(rawItem, ['id', 'engagementId', 'title', 'dueAt', 'sourceDeadlineText'], salvageWarnings);
     const title = textField(item.title, '行动标题', true)!;
     if (base.operations.some(operation => operation.target === 'followup' && operation.after?.kind === 'waiting' && titleKey(operation.after.title) === titleKey(title))) throw new Error('模型把明确由客户处理的事项改成了我方行动，请使用本地候选核对责任。');
     const before = item.id ? partition.tasks.find(t => t.id === item.id) : undefined;
@@ -203,18 +247,26 @@ export function parseModelProposal(content: string, base: ProposedChangeSet, par
     let engagementId = item.engagementId ?? before?.engagementId;
     if (!engagementId && proposedEngagements.length === 1) engagementId = proposedEngagements[0].id;
     if (!engagementId) engagementId = selectedEngagementId;
-    if (engagementId && ![...partition.engagements, ...proposedEngagements].some(e => e.id === engagementId)) throw new Error('模型待办缺少有效项目关联。');
+    const validEngagements = [...partition.engagements, ...proposedEngagements, ...base.operations.filter(op => op.target === 'engagement' && op.after).map(op => op.after as Engagement)];
+    if (engagementId && !validEngagements.some(e => e.id === engagementId)) throw new Error('模型待办缺少有效项目关联。');
     if (selectedEngagementId && engagementId !== selectedEngagementId) throw new Error('模型试图修改选中项目之外的行动。');
     if (before && before.engagementId !== engagementId) throw new Error('模型试图改变已有行动的项目归属。');
     if (item.dueAt !== undefined && !validTimestamp(item.dueAt)) throw new Error('模型待办日期无效，必须明确时区。');
-    if (item.dueAt !== undefined && dateIsUncertain(base.sourceText)) throw new Error('原文时间尚未确认，模型不能生成确定的提醒时间。');
     const deadlineText = textField(item.sourceDeadlineText, '原始日期');
-    const after: ProjectTaskItem = { ...(before || { id: `${base.sourceMessageId}-model-t${i}`, title, assignee: '我', deadline: '', priority: 'medium', done: false }), title, ...(engagementId ? { engagementId } : {}), ...(item.dueAt ? { dueAt: new Date(item.dueAt).toISOString() } : {}), ...(deadlineText !== undefined ? { sourceDeadlineText: deadlineText, deadline: deadlineText } : {}) };
+    let dueAtRejected = false;
+    if (item.dueAt !== undefined && isItemDateUncertain(base.sourceText, title, deadlineText)) {
+      dueAtRejected = true;
+      deferredRejections.push('原文时间尚未确认，模型不能生成确定的提醒时间。');
+      salvageWarnings.push('部分行动日期尚未确认，已移除不确定提醒时间。');
+    }
+    const after: ProjectTaskItem = { ...(before || { id: `${base.sourceMessageId}-model-t${i}`, title, assignee: '我', deadline: '', priority: 'medium', done: false }), title, ...(engagementId ? { engagementId } : {}), ...(!dueAtRejected && item.dueAt ? { dueAt: new Date(item.dueAt).toISOString() } : {}), ...(deadlineText !== undefined ? { sourceDeadlineText: deadlineText, deadline: deadlineText } : {}) };
     if (operations.some(op => op.entityId === after.id)) throw new Error('模型重复修改同一待办。');
     operations.push({ target: 'task', entityId: after.id, before: before || null, after });
+    if (!dueAtRejected) cleanModelItemCount++;
   }
-  for (const [index, item] of (data.followups || []).entries()) {
-    object(item); fields(item, ['id', 'engagementId', 'kind', 'title', 'expectedDate', 'expectedAt', 'sourceDateText']);
+  for (const [index, rawItem] of (data.followups || []).entries()) {
+    object(rawItem);
+    const item = sanitizeFields(rawItem, ['id', 'engagementId', 'kind', 'title', 'expectedDate', 'expectedAt', 'sourceDateText'], salvageWarnings);
     if (!['waiting', 'question'].includes(item.kind)) throw new Error('模型跟进事项类型无效。');
     const title = textField(item.title, '跟进内容', true)!;
     const local = base.operations.find(operation => operation.target === 'followup' && operation.after?.kind === item.kind && titleKey(operation.after.title) === titleKey(title));
@@ -231,8 +283,7 @@ export function parseModelProposal(content: string, base: ProposedChangeSet, par
     if (item.expectedAt !== undefined && !validTimestamp(item.expectedAt)) throw new Error('模型预计时间无效。');
     if (item.expectedDate !== undefined && item.expectedAt !== undefined) throw new Error('预计日期与具体时刻不能同时填写。');
     if (item.kind === 'question' && (item.expectedDate !== undefined || item.expectedAt !== undefined)) throw new Error('待确认问题不能由模型补出确定日期。');
-    if ((item.expectedDate !== undefined || item.expectedAt !== undefined) && dateIsUncertain(base.sourceText)) throw new Error('原文时间尚未确认，模型不能补出确定的客户日期。');
-    if (item.expectedAt !== undefined && (localFollowup?.expectedDate || !sourceDateText || !base.sourceText.includes(sourceDateText) || !hasClock(sourceDateText))) throw new Error('客户只给日期时，不能补具体时刻作为对方承诺。');
+    if (item.expectedAt !== undefined && (localFollowup?.expectedDate || !sourceDateText || !base.sourceText.includes(sourceDateText) || !hasClockExpression(sourceDateText))) throw new Error('客户只给日期时，不能补具体时刻作为对方承诺。');
     if (item.expectedDate !== undefined) {
       if (localFollowup?.expectedAt) throw new Error('原文明确了具体时刻，请保留本地时间核对。');
       if (localFollowup?.expectedDate && item.expectedDate !== localFollowup.expectedDate) throw new Error('模型日期与原文日期不一致。');
@@ -246,13 +297,24 @@ export function parseModelProposal(content: string, base: ProposedChangeSet, par
       const resolved = resolveDeadline(sourceDateText!, base.createdAt);
       if (!resolved.dueAt || resolved.dueAt !== new Date(item.expectedAt).toISOString()) throw new Error('模型时间与原文时间不一致。');
     }
+    let followUpDateRejected = false;
+    if ((item.expectedDate !== undefined || item.expectedAt !== undefined) && isItemDateUncertain(base.sourceText, title, sourceDateText)) {
+      followUpDateRejected = true;
+      deferredRejections.push('原文时间尚未确认，模型不能补出确定的客户日期。');
+      salvageWarnings.push('部分等待事项日期尚未确认，已忽略不确定客户日期。');
+    }
     const after: FollowUpItem = { ...(before || localFollowup || { id: `${base.sourceMessageId}-model-f${index}`, status: 'open', sourceMessageId: base.sourceMessageId, createdAt: base.createdAt }),
       kind: item.kind, title, ...(engagementId ? { engagementId } : {}), updatedAt: base.createdAt };
-    if (item.expectedDate !== undefined) { after.expectedDate = item.expectedDate; delete after.expectedAt; }
-    if (item.expectedAt !== undefined) { after.expectedAt = new Date(item.expectedAt).toISOString(); delete after.expectedDate; }
+    if (!followUpDateRejected && item.expectedDate !== undefined) { after.expectedDate = item.expectedDate; delete after.expectedAt; }
+    if (!followUpDateRejected && item.expectedAt !== undefined) { after.expectedAt = new Date(item.expectedAt).toISOString(); delete after.expectedDate; }
     if (sourceDateText !== undefined) after.sourceDateText = sourceDateText;
     if (operations.some(operation => operation.entityId === after.id)) throw new Error('模型重复修改同一跟进事项。');
     operations.push({ target: 'followup', entityId: after.id, before: before || null, after });
+    if (!followUpDateRejected) cleanModelItemCount++;
+  }
+  const totalModelItems = data.engagements.length + data.tasks.length + (data.followups?.length || 0);
+  if (deferredRejections.length > 0 && (operations.length === 0 || (cleanModelItemCount === 0 && totalModelItems <= 1))) {
+    throw new Error(deferredRejections[0]);
   }
   // A provider that has not adopted the optional field cannot erase local responsibility or unresolved facts.
   for (const local of base.operations) {
@@ -262,14 +324,23 @@ export function parseModelProposal(content: string, base: ProposedChangeSet, par
     operations.push(JSON.parse(JSON.stringify(local)));
   }
   operations.sort((a, b) => Number(a.target !== 'engagement') - Number(b.target !== 'engagement'));
-  return { ...base, operations, warnings: [...new Set(['模型结果需要逐项核对，尤其是人物、金额、责任和日期。', ...base.warnings, ...data.warnings])] };
+  return { ...base, operations, warnings: [...new Set(['模型结果需要逐项核对，尤其是人物、金额、责任和日期。', ...base.warnings, ...salvageWarnings, ...data.warnings])] };
 }
 
 export const AiService = {
   async sendMessage(messages: Message[], _settings: AppSettings, _memories: MemoryItem[], mode: WorkspaceMode): Promise<{reply: string; mutations: StateMutationReceipt[]}> {
     if (mode === 'work') return { reply: '请先核对候选变更，确认后才会写入工作记录。', mutations: [] };
     const last = messages[messages.length - 1];
-    const mutations = StateEngine.sniffAndMutate(last?.content || '', 'life', last?.id);
-    return { reply: mutations.length ? `已更新生活记录：\n${mutations.map(m => m.summaryText).join('\n')}` : '这句话已保留在当前生活对话中，尚未识别出可更新的生活卡片。', mutations };
+    const content = last?.content || '';
+    const mutations = StateEngine.sniffAndMutate(content, 'life', last?.id);
+    if (mutations.length) {
+      return { reply: `已更新生活记录：\n${mutations.map(m => m.summaryText).join('\n')}`, mutations };
+    }
+    const hint = /(?:如果|假如|假设|还没|未到账|别记账|不对|算了)/.test(content)
+      ? '这句话包含未发生、假设或撤回表述，仅保留原对话，未记入生活账本或状态。'
+      : /(?:同事|朋友|同学|邻居|室友|人家|别人)/.test(content) && !/(?:请|给|帮|替|陪|AA)/.test(content)
+        ? '这句话似乎是他人的消费或收入，仅保留原对话，未计入你的生活账本。'
+        : '这句话已保留在当前生活对话中，尚未识别出可更新的生活卡片。';
+    return { reply: hint, mutations };
   },
 };

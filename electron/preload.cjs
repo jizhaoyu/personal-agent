@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   exportDataBackup: () => ipcRenderer.invoke('store:export'),
   importDataBackup: () => ipcRenderer.invoke('store:import'),
+  saveBinaryFile: (suggestedName, mimeType, dataOrBase64, isBase64 = true) =>
+    ipcRenderer.invoke('store:saveDocument', { suggestedName, mimeType, data: dataOrBase64, isBase64: isBase64 !== false }),
+  saveTextFile: (suggestedName, content) =>
+    ipcRenderer.invoke('store:saveDocument', { suggestedName, mimeType: 'text/plain', data: content, isBase64: false }),
   modelStatus: () => ipcRenderer.invoke('model:status'),
   saveModelConnection: (connection) => ipcRenderer.invoke('model:save', connection),
   clearModelConnection: () => ipcRenderer.invoke('model:clear'),

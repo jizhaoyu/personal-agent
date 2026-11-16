@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, screen, safeStorage, Notification, dialog, globalShortcut, clipboard, Tray, Menu, nativeImage, powerMonitor, shell, net } = require('electron');
+const { Buffer } = require('node:buffer');
 const path = require('node:path');
 const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
@@ -34,6 +35,148 @@ let todoDesktop;
 let tray;
 let actuallyQuitting = false;
 let pendingTodoFocus = null;
+let windowStateSaveTimer = null;
+
+const ALLOWED_DOCUMENT_EXTENSIONS = new Set(['png', 'txt', 'json', 'jsonl']);
+const MAX_DOCUMENT_BYTES = 16 * 1024 * 1024;
+const DOCUMENT_FILTER_NAMES = {
+  png: 'PNG 图片',
+  txt: '文本文件',
+  json: 'JSON 文件',
+  jsonl: 'JSONL 文件',
+};
+
+function getWorkAreaForBounds(bounds) {
+  try {
+    if (bounds && typeof screen?.getDisplayMatching === 'function') {
+      const display = screen.getDisplayMatching(bounds);
+      if (display?.workArea) return display.workArea;
+    }
+  } catch { /* ignore */ }
+  return screen.getPrimaryDisplay().workArea;
+}
+
+function getSafeWindowBounds(win) {
+  if (!win) return null;
+  try {
+    if (typeof win.getBounds === 'function') return win.getBounds();
+    if (typeof win.getPosition === 'function' && typeof win.getSize === 'function') {
+      const [x, y] = win.getPosition();
+      const [width, height] = win.getSize();
+      return { x, y, width, height };
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+function clampBoundsToArea(bounds, area, { minWidth = 340, minHeight = 480 } = {}) {
+  const effectiveMinW = Math.min(minWidth, area.width);
+  const effectiveMinH = Math.min(minHeight, area.height);
+  const width = Math.round(Math.min(area.width, Math.max(effectiveMinW, Number.isFinite(bounds?.width) ? bounds.width : 480)));
+  const height = Math.round(Math.min(area.height, Math.max(effectiveMinH, Number.isFinite(bounds?.height) ? bounds.height : 820)));
+  const defaultX = area.x + area.width - width - 24;
+  const defaultY = area.y + Math.round((area.height - height) / 2);
+  const rawX = Number.isFinite(bounds?.x) ? bounds.x : defaultX;
+  const rawY = Number.isFinite(bounds?.y) ? bounds.y : defaultY;
+  return {
+    width,
+    height,
+    x: Math.max(area.x, Math.min(area.x + area.width - width, Math.round(rawX))),
+    y: Math.max(area.y, Math.min(area.y + area.height - height, Math.round(rawY))),
+  };
+}
+
+function getWindowStatePath() {
+  try {
+    const dir = app?.getPath?.('userData');
+    return dir ? path.join(dir, 'looma-window-state.json') : '';
+  } catch {
+    return '';
+  }
+}
+
+function loadWindowState() {
+  const primaryArea = screen.getPrimaryDisplay().workArea;
+  const defaultBounds = clampBoundsToArea(
+    { width: Math.min(480, primaryArea.width), height: Math.min(820, primaryArea.height - 24) },
+    primaryArea,
+  );
+  const defaults = { bounds: defaultBounds, alwaysOnTop: true };
+  const filePath = getWindowStatePath();
+  if (!filePath) return defaults;
+  try {
+    if (!fs.existsSync(filePath)) return defaults;
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return defaults;
+    const alwaysOnTop = typeof raw.alwaysOnTop === 'boolean' ? raw.alwaysOnTop : true;
+    const b = raw.bounds;
+    if (!b || typeof b !== 'object' || !Number.isFinite(b.width) || !Number.isFinite(b.height)
+        || !Number.isFinite(b.x) || !Number.isFinite(b.y)) {
+      return { bounds: defaultBounds, alwaysOnTop };
+    }
+    const area = getWorkAreaForBounds(b);
+    return { bounds: clampBoundsToArea(b, area), alwaysOnTop };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveWindowStateNow() {
+  if (windowStateSaveTimer !== null && typeof clearTimeout === 'function') {
+    clearTimeout(windowStateSaveTimer);
+    windowStateSaveTimer = null;
+  }
+  const filePath = getWindowStatePath();
+  if (!filePath || !mainWindow || (typeof mainWindow.isDestroyed === 'function' && mainWindow.isDestroyed())) return;
+  try {
+    const currentBounds = compact ? expandedBounds : getSafeWindowBounds(mainWindow);
+    if (!currentBounds || !Number.isFinite(currentBounds.width) || !Number.isFinite(currentBounds.height)) return;
+    const alwaysOnTop = typeof mainWindow.isAlwaysOnTop === 'function' ? !!mainWindow.isAlwaysOnTop() : true;
+    const payload = {
+      version: 1,
+      alwaysOnTop,
+      bounds: {
+        x: Math.round(currentBounds.x),
+        y: Math.round(currentBounds.y),
+        width: Math.round(currentBounds.width),
+        height: Math.round(currentBounds.height),
+      },
+    };
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const tmp = `${filePath}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(payload), 'utf8');
+    fs.renameSync(tmp, filePath);
+  } catch {
+    // Ignore non-writable userData paths in restricted/mock environments.
+  }
+}
+
+function scheduleWindowStateSave() {
+  if (typeof setTimeout !== 'function') {
+    saveWindowStateNow();
+    return;
+  }
+  if (windowStateSaveTimer !== null && typeof clearTimeout === 'function') clearTimeout(windowStateSaveTimer);
+  windowStateSaveTimer = setTimeout(() => {
+    windowStateSaveTimer = null;
+    saveWindowStateNow();
+  }, 250);
+  windowStateSaveTimer?.unref?.();
+}
+
+function ensureWindowOnScreen() {
+  if (!mainWindow || (typeof mainWindow.isDestroyed === 'function' && mainWindow.isDestroyed())) return;
+  const bounds = getSafeWindowBounds(mainWindow);
+  if (!bounds || typeof mainWindow.setBounds !== 'function') return;
+  const area = getWorkAreaForBounds(bounds);
+  const clamped = clampBoundsToArea(bounds, area, {
+    minWidth: compact ? 220 : 340,
+    minHeight: compact ? 96 : 480,
+  });
+  if (clamped.x !== bounds.x || clamped.y !== bounds.y || clamped.width !== bounds.width || clamped.height !== bounds.height) {
+    mainWindow.setBounds(clamped);
+  }
+}
 
 const target = getWindowTarget({
   nodeEnv: process.env.NODE_ENV,
@@ -89,7 +232,9 @@ function registerHandlers() {
   handle('window:setAlwaysOnTop', flag => {
     if (typeof flag !== 'boolean') throw new Error('置顶设置无效');
     mainWindow.setAlwaysOnTop(flag);
-    return mainWindow.isAlwaysOnTop();
+    const current = mainWindow.isAlwaysOnTop();
+    saveWindowStateNow();
+    return current;
   });
   handle('window:setContentProtection', flag => {
     if (typeof flag !== 'boolean') throw new Error('防截屏参数无效');
@@ -99,20 +244,23 @@ function registerHandlers() {
   handle('window:setCompact', flag => {
     if (typeof flag !== 'boolean') throw new Error('窗口状态无效');
     if (compact === flag) return { compact };
-    const bounds = mainWindow.getBounds();
-    const area = screen.getDisplayMatching(bounds).workArea;
+    const bounds = getSafeWindowBounds(mainWindow) || { x: 0, y: 0, width: 480, height: 820 };
     if (flag) {
       expandedBounds = bounds;
-      mainWindow.setMinimumSize(220, 96);
-      mainWindow.setResizable(false);
+      mainWindow.setMinimumSize?.(220, 96);
+      mainWindow.setResizable?.(false);
     } else {
-      mainWindow.setResizable(true);
-      mainWindow.setMinimumSize(Math.min(340, area.width), Math.min(480, area.height));
+      mainWindow.setResizable?.(true);
     }
     const target = flag ? { x: bounds.x + bounds.width - 220, y: bounds.y, width: 220, height: 96 } : (expandedBounds || bounds);
+    const area = getWorkAreaForBounds(target);
+    if (!flag) {
+      mainWindow.setMinimumSize?.(Math.min(340, area.width), Math.min(480, area.height));
+    }
     const width = Math.min(target.width, area.width), height = Math.min(target.height, area.height);
     mainWindow.setBounds({ width, height, x: Math.max(area.x, Math.min(target.x, area.x + area.width - width)), y: Math.max(area.y, Math.min(target.y, area.y + area.height - height)) });
     compact = flag;
+    if (flag) saveWindowStateNow();
     return { compact };
   });
   handle('store:request', command => {
@@ -131,6 +279,58 @@ function registerHandlers() {
     if (!persistence) throw new Error('本地资料库尚未打开，请先恢复有效备份');
     const saved = await persistence.exportToFile(result.filePath);
     if (!saved.ok) throw new Error(saved.error || '备份导出失败');
+    return { canceled: false };
+  });
+  handle('store:saveDocument', async payload => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('保存参数无效');
+    }
+    if (typeof payload.suggestedName !== 'string' || !payload.suggestedName.trim() || payload.suggestedName.length > 180) {
+      throw new Error('文件名无效');
+    }
+    if (typeof payload.data !== 'string' || !payload.data) {
+      throw new Error('保存内容为空');
+    }
+    let safeName = path.basename(payload.suggestedName.trim()).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '');
+    let ext = path.extname(safeName).slice(1).toLowerCase();
+    if (!ext) {
+      const mime = typeof payload.mimeType === 'string' ? payload.mimeType.trim().toLowerCase() : '';
+      ext = mime === 'image/png' ? 'png' : mime === 'application/json' ? 'json' : 'txt';
+      safeName = `${safeName || 'Looma-export'}.${ext}`;
+    }
+    if (!ALLOWED_DOCUMENT_EXTENSIONS.has(ext)) {
+      throw new Error('不支持保存该文件类型');
+    }
+
+    let buffer;
+    if (payload.isBase64) {
+      const raw = payload.data.trim().replace(/^data:[^;]+;base64,/i, '').replace(/\s+/g, '');
+      if (!raw || raw.length > 22 * 1024 * 1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) {
+        throw new Error('文件编码无效或超出 16MB 限制');
+      }
+      buffer = Buffer.from(raw, 'base64');
+    } else {
+      if (Buffer.byteLength(payload.data, 'utf8') > MAX_DOCUMENT_BYTES) {
+        throw new Error('文件大小超出 16MB 限制');
+      }
+      buffer = Buffer.from(payload.data, 'utf8');
+    }
+    if (!buffer.length || buffer.length > MAX_DOCUMENT_BYTES) {
+      throw new Error('文件大小无效或超出 16MB 限制');
+    }
+
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '保存文件',
+      defaultPath: safeName,
+      filters: [{ name: DOCUMENT_FILTER_NAMES[ext] || ext.toUpperCase(), extensions: [ext] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    const chosenExt = path.extname(result.filePath).slice(1).toLowerCase();
+    if (chosenExt && !ALLOWED_DOCUMENT_EXTENSIONS.has(chosenExt)) {
+      throw new Error('不支持保存该文件扩展名');
+    }
+    const targetPath = chosenExt ? result.filePath : `${result.filePath}.${ext}`;
+    await fs.promises.writeFile(targetPath, buffer);
     return { canceled: false };
   });
   handle('store:import', async () => {
@@ -171,9 +371,10 @@ function registerHandlers() {
   });
   handle('window:resize', size => {
     if (!size || !Number.isFinite(size.width) || !Number.isFinite(size.height)) throw new Error('窗口尺寸无效');
-    const area = screen.getPrimaryDisplay().workArea;
-    const [oldWidth, oldHeight] = mainWindow.getSize();
-    const [oldX, oldY] = mainWindow.getPosition();
+    const currentBounds = getSafeWindowBounds(mainWindow);
+    const area = getWorkAreaForBounds(currentBounds);
+    const [oldWidth, oldHeight] = typeof mainWindow.getSize === 'function' ? mainWindow.getSize() : [currentBounds?.width ?? 480, currentBounds?.height ?? 820];
+    const [oldX, oldY] = typeof mainWindow.getPosition === 'function' ? mainWindow.getPosition() : [currentBounds?.x ?? area.x, currentBounds?.y ?? area.y];
     const width = Math.round(Math.min(area.width, Math.max(300, size.width)));
     const height = Math.round(Math.min(area.height, Math.max(100, size.height)));
     mainWindow.setBounds({
@@ -181,6 +382,7 @@ function registerHandlers() {
       x: Math.max(area.x, Math.min(area.x + area.width - width, oldX + oldWidth - width)),
       y: Math.max(area.y, Math.min(area.y + area.height - height, oldY + (oldHeight - height) / 2)),
     }, true);
+    if (!compact) scheduleWindowStateSave();
   });
   handle('model:status', () => services.modelStatus());
   handle('model:save', value => services.saveModelConnection(value));
@@ -213,10 +415,11 @@ function registerHandlers() {
 
 function showMainWindow(focus) {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (mainWindow.isMinimized?.()) mainWindow.restore();
+  ensureWindowOnScreen();
   mainWindow.show(); mainWindow.focus();
   if (focus) {
-    if (mainWindow.webContents.isLoading()) pendingTodoFocus = focus;
+    if (mainWindow.webContents.isLoading?.()) pendingTodoFocus = focus;
     else mainWindow.webContents.send('todo:focus', focus);
   }
 }
@@ -273,20 +476,20 @@ function registerGlobalShortcuts() {
 }
 
 function createWindow() {
-  const area = screen.getPrimaryDisplay().workArea;
-  const width = Math.min(480, area.width);
-  const height = Math.min(820, area.height - 24);
+  const savedState = loadWindowState();
+  const area = getWorkAreaForBounds(savedState.bounds);
+  const { width, height, x, y } = savedState.bounds;
   contentProtected = false;
   mainWindow = new BrowserWindow({
     width, height,
-    x: Math.max(area.x, area.x + area.width - width - 24),
-    y: Math.max(area.y, Math.round(area.y + (area.height - height) / 2)),
+    x,
+    y,
     minWidth: Math.min(340, area.width),
     minHeight: Math.min(480, area.height),
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
-    alwaysOnTop: true,
+    alwaysOnTop: savedState.alwaysOnTop,
     resizable: true,
     skipTaskbar: false,
     hasShadow: true,
@@ -329,7 +532,16 @@ function createWindow() {
     },
   });
   closeGuard = guard;
-  window.on('close', guard.onClose);
+  window.on('move', () => {
+    if (!compact && !window.isMinimized?.()) scheduleWindowStateSave();
+  });
+  window.on('resize', () => {
+    if (!compact && !window.isMinimized?.()) scheduleWindowStateSave();
+  });
+  window.on('close', event => {
+    saveWindowStateNow();
+    guard.onClose(event);
+  });
   window.webContents.on('did-start-loading', guard.onLoading);
   window.webContents.on('render-process-gone', guard.onRendererGone);
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
@@ -346,7 +558,13 @@ function createWindow() {
   mainWindow.webContents.on('will-attach-webview', event => event.preventDefault());
   if (target.type === 'file') mainWindow.loadFile(target.value);
   else mainWindow.loadURL(target.value);
-  window.on('closed', () => { guard.dispose(); closeGuard = null; contentProtected = false; mainWindow = null; });
+  window.on('closed', () => {
+    if (windowStateSaveTimer !== null && typeof clearTimeout === 'function') {
+      clearTimeout(windowStateSaveTimer);
+      windowStateSaveTimer = null;
+    }
+    guard.dispose(); closeGuard = null; contentProtected = false; mainWindow = null;
+  });
 }
 
 app.setAppUserModelId('com.looma.desktop');
@@ -368,6 +586,10 @@ app.whenReady().then(async () => {
   createTray();
   createWindow();
   registerGlobalShortcuts();
+  if (typeof screen?.on === 'function') {
+    screen.on('display-metrics-changed', ensureWindowOnScreen);
+    screen.on('display-removed', ensureWindowOnScreen);
+  }
   app.on('activate', () => {
     showMainWindow();
   });
@@ -381,6 +603,7 @@ app.on('before-quit', event => {
   else quitAfterSave();
 });
 app.on('will-quit', () => {
+  saveWindowStateNow();
   try { globalShortcut.unregisterAll(); } catch (e) {}
   todoDesktop?.stop(); tray?.destroy();
   persistence?.close();

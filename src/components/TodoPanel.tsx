@@ -7,6 +7,31 @@ import './todos.css';
 
 const shanghaiDay = (time: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(time);
 
+function parseDateTimeInput(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const match = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) {
+    const fallback = Date.parse(raw);
+    return Number.isFinite(fallback) ? new Date(fallback).toISOString() : undefined;
+  }
+  const [, y, m, d, hh, mm, ss] = match;
+  const year = Number(y), month = Number(m) - 1, day = Number(d), hour = Number(hh), minute = Number(mm), second = Number(ss || 0);
+  const parsed = new Date(year, month, day, hour, minute, second);
+  if (!Number.isFinite(parsed.getTime()) || parsed.getFullYear() !== year || parsed.getMonth() !== month || parsed.getDate() !== day) {
+    return undefined;
+  }
+  return parsed.toISOString();
+}
+
+function toDateTimeInputValue(iso?: string): string {
+  if (!iso) return '';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function groupTodos(rows: TodoRecord[], now = Date.now()) {
   const groups = { today: [] as TodoRecord[], future: [] as TodoRecord[], overdue: [] as TodoRecord[], suggested: [] as TodoRecord[], completed: [] as TodoRecord[] };
   for (const todo of rows) {
@@ -41,17 +66,19 @@ export function TodoPanel({ space, focusId, focusRequestId, choices, choiceActio
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState('');
   const [dates, setDates] = useState<Record<string, string>>({});
+  const [editingTimeIds, setEditingTimeIds] = useState<Record<string, boolean>>({});
   const [capability, setCapability] = useState<Capability | null>(null);
   const [now, setNow] = useState(Date.now);
   const listSequence = useRef(0);
   const busy = useRef(false);
   const panelRef = useRef<HTMLElement>(null);
   const processedFocus = useRef<string | undefined>(undefined);
+  const pendingTimeFocusId = useRef<string | null>(null);
   const errorHandler = useRef(onError); errorHandler.current = onError;
   const rows = data?.space === space ? data.todos : [];
 
   const dueLabel = (todo: TodoRecord) => todo.dueAt
-    ? new Date(todo.dueAt).toLocaleString(lang === 'en' ? 'en-US' : 'zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+    ? new Date(todo.dueAt).toLocaleString(lang === 'en' ? 'en-US' : 'zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
     : todo.dueDate ? `${todo.dueDate} · ${t('todo.timeMissing')}` : t('todo.unscheduled');
 
   async function load() {
@@ -79,18 +106,50 @@ export function TodoPanel({ space, focusId, focusRequestId, choices, choiceActio
     const row = Array.from(panelRef.current.querySelectorAll<HTMLElement>('[data-todo-id]')).find(element => element.dataset.todoId === focusId);
     if (row) { processedFocus.current = request; const details = row.closest('details'); if (details) details.open = true; row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); row.focus({ preventScroll: true }); }
   }, [focusId, focusRequestId, data]);
+  useEffect(() => {
+    const targetId = pendingTimeFocusId.current;
+    if (!targetId || !panelRef.current) return;
+    const rowEl = Array.from(panelRef.current.querySelectorAll<HTMLElement>('[data-todo-id]')).find(value => value.dataset.todoId === targetId);
+    if (!rowEl) return;
+    const input = rowEl.querySelector<HTMLInputElement>('input[type="datetime-local"]');
+    if (!input) return;
+    const details = input.closest('details');
+    if (details) details.open = true;
+    pendingTimeFocusId.current = null;
+    rowEl.scrollIntoView?.({ block: 'nearest' });
+    input.focus();
+  }, [editingTimeIds, data]);
+
+  function openTimeEditor(todo: TodoRecord, seedExisting = true) {
+    pendingTimeFocusId.current = todo.id;
+    if (seedExisting && todo.dueAt && !dates[todo.id]) {
+      setDates(prev => ({ ...prev, [todo.id]: toDateTimeInputValue(todo.dueAt) }));
+    }
+    setEditingTimeIds(prev => ({ ...prev, [todo.id]: true }));
+  }
 
   async function act(todo: TodoRecord, action: 'complete' | 'cancel' | 'snooze' | 'approve', selected = false) {
     if (busy.current) return;
     const date = dates[todo.id];
+    let dueAt: string | undefined;
+    if (action === 'approve' && date) {
+      dueAt = parseDateTimeInput(date);
+      if (!dueAt) {
+        const invalidMsg = t('todo.invalidDateTimeError');
+        setError(invalidMsg);
+        errorHandler.current?.(invalidMsg);
+        return;
+      }
+    }
     // An item can be confirmed now and scheduled later.
     busy.current = true; setBusyId(todo.id); setError('');
     try {
       if (action === 'snooze') await TodoService.snooze(todo, 15);
-      else if (action === 'approve') {
-        const dueAt = date ? new Date(`${date}:00+08:00`).toISOString() : undefined;
-        await TodoService.approve(todo, dueAt);
-      } else await TodoService[action](todo);
+      else if (action === 'approve') await TodoService.approve(todo, dueAt);
+      else await TodoService[action](todo);
+      if (action === 'approve') {
+        setEditingTimeIds(prev => ({ ...prev, [todo.id]: false }));
+      }
       if (selected) onChoiceDone?.();
       await load();
     } catch (failure) {
@@ -105,14 +164,29 @@ export function TodoPanel({ space, focusId, focusRequestId, choices, choiceActio
   function row(todo: TodoRecord) {
     const suggested = todo.status === 'suggested';
     const completed = todo.status === 'completed';
+    const isEditingTime = !!editingTimeIds[todo.id];
     return <article key={todo.id} data-todo-id={todo.id} tabIndex={-1} className={`todo-row${completed ? ' todo-row--completed' : ''}${todo.id === focusId ? ' todo-row--focused' : ''}`}>
       <div className="todo-row-content"><strong>{todo.title}</strong><span className="todo-time">{completed ? t('todo.completedHistoryLabel') : dueLabel(todo)}</span>
-        {!completed && !suggested && !todo.dueAt && <details className="todo-source"><summary>{t('todo.setLaterSummary')}</summary><p>{t('todo.setLaterHint')}</p><input aria-label={t('todo.reminderTimeAria', { title: todo.title })} type="datetime-local" value={dates[todo.id] || ''} onChange={event => setDates(value => ({...value,[todo.id]:event.target.value}))}/><button className="text-btn" disabled={!!busyId || !dates[todo.id]} onClick={() => act(todo,'approve')}>{t('todo.setReminderBtn')}</button></details>}
+        {!completed && !suggested && !todo.dueAt && <details className="todo-source" open={isEditingTime} onToggle={event => { const isOpen = (event.currentTarget as HTMLDetailsElement).open; setEditingTimeIds(prev => ({ ...prev, [todo.id]: isOpen })); }}><summary>{t('todo.setLaterSummary')}</summary><p>{t('todo.setLaterHint')}</p><input aria-label={t('todo.reminderTimeAria', { title: todo.title })} type="datetime-local" value={dates[todo.id] || ''} onChange={event => { const nextValue = event.target.value; setDates(value => ({ ...value, [todo.id]: nextValue })); }}/><button className="text-btn" disabled={!!busyId || !dates[todo.id]} onClick={() => act(todo, 'approve')}>{t('todo.setReminderBtn')}</button></details>}
+        {!completed && !suggested && !!todo.dueAt && isEditingTime && <div className="todo-source todo-inline-editor">
+          <label className="todo-date-label">{t('todo.adjustTimeSummary')}<input aria-label={t('todo.reminderTimeAria', { title: todo.title })} type="datetime-local" value={dates[todo.id] || ''} onChange={event => { const nextValue = event.target.value; setDates(value => ({ ...value, [todo.id]: nextValue })); }}/></label>
+          <div className="button-row">
+            <button type="button" className="soft-btn" disabled={!!busyId || !dates[todo.id]} onClick={() => act(todo, 'approve')}>{t('todo.updateReminderBtn')}</button>
+            <button type="button" className="text-btn" onClick={() => setEditingTimeIds(prev => ({ ...prev, [todo.id]: false }))}>{t('common.cancel')}</button>
+          </div>
+        </div>}
         {todo.sourceText && <details className="todo-source"><summary>{t('todo.viewSourceSummary')}</summary><p>{todo.sourceText}</p></details>}
-        {suggested && <details className="todo-source"><summary>{t('todo.optionalScheduleSummary')}</summary><label className="todo-date-label">{t('todo.confirmWithoutTimeHint')}<input aria-label={t('todo.reminderTimeAria', { title: todo.title })} type="datetime-local" value={dates[todo.id] || ''} onChange={event => setDates(value => ({ ...value, [todo.id]: event.target.value }))}/></label></details>}
+        {suggested && <details className="todo-source" open={isEditingTime} onToggle={event => { const isOpen = (event.currentTarget as HTMLDetailsElement).open; setEditingTimeIds(prev => ({ ...prev, [todo.id]: isOpen })); }}><summary>{t('todo.optionalScheduleSummary')}</summary><label className="todo-date-label">{t('todo.confirmWithoutTimeHint')}<input aria-label={t('todo.reminderTimeAria', { title: todo.title })} type="datetime-local" value={dates[todo.id] || ''} onChange={event => { const nextValue = event.target.value; setDates(value => ({ ...value, [todo.id]: nextValue })); }}/></label></details>}
       </div>
       {!completed && <div className="todo-actions">
-        {suggested ? <button className="soft-btn" disabled={!!busyId} aria-label={t('todo.approveAria', { title: todo.title })} onClick={() => act(todo, 'approve')}>{t('todo.approveBtn')}</button> : <><button className="soft-btn" disabled={!!busyId} aria-label={t('todo.completeAria', { title: todo.title })} onClick={() => act(todo, 'complete')}>{t('todo.completeBtn')}</button><button className="text-btn" disabled={!!busyId} aria-label={t('todo.snoozeAria', { title: todo.title })} onClick={() => act(todo, 'snooze')}>{t('todo.snoozeBtn')}</button></>}
+        {suggested ? <>
+          <button className="soft-btn" disabled={!!busyId} aria-label={t('todo.approveAria', { title: todo.title })} onClick={() => act(todo, 'approve')}>{t('todo.approveBtn')}</button>
+          <button type="button" className="text-btn" disabled={!!busyId} onClick={() => openTimeEditor(todo, false)}>{dates[todo.id] ? t('todo.changeTimeBtn') : t('todo.pickTimeBtn')}</button>
+        </> : <>
+          <button className="soft-btn" disabled={!!busyId} aria-label={t('todo.completeAria', { title: todo.title })} onClick={() => act(todo, 'complete')}>{t('todo.completeBtn')}</button>
+          <button className="text-btn" disabled={!!busyId} aria-label={t('todo.snoozeAria', { title: todo.title })} onClick={() => act(todo, 'snooze')}>{t('todo.snoozeBtn')}</button>
+          {!!todo.dueAt && !isEditingTime && <button type="button" className="text-btn" disabled={!!busyId} onClick={() => openTimeEditor(todo)}>{t('todo.adjustTimeBtn')}</button>}
+        </>}
         <button className="text-btn" disabled={!!busyId} aria-label={t('todo.cancelAria', { title: todo.title })} onClick={() => act(todo, 'cancel')}>{t('todo.cancelBtn')}</button>
       </div>}
     </article>;
@@ -130,6 +204,9 @@ export function TodoPanel({ space, focusId, focusRequestId, choices, choiceActio
   const visibleGroups = isWork ? groupLabels.filter(([key]) => groups[key].length > 0) : groupLabels;
   const activeCount = groups.today.length + groups.future.length + groups.overdue.length;
   const choiceVerb = choiceAction === 'cancel' ? t('todo.verbCancel') : choiceAction === 'time' ? t('todo.verbTime') : t('todo.verbComplete');
+  const needsNotifPerm = !!capability?.background && !['granted', 'unsupported'].includes(capability.notifications);
+  const needsExactPerm = !!capability?.background && !['granted', 'not-required', 'unsupported'].includes(capability.exactAlarms);
+
   return <section className={`todo-panel${isWork ? ' todo-panel--work' : ''}`} tabIndex={-1} ref={panelRef} aria-label={panelTitle}>
     <header className="todo-header">
       <div className={isWork ? 'todo-work-title' : undefined}>
@@ -139,12 +216,19 @@ export function TodoPanel({ space, focusId, focusRequestId, choices, choiceActio
       {(!isWork || activeCount > 0) && <span className="todo-total">{t('todo.totalCount', { count: activeCount })}</span>}
     </header>
     {isWork && <p className="todo-work-intro">{t('todo.workIntro')}</p>}
-    {capability && <p className="todo-capability">{!capability.background ? t('todo.capBrowser') : capability.enabled ? t('todo.capEnabled') : t('todo.capDisabled')}{capability.background && !['granted', 'unsupported'].includes(capability.notifications) && <button className="text-btn" onClick={() => void permissions()}>{t('todo.enableNotificationsBtn')}</button>}{capability.background && !['granted', 'not-required', 'unsupported'].includes(capability.exactAlarms) && <button className="text-btn" onClick={() => void permissions()}>{t('todo.enableExactAlarmsBtn')}</button>}</p>}
+    {capability && <div className="todo-capability">
+      <span>{!capability.background ? t('todo.capBrowser') : capability.enabled ? t('todo.capEnabled') : t('todo.capDisabled')}</span>
+      {needsNotifPerm ? (
+        <button type="button" className="text-btn" onClick={() => void permissions()}>{t('todo.enableNotificationsBtn')}</button>
+      ) : needsExactPerm ? (
+        <button type="button" className="text-btn" onClick={() => void permissions()}>{t('todo.enableExactAlarmsBtn')}</button>
+      ) : null}
+    </div>}
     {error && <p className="todo-error" role="alert">{error}<button className="text-btn" onClick={() => void load()}>{t('todo.retryLoadBtn')}</button></p>}
     {choices && choices.length > 0 && <div className="todo-choice" role="group" aria-label={t('todo.choiceAria', { verb: choiceVerb })}><p>{t('todo.choicePrompt', { verb: choiceVerb })}</p>{choices.filter(todo => todo.space === space).map(todo => <button key={todo.id} className="soft-btn" disabled={!!busyId} onClick={() => {
       if (choiceAction !== 'time') return act(todo, choiceAction, true);
-      const element = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('[data-todo-id]') || []).find(value => value.dataset.todoId === todo.id);
-      element?.scrollIntoView({ block: 'nearest' }); element?.querySelector<HTMLInputElement>('input')?.focus(); onChoiceDone?.();
+      openTimeEditor(todo);
+      onChoiceDone?.();
     }}>{todo.title} · {dueLabel(todo)}</button>)}<button className="text-btn" onClick={onChoiceDone}>{t('todo.choiceSkipBtn')}</button></div>}
     {visibleGroups.length > 0 ? <div className="todo-groups">{visibleGroups.map(([key, title]) => <section className={`todo-group todo-group--${key}`} key={key}><h3>{title}<span>{groups[key].length}</span></h3>{groups[key].length ? groups[key].map(row) : <p className="todo-empty">{loaded ? t('todo.groupEmpty') : t('todo.groupLoading')}</p>}</section>)}</div>
       : !error && (loaded ? <p className="todo-work-empty">{t('todo.workEmpty')}</p> : <p className="todo-work-empty" role="status">{t('todo.workLoading')}</p>)}
