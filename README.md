@@ -125,14 +125,11 @@ Looma 的首轮价值假设是减少沟通后的整理时间、减少跟进遗�
 
 ### Word 文档归档
 
-原根目录的 Word 文档集中保存在 `docs/word/`，保留原文件名与正文；不因归档删除或合并不同版本。文档生成脚本同步输出到此目录，避免再次散落到项目根目录。
+Looma 的 Word 文档集中保存在 `docs/word/`，文档生成脚本同步输出到此目录，避免再次散落到项目根目录。
 
 | 文档 | 文件 |
 | --- | --- |
 | 产品需求规格说明书 | [Looma(灵犀胶囊)_产品需求规格说明书.docx](docs/word/Looma(灵犀胶囊)_产品需求规格说明书.docx) |
 | 软件操作与使用说明书 | [Looma(灵犀胶囊)_软件操作与使用说明书.docx](docs/word/Looma(灵犀胶囊)_软件操作与使用说明书.docx) |
-| 悬壶商业计划书（修订定稿版） | [悬壶_面向AI智能体的可验证隐私数据底座_商业计划书(修订定稿版).docx](docs/word/悬壶_面向AI智能体的可验证隐私数据底座_商业计划书(修订定稿版).docx) |
-| 悬壶 Personal AI 产品创新哲学与技术路径 | [悬壶_PersonalAI_产品创新哲学与技术路径.docx](docs/word/悬壶_PersonalAI_产品创新哲学与技术路径.docx) |
-| Personal AI 小节（独立文档） | [Personal AI小节_产品创新哲学与技术路径.docx](docs/word/Personal%20AI小节_产品创新哲学与技术路径.docx) |
 
 现有技术栈：Electron 34、React 19、TypeScript 5.7、Vite 6、Tailwind CSS、Lucide、HTML2Canvas；用户批准新增`better-sqlite3@12.11.1`，本地不建设官方云服务。当前Electron及其解压依赖存在已报告高危审计项，详见v4实施记录，公开分发前需要升级和兼容回归。

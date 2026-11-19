@@ -82,7 +82,7 @@ async function testMCPServer() {
     assert.strictEqual(stats.space, 'work');
     console.log('✓ looma_get_stats 成功，初始总记录数:', stats.total);
 
-    // 4. 测试 tools/call looma_propose_action (悬壶可验证原则写入提案)
+    // 4. 测试 tools/call looma_propose_action (Looma 可验证原则写入提案)
     console.log('[MCP TEST] 4. 测试 tools/call looma_propose_action...');
     const proposeRes = await sendRequest('tools/call', {
       name: 'looma_propose_action',

@@ -4,7 +4,7 @@
  * 
  * 符合 MCP 2024-11-05 标准规范与 JSON-RPC 2.0 协议
  * 为外部大模型（Claude Desktop, Cursor, 本地智能体等）提供安全、可验证的私有数据底座接口。
- * 遵循《悬壶》架构设计：智能体只读授权数据，写入仅允许提交待人类确权的草稿提案。
+ * 遵循 Looma 的授权与审核流程：智能体只读授权数据，写入仅允许提交待人类确权的草稿提案。
  */
 
 const readline = require('node:readline');
@@ -142,7 +142,7 @@ const TOOLS_METADATA = [
   },
   {
     name: 'looma_propose_action',
-    description: '【悬壶可验证写入原则】智能体提交新待办/记忆建议。智能体严禁直接静默写库，此接口将提案安全写入待审草稿区，由人类在 Looma 界面审核确权。',
+    description: '【Looma 可验证写入原则】智能体提交新待办/记忆建议。智能体严禁直接静默写库，此接口将提案安全写入待审草稿区，由人类在 Looma 界面审核确权。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -462,7 +462,7 @@ async function runStdioServer() {
             serverInfo: {
               name: 'looma-mcp-server',
               version: '1.0.0',
-              description: 'Looma (悬壶) 可验证隐私数据底座 MCP 服务器'
+              description: 'Looma（灵犀胶囊）可验证隐私数据底座 MCP 服务器'
             }
           });
           break;
